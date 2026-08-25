@@ -2490,7 +2490,9 @@ fn item_review_summary_key(pending_review: &PendingReviewState) -> Option<ToolIt
             turn_id: pending_review.turn_id.clone(),
             item_id: pending_review.item_id.clone()?,
         }),
-        ReviewSubjectKind::Permissions | ReviewSubjectKind::NetworkAccess => None,
+        ReviewSubjectKind::WriteStdin
+        | ReviewSubjectKind::Permissions
+        | ReviewSubjectKind::NetworkAccess => None,
     }
 }
 
@@ -2829,6 +2831,7 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                         base,
                         revised_prompt_present: item.revised_prompt.is_some(),
                         saved_path_present: item.saved_path.is_some(),
+                        transparent_background: item.transparent_background,
                     },
                 },
             ))
@@ -3030,6 +3033,11 @@ fn guardian_review_subject_metadata(
             "command_execution".to_string(),
             ReviewTrigger::Initial,
         ),
+        GuardianApprovalReviewAction::WriteStdin { .. } => (
+            ReviewSubjectKind::WriteStdin,
+            "write_stdin".to_string(),
+            ReviewTrigger::Initial,
+        ),
         GuardianApprovalReviewAction::Execve { .. } => (
             ReviewSubjectKind::CommandExecution,
             "command_execution".to_string(),
@@ -3081,6 +3089,7 @@ fn guardian_review_requested_additional_permissions(action: &GuardianApprovalRev
                 || permissions.file_system.is_some()
         }
         GuardianApprovalReviewAction::Command { .. }
+        | GuardianApprovalReviewAction::WriteStdin { .. }
         | GuardianApprovalReviewAction::Execve { .. }
         | GuardianApprovalReviewAction::McpToolCall { .. } => false,
     }
@@ -3094,6 +3103,7 @@ fn guardian_review_requested_network_access(action: &GuardianApprovalReviewActio
         }
         GuardianApprovalReviewAction::ApplyPatch { .. }
         | GuardianApprovalReviewAction::Command { .. }
+        | GuardianApprovalReviewAction::WriteStdin { .. }
         | GuardianApprovalReviewAction::Execve { .. }
         | GuardianApprovalReviewAction::McpToolCall { .. } => false,
     }
@@ -3202,6 +3212,7 @@ fn collab_tool_call_outcome(
     match status {
         CollabAgentToolCallStatus::InProgress => None,
         CollabAgentToolCallStatus::Completed => Some((ToolItemTerminalStatus::Completed, None)),
+        CollabAgentToolCallStatus::Interrupted => Some((ToolItemTerminalStatus::Interrupted, None)),
         CollabAgentToolCallStatus::Failed => Some((
             ToolItemTerminalStatus::Failed,
             Some(ToolItemFailureKind::ToolError),
@@ -3226,6 +3237,10 @@ fn collab_agent_tool_name(tool: &CollabAgentTool) -> &'static str {
         CollabAgentTool::ResumeAgent => "resume_agent",
         CollabAgentTool::Wait => "wait_agent",
         CollabAgentTool::CloseAgent => "close_agent",
+        CollabAgentTool::SendMessage => "send_message",
+        CollabAgentTool::FollowupTask => "followup_task",
+        CollabAgentTool::InterruptAgent => "interrupt_agent",
+        CollabAgentTool::ListAgents => "list_agents",
     }
 }
 

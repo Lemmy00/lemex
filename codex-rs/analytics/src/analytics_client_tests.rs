@@ -966,6 +966,7 @@ fn sample_command_approval_request(request_id: i64, approval_id: Option<&str>) -
     ServerRequest::CommandExecutionRequestApproval {
         request_id: RequestId::Integer(request_id),
         params: CommandExecutionRequestApprovalParams {
+            kind: Default::default(),
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
             item_id: "item-1".to_string(),
@@ -1031,6 +1032,7 @@ fn sample_guardian_review_completed(
     review_id: &str,
     target_item_id: Option<&str>,
     status: GuardianApprovalReviewStatus,
+    action: GuardianApprovalReviewAction,
 ) -> ServerNotification {
     ServerNotification::ItemGuardianApprovalReviewCompleted(
         ItemGuardianApprovalReviewCompletedNotification {
@@ -1047,11 +1049,7 @@ fn sample_guardian_review_completed(
                 user_authorization: None,
                 rationale: None,
             },
-            action: GuardianApprovalReviewAction::Command {
-                source: AppServerGuardianCommandSource::Shell,
-                command: "echo hi".to_string(),
-                cwd: test_path_buf("/tmp").abs(),
-            },
+            action,
         },
     )
 }
@@ -3137,6 +3135,11 @@ async fn guardian_completed_notification_publishes_review_event_with_thread_meta
                 "guardian-review-1",
                 Some("item-1"),
                 GuardianApprovalReviewStatus::Denied,
+                GuardianApprovalReviewAction::Command {
+                    source: AppServerGuardianCommandSource::Shell,
+                    command: "echo hi".to_string(),
+                    cwd: test_path_buf("/tmp").abs(),
+                },
             ))),
             &mut events,
         )
@@ -3184,6 +3187,29 @@ async fn terminal_reviews_denormalize_counts_onto_tool_item_events() {
             &mut events,
         )
         .await;
+    events.clear();
+
+    reducer
+        .ingest(
+            AnalyticsFact::Notification(Box::new(sample_guardian_review_completed(
+                "guardian-stdin-review-1",
+                Some("item-1"),
+                GuardianApprovalReviewStatus::Denied,
+                GuardianApprovalReviewAction::WriteStdin {
+                    approval_id: "stdin-approval-1".to_string(),
+                    process_id: "42".to_string(),
+                    stdin: "confirm\n".to_string(),
+                    cwd: test_path_buf("/tmp").abs().into(),
+                },
+            ))),
+            &mut events,
+        )
+        .await;
+    let review_payload = serde_json::to_value(&events[0]).expect("serialize review event");
+    assert_eq!(
+        review_payload["event_params"]["subject_kind"],
+        "write_stdin"
+    );
     events.clear();
 
     ingest_completed_command_execution_item(&mut reducer, &mut events, "thread-1", "item-1").await;
@@ -5064,6 +5090,78 @@ async fn turn_lifecycle_emits_turn_event() {
         json!(13)
     );
     assert_eq!(payload["event_params"]["total_tokens"], json!(321));
+}
+
+#[tokio::test]
+async fn image_generation_events_preserve_transparent_background_metadata() {
+    for (status, transparent_background) in [
+        ("completed", Some(true)),
+        ("completed", Some(false)),
+        ("completed", None),
+        ("failed", None),
+    ] {
+        let mut reducer = AnalyticsReducer::default();
+        let mut out = Vec::new();
+
+        ingest_turn_prerequisites(
+            &mut reducer,
+            &mut out,
+            /*include_initialize*/ true,
+            /*include_resolved_config*/ true,
+            /*include_started*/ true,
+            /*include_token_usage*/ false,
+        )
+        .await;
+
+        let item = ThreadItem::ImageGeneration(ImageGenerationItem {
+            id: "image-1".to_string(),
+            status: status.to_string(),
+            revised_prompt: None,
+            result: "ok".to_string(),
+            transparent_background,
+            failure: None,
+            saved_path: None,
+        });
+
+        reducer
+            .ingest(
+                AnalyticsFact::Notification(Box::new(ServerNotification::ItemStarted(
+                    ItemStartedNotification {
+                        thread_id: "thread-2".to_string(),
+                        turn_id: "turn-2".to_string(),
+                        started_at_ms: 998,
+                        item: item.clone(),
+                    },
+                ))),
+                &mut out,
+            )
+            .await;
+        reducer
+            .ingest(
+                AnalyticsFact::Notification(Box::new(ServerNotification::ItemCompleted(
+                    ItemCompletedNotification {
+                        thread_id: "thread-2".to_string(),
+                        turn_id: "turn-2".to_string(),
+                        completed_at_ms: 1_000,
+                        item,
+                    },
+                ))),
+                &mut out,
+            )
+            .await;
+
+        let event = out
+            .iter()
+            .find(|event| matches!(event, TrackEventRequest::ImageGeneration(_)))
+            .expect("image generation event should be emitted");
+        let payload = serde_json::to_value(event).expect("serialize image generation event");
+
+        assert_eq!(
+            payload["event_params"].get("transparent_background"),
+            Some(&json!(transparent_background))
+        );
+        assert_eq!(payload["event_params"]["terminal_status"], json!(status));
+    }
 }
 
 #[tokio::test]

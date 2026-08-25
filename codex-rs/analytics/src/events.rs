@@ -344,6 +344,9 @@ pub enum GuardianReviewedAction {
         additional_permissions: Option<AdditionalPermissionProfile>,
         tty: bool,
     },
+    WriteStdin {
+        tty: bool,
+    },
     Execve {
         source: GuardianCommandSource,
         program: String,
@@ -664,6 +667,7 @@ pub(crate) struct CodexToolItemEventBase {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ReviewSubjectKind {
     CommandExecution,
+    WriteStdin,
     FileChange,
     McpToolCall,
     Permissions,
@@ -891,6 +895,7 @@ pub(crate) struct CodexImageGenerationEventParams {
     pub(crate) base: CodexToolItemEventBase,
     pub(crate) revised_prompt_present: bool,
     pub(crate) saved_path_present: bool,
+    pub(crate) transparent_background: Option<bool>,
 }
 
 #[derive(Serialize)]
