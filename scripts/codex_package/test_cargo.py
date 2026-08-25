@@ -85,14 +85,14 @@ class SourceBinariesForTargetTest(unittest.TestCase):
                 build_codex_command_runner=False,
                 build_codex_windows_sandbox_setup=False,
             ),
-            ["codex-code-mode-host"],
+            ["lemex-code-mode-host"],
         )
 
     def test_build_uses_prebuilt_windows_helpers_without_running_cargo(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             entrypoint = touch_file(root / "codex.exe")
-            code_mode_host = touch_file(root / "codex-code-mode-host.exe")
+            code_mode_host = touch_file(root / "lemex-code-mode-host.exe")
             command_runner = touch_file(root / "codex-command-runner.exe")
             sandbox_setup = touch_file(root / "codex-windows-sandbox-setup.exe")
 

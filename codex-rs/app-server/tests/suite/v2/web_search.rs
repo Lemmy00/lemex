@@ -135,10 +135,10 @@ async fn assert_standalone_web_search_round_trips_output(
 
     let env_overrides = match provider {
         WebSearchProvider::ChatGpt => {
-            vec![("OPENAI_API_KEY", None), ("CUSTOM_RESPONSES_API_KEY", None)]
+            vec![("LEMEX_API_KEY", None), ("CUSTOM_RESPONSES_API_KEY", None)]
         }
         WebSearchProvider::CustomResponses => vec![
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             ("CUSTOM_RESPONSES_API_KEY", Some("test-api-key")),
         ],
     };

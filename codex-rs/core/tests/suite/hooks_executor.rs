@@ -111,7 +111,7 @@ async fn executor_stop_hook_stops_after_disconnection() -> Result<()> {
 
     fixture
         .test
-        .codex
+        .lemex
         .environment_failed(&selection, "executor disconnected".to_string())
         .await?;
     fixture
@@ -188,7 +188,7 @@ async fn executor_stop_hook_rejects_mismatched_environment() -> Result<()> {
         .await?;
     let attached_selection = fixture
         .test
-        .codex
+        .lemex
         .environment_selections()
         .await
         .into_iter()
@@ -228,14 +228,14 @@ async fn executor_stop_hook_rejects_mismatched_environment() -> Result<()> {
     )?;
     fixture
         .test
-        .codex
+        .lemex
         .refresh_mcp_config(mismatched_config)
         .await;
     wait_for_mcp_server(&fixture.test.codex, "node_repl").await?;
     assert_eq!(
         fixture
             .test
-            .codex
+            .lemex
             .inspect_selected_capability_roots()
             .ready_roots
             .len(),
@@ -384,14 +384,14 @@ impl ExecutorStopHookFixture {
     async fn attach(&self) -> Result<TurnEnvironmentSelection> {
         let selection = self
             .test
-            .codex
+            .lemex
             .environment_selections()
             .await
             .into_iter()
             .next()
             .context("thread should select its executor environment")?;
         self.test
-            .codex
+            .lemex
             .environment_ready(
                 &selection,
                 EnvironmentConfig {

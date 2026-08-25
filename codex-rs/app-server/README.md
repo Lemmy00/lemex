@@ -25,7 +25,7 @@ Supported transports:
 
 - stdio (`--stdio` or `--listen stdio://`, default): newline-delimited JSON (JSONL)
 - websocket (`--listen ws://IP:PORT`): one JSON-RPC message per websocket text frame (**experimental / unsupported**)
-- unix socket (`--listen unix://` or `--listen unix://PATH`): websocket connections over `$CODEX_HOME/app-server-control/app-server-control.sock` or a custom socket path, using the standard HTTP Upgrade handshake
+- unix socket (`--listen unix://` or `--listen unix://PATH`): websocket connections over `$LEMEX_HOME/app-server-control/app-server-control.sock` or a custom socket path, using the standard HTTP Upgrade handshake
 - off (`--listen off`): do not expose a local transport
 
 When running with `--listen ws://IP:PORT`, the same listener also serves basic HTTP health probes:
@@ -39,7 +39,7 @@ Websocket transport is currently experimental and unsupported. Do not rely on it
 Pass `--code-mode-host URL` to connect this app-server process to a remote code-mode host instead of starting a local host. Use `ws://` or `wss://` for the WebSocket protocol, or a root `http://` or `https://` URL without a path or query for gRPC. Remote hosts require the `code_mode_host` feature. This outbound connection is independent of `--listen` and is shared by the process's threads.
 
 The unix socket transport is intended for local app-server control-plane clients. `codex app-server proxy`
-opens exactly one raw stream connection to `$CODEX_HOME/app-server-control/app-server-control.sock`
+opens exactly one raw stream connection to `$LEMEX_HOME/app-server-control/app-server-control.sock`
 by default, or to `--sock PATH` when provided, and proxies bytes between that socket and stdin/stdout.
 The proxied stream carries the websocket HTTP Upgrade handshake followed by websocket frames.
 
@@ -181,7 +181,7 @@ Example with notification opt-out:
 - `thread/section/move` — atomically move a thread into the section identified by `sectionId`, before another thread or at the end when `beforeThreadId` is `null`. Reordering within the same section preserves `sectionEnteredAt`; entering a different section resets it. Set `sectionId` to `null` to remove the thread from its section. Returns `{}` on success.
 - `thread/settings/update` — experimental; queue a partial update to a loaded thread’s next-turn settings without starting a turn or adding transcript items. Omitted fields leave settings unchanged; `serviceTier: null` clears the tier; deprecated `multiAgentMode` is ignored, while Ultra reasoning effort enables proactive multi-agent behavior; `sandboxPolicy` and `permissions` cannot be combined. Parent-owned Multi-Agent V2 subagents reject direct settings updates. Returns `{}` when the update is accepted and emits `thread/settings/updated` with the full effective settings only if they actually change. `turn/start` settings overrides emit the same notification when they change the stored settings.
 - `thread/memoryMode/set` — experimental; set a thread’s persisted memory eligibility to `"enabled"` or `"disabled"` for either a loaded thread or a stored rollout; returns `{}` on success.
-- `memory/reset` — experimental; clear the current `CODEX_HOME/memories` directory and reset persisted memory stage data in sqlite while preserving existing thread memory modes; returns `{}` on success.
+- `memory/reset` — experimental; clear the current `LEMEX_HOME/memories` directory and reset persisted memory stage data in sqlite while preserving existing thread memory modes; returns `{}` on success.
 - `thread/goal/set` — create or update the single persisted goal for a materialized thread; returns the current goal and emits `thread/goal/updated`. Parent-owned Multi-Agent V2 subagents reject goal updates, including while unloaded.
 - `thread/goal/get` — fetch the current persisted goal for a materialized thread; returns `goal: null` when no goal exists. Available even for parent-owned Multi-Agent V2 subagents.
 - `thread/goal/clear` — clear the current persisted goal for a materialized thread; returns whether a goal was removed and emits `thread/goal/cleared` when state changes. Parent-owned Multi-Agent V2 subagents reject goal clearing, including while unloaded.
@@ -969,7 +969,7 @@ Invoke a skill explicitly by including `$<skill-name>` in the text input and add
     "threadId": "thr_123",
     "input": [
         { "type": "text", "text": "$skill-creator Add a new skill for triaging flaky CI and include step-by-step usage." },
-        { "type": "skill", "name": "skill-creator", "path": "/Users/me/.codex/skills/skill-creator/SKILL.md" }
+        { "type": "skill", "name": "skill-creator", "path": "/Users/me/.lemex/skills/skill-creator/SKILL.md" }
     ]
 } }
 { "id": 33, "result": { "turn": {
@@ -1905,7 +1905,7 @@ Invoke a skill by including `$<skill-name>` in the text input. Add a `skill` inp
       {
         "type": "skill",
         "name": "skill-creator",
-        "path": "/Users/me/.codex/skills/skill-creator/SKILL.md"
+        "path": "/Users/me/.lemex/skills/skill-creator/SKILL.md"
       }
     ]
   }
@@ -1980,7 +1980,7 @@ To enable or disable a skill by absolute path:
   "method": "skills/config/write",
   "id": 27,
   "params": {
-    "path": "/Users/alice/.codex/skills/skill-creator/SKILL.md",
+    "path": "/Users/alice/.lemex/skills/skill-creator/SKILL.md",
     "name": null,
     "enabled": false
   }
@@ -2003,7 +2003,7 @@ To enable or disable a skill by name:
 
 Use `hooks/list` to fetch discovered hooks for one or more `cwds`. Each result is evaluated with that `cwd`'s effective config, so feature gates and discovered config layers can differ within a single response.
 
-For linked Git worktrees, project hook declarations come from the matching `.codex/` folders in the root checkout rather than from divergent hook declarations stored only in the linked worktree. This keeps each repo on one authoritative project-hook definition and one trust state.
+For linked Git worktrees, project hook declarations come from the matching `.lemex/` folders in the root checkout rather than from divergent hook declarations stored only in the linked worktree. This keeps each repo on one authoritative project-hook definition and one trust state.
 
 Hooks are returned even when disabled so clients can render and re-enable them. User-controlled state lives under `hooks.state`. Managed hooks are non-configurable, and user entries for managed hook keys are ignored during loading.
 
@@ -2030,7 +2030,7 @@ MCP tool hooks appear with `handlerType: "mcpTool"`. Their `server` and `tool` f
     "data": [{
       "cwd": "/Users/me/project",
       "hooks": [{
-        "key": "/Users/me/.codex/config.toml:pre_tool_use:0:0",
+        "key": "/Users/me/.lemex/config.toml:pre_tool_use:0:0",
         "eventName": "pre_tool_use",
         "handlerType": "command",
         "async": false,
@@ -2040,7 +2040,7 @@ MCP tool hooks appear with `handlerType: "mcpTool"`. Their `server` and `tool` f
         "timeoutSec": 5,
         "statusMessage": "running hook",
         "additionalContextLimit": null,
-        "sourcePath": "/Users/me/.codex/config.toml",
+        "sourcePath": "/Users/me/.lemex/config.toml",
         "source": "user",
         "pluginId": null,
         "displayOrder": 0,
@@ -2065,7 +2065,7 @@ To disable a non-managed hook, upsert a state entry at `hooks.state` with `confi
     "edits": [{
       "keyPath": "hooks.state",
       "value": {
-        "/Users/me/.codex/config.toml:pre_tool_use:0:0": {
+        "/Users/me/.lemex/config.toml:pre_tool_use:0:0": {
           "enabled": false
         }
       },
@@ -2280,7 +2280,7 @@ Codex supports these authentication modes. The current mode is surfaced in `acco
 - **API key (`apiKey`)**: Caller supplies an OpenAI API key via `account/login/start` with `type: "apiKey"`. The API key is saved and used for API requests.
 - **ChatGPT managed (`chatgpt`)** (recommended): Codex owns the ChatGPT OAuth flow and refresh tokens. Start via `account/login/start` with `type: "chatgpt"` for the browser flow or `type: "chatgptDeviceCode"` for device code; Codex persists tokens to disk and refreshes them automatically.
 - **Codex managed Amazon Bedrock auth (experimental)**: Caller supplies an Amazon Bedrock API key using `type: "amazonBedrock"` or AWS access keys using `type: "amazonBedrockAccessKeys"` via `account/login/start`. The client must enable the `experimentalApi` initialization capability. Codex replaces the current primary auth with the Bedrock credential and writes `model_provider = "amazon-bedrock"` to the user config.
-- **Personal access token (`personalAccessToken`)**: Codex uses a ChatGPT-backed personal access token loaded outside the app-server login RPCs, such as with `codex login --with-access-token` or `CODEX_ACCESS_TOKEN`.
+- **Personal access token (`personalAccessToken`)**: Codex uses a ChatGPT-backed personal access token loaded outside the app-server login RPCs, such as with `codex login --with-access-token` or `LEMEX_ACCESS_TOKEN`.
 
 ### API Overview
 
@@ -2410,7 +2410,7 @@ To log in with AWS access keys instead:
 The session token is optional. Both flows store credentials in the configured auth backend
 (`auth.json` or keyring), replace any previously stored login, and select
 `model_provider = "amazon-bedrock"`; access-key login also writes the selected AWS region to the
-active user config. Neither flow changes `$CODEX_HOME/.env`. Existing loaded sessions keep their
+active user config. Neither flow changes `$LEMEX_HOME/.env`. Existing loaded sessions keep their
 current provider selection, so clients should restart the app-server before sending more model
 requests. This limitation will be addressed in a follow-up.
 
@@ -2452,13 +2452,13 @@ Set up a named AWS profile:
 To select credentials already visible in the environment, use
 `{ "type": "environment", "region": "us-west-2" }`. The provider
 resolves available environment credentials through its normal authentication chain. Selecting
-profile or environment credentials leaves existing keys in `$CODEX_HOME/.env` unchanged.
+profile or environment credentials leaves existing keys in `$LEMEX_HOME/.env` unchanged.
 
 Successful setup writes `model_provider = "amazon-bedrock"` and the selected AWS region to the
 active user config, and additionally writes the selected profile for profile-based setup. Clients
 should restart the app-server before sending more model requests. Logging out while an Amazon
 Bedrock provider is selected clears the user-configured provider, profile, and region, removes
-any Codex-managed credentials, and leaves AWS-managed credentials and `$CODEX_HOME/.env` unchanged.
+any Codex-managed credentials, and leaves AWS-managed credentials and `$LEMEX_HOME/.env` unchanged.
 
 ### 4) Log in with ChatGPT (device code flow)
 
@@ -2494,7 +2494,7 @@ provider selection and its configured AWS profile and region, regardless of whet
 credentials are Codex-managed or AWS-managed. If the selected model is Bedrock-specific, logout
 also clears `model`; `model_reasoning_effort` and other generic settings are preserved.
 Codex-managed credentials are removed; AWS profiles, environment credentials, and
-`$CODEX_HOME/.env` are left untouched.
+`$LEMEX_HOME/.env` are left untouched.
 
 ### 7) Rate limits (ChatGPT)
 

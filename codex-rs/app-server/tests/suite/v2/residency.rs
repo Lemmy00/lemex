@@ -107,8 +107,8 @@ async fn managed_residency_overrides_provider_headers(transport: ModelTransport)
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", Some("sk-test")),
-            ("CODEX_ACCESS_TOKEN", None),
+            ("LEMEX_API_KEY", Some("sk-test")),
+            ("LEMEX_ACCESS_TOKEN", None),
             (PROVIDER_RESIDENCY_ENV_VAR, Some("eu-environment")),
         ])
         .build_initialized_with_timeout(READ_TIMEOUT)

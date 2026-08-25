@@ -4,7 +4,7 @@ ROOT_OF_EXTRACTED_PACKAGE
 ├── bin
 │   ├── codex[.exe]                       # CLI package only
 │   ├── codex-app-server[.exe]            # app-server package only
-│   └── codex-code-mode-host[.exe]
+│   └── lemex-code-mode-host[.exe]
 ├── codex-package.json
 ├── codex-path
 │   └── rg[.exe]
@@ -161,7 +161,7 @@ def _code_mode_host_symbol_address(
         for line in symbol_output.splitlines()
         if len(parts := line.split()) == 3
         and parts[1].lower() == "t"
-        and "codex_code_mode_host" in parts[2]
+        and "lemex_code_mode_host" in parts[2]
     )
 
 
@@ -190,7 +190,7 @@ def test_linux_debug_symbols_resolve_packaged_code(
         check=True,
         timeout=45,
     ).stdout
-    assert "codex_code_mode_host" in resolved, resolved
+    assert "lemex_code_mode_host" in resolved, resolved
     source = resolved.splitlines()[-1]
     assert source != "??:?" and source.rsplit(":", 1)[-1].isdigit(), source
 
@@ -211,7 +211,7 @@ def test_macos_debug_symbols_resolve_packaged_code(
         check=True,
         timeout=45,
     ).stdout
-    assert "codex_code_mode_host" in resolved, resolved
+    assert "lemex_code_mode_host" in resolved, resolved
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="requires Windows debug symbols")
@@ -222,10 +222,10 @@ def test_windows_debug_symbols_resolve_packaged_code(
     """Windows host symbols match the packaged executable's debug signature."""
     # Rust embeds an underscored PDB name, but release archives normalize it.
     symbols = code_mode_host_debug_symbols.rename(
-        code_mode_host_debug_symbols.with_name("codex_code_mode_host.pdb")
+        code_mode_host_debug_symbols.with_name("lemex_code_mode_host.pdb")
     )
     host = symbols.with_suffix(".exe")
-    shutil.copy2(package.cli.with_name("codex-code-mode-host.exe"), host)
+    shutil.copy2(package.cli.with_name("lemex-code-mode-host.exe"), host)
     result = subprocess.run(
         ["dumpbin", "/PDBPATH", str(host)],
         cwd=package.directory,

@@ -704,7 +704,7 @@ impl TestCodexBuilder {
         let code_mode_host_program = self
             .code_mode_host_program
             .take()
-            .or_else(|| codex_utils_cargo_bin::cargo_bin("codex-code-mode-host").ok());
+            .or_else(|| codex_utils_cargo_bin::cargo_bin("lemex-code-mode-host").ok());
         let thread_manager = if config.features.enabled(Feature::CodeModeHost)
             && let Some(code_mode_host_program) = code_mode_host_program
         {

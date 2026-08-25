@@ -67,13 +67,13 @@ def _dependency_hint(package: str, *, upgrade: bool = False) -> str:
 
 
 def _ensure_api_key(dry_run: bool) -> None:
-    if os.getenv("OPENAI_API_KEY"):
-        print("OPENAI_API_KEY is set.", file=sys.stderr)
+    if os.getenv("LEMEX_API_KEY"):
+        print("LEMEX_API_KEY is set.", file=sys.stderr)
         return
     if dry_run:
-        _warn("OPENAI_API_KEY is not set; dry-run only.")
+        _warn("LEMEX_API_KEY is not set; dry-run only.")
         return
-    _die("OPENAI_API_KEY is not set. Export it before running.")
+    _die("LEMEX_API_KEY is not set. Export it before running.")
 
 
 def _read_prompt(prompt: Optional[str], prompt_file: Optional[str]) -> str:

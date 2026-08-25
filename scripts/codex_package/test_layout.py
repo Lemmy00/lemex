@@ -34,7 +34,7 @@ class PackageLayoutTest(unittest.TestCase):
                                 root / variant.executable_stem
                             ),
                             code_mode_host_bin=touch_executable(
-                                root / "codex-code-mode-host"
+                                root / "lemex-code-mode-host"
                             ),
                             rg_bin=rg_bin,
                             zsh_bin=zsh_bin,
@@ -72,7 +72,7 @@ class PackageLayoutTest(unittest.TestCase):
             package_dir.mkdir()
             inputs = PackageInputs(
                 entrypoint_bin=touch_executable(root / "codex-app-server"),
-                code_mode_host_bin=touch_executable(root / "codex-code-mode-host"),
+                code_mode_host_bin=touch_executable(root / "lemex-code-mode-host"),
                 rg_bin=touch_executable(root / "rg"),
                 zsh_bin=None,
                 bwrap_bin=touch_executable(root / "bwrap"),
@@ -94,7 +94,7 @@ class PackageLayoutTest(unittest.TestCase):
                 include_zsh=False,
             )
 
-            self.assertTrue((package_dir / "bin" / "codex-code-mode-host").is_file())
+            self.assertTrue((package_dir / "bin" / "lemex-code-mode-host").is_file())
 
 
 def touch_executable(path: Path) -> Path:

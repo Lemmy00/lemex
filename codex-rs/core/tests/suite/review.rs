@@ -1325,7 +1325,7 @@ where
         .build(server)
         .await
         .expect("create conversation")
-        .codex
+        .lemex
 }
 
 /// Create a conversation resuming from a rollout file, configured to talk to the provided mock server.
@@ -1349,5 +1349,5 @@ where
         .resume(server, codex_home, resume_path)
         .await
         .expect("resume conversation")
-        .codex
+        .lemex
 }

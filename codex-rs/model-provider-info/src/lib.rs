@@ -2,7 +2,7 @@
 //!
 //! Providers can be defined in two places:
 //!   1. Built-in defaults compiled into the binary so Codex works out-of-the-box.
-//!   2. User-defined entries inside `~/.codex/config.toml` under the `model_providers`
+//!   2. User-defined entries inside `~/.lemex/config.toml` under the `model_providers`
 //!      key. These override or extend the defaults at runtime.
 
 use codex_api::Provider as ApiProvider;
@@ -38,6 +38,11 @@ const OPENAI_PROVIDER_NAME: &str = "OpenAI";
 const OPENAI_ACTOR_AUTHORIZATION_HEADER: &str = "x-openai-actor-authorization";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+/// Default base URL for the built-in `openai` provider when neither the
+/// `openai_base_url` config value nor `LEMEX_BASE_URL` is set.
+pub const DEFAULT_LEMEX_BASE_URL: &str = "https://inference.rcp.epfl.ch/v1";
+/// Environment variable that overrides the built-in `openai` provider base URL.
+pub const LEMEX_BASE_URL_ENV_VAR: &str = "LEMEX_BASE_URL";
 const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
 pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
 const AMAZON_BEDROCK_RUNTIME_PROVIDER_NAME: &str = "Amazon Bedrock Runtime";
@@ -302,7 +307,7 @@ impl ModelProviderInfo {
         ) {
             CHATGPT_CODEX_BASE_URL
         } else {
-            "https://api.openai.com/v1"
+            DEFAULT_LEMEX_BASE_URL
         };
         let base_url = self
             .base_url
@@ -498,12 +503,25 @@ pub const DEFAULT_OLLAMA_PORT: u16 = 11434;
 pub const LMSTUDIO_OSS_PROVIDER_ID: &str = "lmstudio";
 pub const OLLAMA_OSS_PROVIDER_ID: &str = "ollama";
 
+/// Resolves the base URL for the built-in `openai` provider: a non-empty
+/// configured value wins, then the `LEMEX_BASE_URL` environment variable.
+/// `None` means callers fall back to [`DEFAULT_LEMEX_BASE_URL`].
+pub fn resolve_openai_base_url(configured: Option<String>) -> Option<String> {
+    configured
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var(LEMEX_BASE_URL_ENV_VAR)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
 /// Built-in default provider list.
 pub fn built_in_model_providers(
     openai_base_url: Option<String>,
 ) -> HashMap<String, ModelProviderInfo> {
     use ModelProviderInfo as P;
-    let openai_provider = P::create_openai_provider(openai_base_url);
+    let openai_provider = P::create_openai_provider(resolve_openai_base_url(openai_base_url));
     let amazon_bedrock_provider = P::create_amazon_bedrock_provider(/*aws*/ None);
     let amazon_bedrock_runtime_provider =
         P::create_amazon_bedrock_runtime_provider(/*aws*/ None);

@@ -1,9 +1,9 @@
 {
-  "name": "codex-devcontainer-install",
+  "name": "lemex-devcontainer-install",
   "private": true,
-  "description": "Locked Codex CLI install boundary for the secure devcontainer.",
+  "description": "Locked Lemex CLI install boundary for the secure devcontainer.",
   "dependencies": {
-    "@openai/codex": "0.121.0"
+    "lemex": "0.0.0-dev"
   },
   "engines": {
     "node": ">=22",

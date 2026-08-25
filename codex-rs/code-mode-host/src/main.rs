@@ -6,7 +6,7 @@ struct Cli {
     #[arg(
         long,
         value_name = "URL",
-        default_value = codex_code_mode_host::DEFAULT_LISTEN_URL
+        default_value = lemex_code_mode_host::DEFAULT_LISTEN_URL
     )]
     listen: String,
 }
@@ -19,5 +19,5 @@ async fn main() -> anyhow::Result<()> {
         .with_ansi(false)
         .init();
 
-    codex_code_mode_host::run_main(&Cli::parse().listen).await
+    lemex_code_mode_host::run_main(&Cli::parse().listen).await
 }

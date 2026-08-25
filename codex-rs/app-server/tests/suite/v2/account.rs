@@ -285,7 +285,7 @@ async fn logout_account_removes_auth_and_notifies() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -337,7 +337,7 @@ async fn logout_account_succeeds_when_config_reload_fails() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -428,7 +428,7 @@ async fn set_auth_token_updates_account_and_notifies() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -511,7 +511,7 @@ async fn account_read_refresh_token_is_noop_in_external_mode() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -643,7 +643,7 @@ async fn external_auth_refreshes_on_unauthorized() -> Result<()> {
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -744,7 +744,7 @@ async fn external_auth_refresh_error_fails_turn() -> Result<()> {
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -861,7 +861,7 @@ async fn external_auth_refresh_mismatched_workspace_fails_turn() -> Result<()> {
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -971,7 +971,7 @@ async fn external_auth_refresh_invalid_access_token_fails_turn() -> Result<()> {
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -1127,7 +1127,7 @@ async fn login_amazon_bedrock_replaces_primary_auth_and_persists_provider(
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     let mut expected_config = read_config_toml(codex_home.path())?;
@@ -1280,7 +1280,7 @@ async fn login_amazon_bedrock_rejects_non_bedrock_provider_override_without_chan
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .with_args(&["-c", "model_provider=\"mock_provider\""])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
@@ -1342,7 +1342,7 @@ async fn login_amazon_bedrock_access_keys_rejects_overridden_aws_configuration()
         let mut mcp = TestAppServer::builder()
             .with_codex_home(codex_home.path())
             .without_auto_env()
-            .with_env_overrides(&[("OPENAI_API_KEY", None)])
+            .with_env_overrides(&[("LEMEX_API_KEY", None)])
             .with_args(&["-c", config_override])
             .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
             .await?;
@@ -1387,7 +1387,7 @@ async fn login_amazon_bedrock_allows_bedrock_provider_override() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .with_args(&["-c", "model_provider=\"amazon-bedrock\""])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
@@ -1444,7 +1444,7 @@ async fn logout_managed_bedrock_restores_default_account(
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     let request_id = mcp
@@ -1569,7 +1569,7 @@ async fn logout_aws_managed_bedrock_clears_provider_and_restores_default_account
             .with_codex_home(codex_home.path())
             .without_auto_env()
             .with_env_overrides(&[
-                ("OPENAI_API_KEY", None),
+                ("LEMEX_API_KEY", None),
                 ("AWS_ACCESS_KEY_ID", Some("environment-id")),
                 ("AWS_SECRET_ACCESS_KEY", Some("environment-secret")),
                 (
@@ -1743,7 +1743,7 @@ async fn login_managed_bedrock_updates_active_bedrock_account() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     let request_id = mcp
@@ -1786,7 +1786,7 @@ async fn login_account_amazon_bedrock_rejects_invalid_credentials_without_change
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     let expected_config = read_config_toml(codex_home.path())?;
@@ -2011,7 +2011,7 @@ async fn login_account_chatgpt_device_code_returns_error_when_disabled() -> Resu
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (LOGIN_ISSUER_ENV_VAR, Some(issuer.as_str())),
         ])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
@@ -2076,7 +2076,7 @@ async fn login_account_chatgpt_device_code_succeeds_and_notifies() -> Result<()>
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (LOGIN_ISSUER_ENV_VAR, Some(issuer.as_str())),
         ])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
@@ -2149,7 +2149,7 @@ async fn login_account_chatgpt_device_code_failure_notifies_without_account_upda
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (LOGIN_ISSUER_ENV_VAR, Some(issuer.as_str())),
         ])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
@@ -2220,7 +2220,7 @@ async fn login_account_chatgpt_device_code_can_be_cancelled() -> Result<()> {
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (LOGIN_ISSUER_ENV_VAR, Some(issuer.as_str())),
         ])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
@@ -2625,7 +2625,7 @@ async fn get_account_no_auth() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -2918,7 +2918,7 @@ async fn get_account_with_chatgpt() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -2968,7 +2968,7 @@ async fn get_account_with_chatgpt_plan_variants_returns_plan_type(
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -3012,7 +3012,7 @@ async fn get_account_with_chatgpt_without_email() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -3075,7 +3075,7 @@ async fn get_account_omits_chatgpt_after_permanent_refresh_failure() -> Result<(
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (
                 REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
                 Some(refresh_url.as_str()),
@@ -3135,7 +3135,7 @@ async fn get_account_with_chatgpt_missing_plan_claim_returns_unknown() -> Result
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 

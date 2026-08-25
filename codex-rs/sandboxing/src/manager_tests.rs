@@ -502,7 +502,7 @@ fn transform_for_direct_spawn_windows_preserves_only_wrapper_setup_identity() {
         [
             ("USERNAME", "alice"),
             ("USERPROFILE", r"C:\Users\alice"),
-            ("OPENAI_API_KEY", "secret"),
+            ("LEMEX_API_KEY", "secret"),
         ]
         .map(|(key, value)| {
             (

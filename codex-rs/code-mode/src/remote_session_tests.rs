@@ -53,7 +53,7 @@ fn provider_reuses_its_live_process_host() {
 
 #[test]
 fn missing_host_error_limits_the_displayed_path_to_512_bytes() {
-    let executable = "codex-code-mode-host-does-not-exist";
+    let executable = "lemex-code-mode-host-does-not-exist";
     let host_program = format!("{}{executable}", "missing-directory/".repeat(/*n*/ 64));
     let expected_suffix = &host_program[host_program.len() - (512 - "...".len())..];
     let error = ConnectionError::Spawn {
@@ -69,7 +69,7 @@ fn missing_host_error_limits_the_displayed_path_to_512_bytes() {
 
 #[test]
 fn missing_host_error_preserves_utf8_boundaries_when_truncating_the_path() {
-    let executable = "codex-code-mode-host-does-not-exist";
+    let executable = "lemex-code-mode-host-does-not-exist";
     let host_program = format!("{}{executable}", "🦀".repeat(/*n*/ 256));
     let error = ConnectionError::Spawn {
         host_program: PathBuf::from(host_program),
@@ -357,7 +357,7 @@ async fn websocket_provider_fails_when_a_negotiated_bulk_connection_is_unavailab
 #[tokio::test]
 async fn provider_returns_missing_host_error() {
     let provider = ProcessOwnedCodeModeSessionProvider::with_host_program(
-        "codex-code-mode-host-does-not-exist".into(),
+        "lemex-code-mode-host-does-not-exist".into(),
     );
 
     let error = provider
@@ -366,7 +366,7 @@ async fn provider_returns_missing_host_error() {
         .err()
         .expect("missing host should fail");
 
-    assert!(error.contains("failed to spawn code-mode host codex-code-mode-host-does-not-exist"));
+    assert!(error.contains("failed to spawn code-mode host lemex-code-mode-host-does-not-exist"));
 }
 
 #[tokio::test]

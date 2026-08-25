@@ -246,7 +246,7 @@ async fn cold_root_resume_restores_agent_identity_and_role_on_followup() -> Resu
     let initial = initial_builder.build_with_auto_env(&server).await?;
     let root_thread_id = initial.session_configured.thread_id;
     initial
-        .codex
+        .lemex
         .start_or_steer_turn(
             TurnInputRequest::user_input(vec![UserInput::Text {
                 text: INITIAL_PROMPT.to_string(),

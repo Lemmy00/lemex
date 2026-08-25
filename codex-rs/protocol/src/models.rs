@@ -1581,7 +1581,7 @@ fn local_media_error_placeholder(
     let media_name = media_kind.name();
     let path = path.display();
     ContentItem::InputText {
-        text: format!("Codex could not read the local {media_name} at `{path}`: {error}"),
+        text: format!("Lemex could not read the local {media_name} at `{path}`: {error}"),
     }
 }
 
@@ -1684,7 +1684,7 @@ fn invalid_image_error_placeholder(
 fn unsupported_image_error_placeholder(path: &std::path::Path, mime: &str) -> ContentItem {
     ContentItem::InputText {
         text: format!(
-            "Codex cannot attach image at `{}`: unsupported image `{}`.",
+            "Lemex cannot attach image at `{}`: unsupported image `{}`.",
             path.display(),
             mime
         ),
@@ -1741,7 +1741,7 @@ pub enum LocalImagePreparation {
 fn unsupported_audio_error_placeholder(path: &std::path::Path) -> ContentItem {
     ContentItem::InputText {
         text: format!(
-            "Codex cannot attach audio at `{}`: unsupported audio format; use wav, mp3, m4a, webm, or ogg.",
+            "Lemex cannot attach audio at `{}`: unsupported audio format; use wav, mp3, m4a, webm, or ogg.",
             path.display()
         ),
     }
@@ -3853,7 +3853,7 @@ mod tests {
                 role: "user".to_string(),
                 content: vec![ContentItem::InputText {
                     text: format!(
-                        "Codex cannot attach audio at `{}`: unsupported audio format; use wav, mp3, m4a, webm, or ogg.",
+                        "Lemex cannot attach audio at `{}`: unsupported audio format; use wav, mp3, m4a, webm, or ogg.",
                         audio_path.display()
                     ),
                 }],
@@ -3877,7 +3877,7 @@ mod tests {
             panic!("expected local audio error placeholder");
         };
         assert!(
-            text.starts_with("Codex could not read the local audio at `missing.wav`: "),
+            text.starts_with("Lemex could not read the local audio at `missing.wav`: "),
             "unexpected placeholder: {text}"
         );
     }
@@ -4296,7 +4296,7 @@ mod tests {
             ResponseInputItem::Message { content, .. } => {
                 assert_eq!(content.len(), 1);
                 let expected = format!(
-                    "Codex cannot attach image at `{}`: unsupported image `image/svg+xml`.",
+                    "Lemex cannot attach image at `{}`: unsupported image `image/svg+xml`.",
                     svg_path.display()
                 );
                 match &content[0] {

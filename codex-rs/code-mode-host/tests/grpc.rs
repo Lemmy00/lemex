@@ -22,7 +22,7 @@ use codex_code_mode::ToolInvocationFuture;
 use codex_code_mode::WaitOutcome;
 use codex_code_mode::WaitRequest;
 #[cfg(unix)]
-use codex_code_mode_host::GrpcCodeModeHost;
+use lemex_code_mode_host::GrpcCodeModeHost;
 use codex_code_mode_protocol::grpc;
 use codex_code_mode_protocol::grpc::code_mode_host_client::CodeModeHostClient;
 #[cfg(unix)]

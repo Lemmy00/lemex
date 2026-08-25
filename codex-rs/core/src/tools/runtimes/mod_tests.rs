@@ -755,22 +755,22 @@ async fn snapshot_wrapper_replays_dummy_and_preserves_unbrokered_credentials() -
     let snapshot = dir.path().join("snapshot.sh");
     std::fs::write(
         &snapshot,
-        "# Snapshot file\nexport OPENAI_API_KEY='stale'\nexport GITHUB_TOKEN='ghp_snapshot_only'\nexport GH_HOST='github.example.com'\n",
+        "# Snapshot file\nexport LEMEX_API_KEY='stale'\nexport GITHUB_TOKEN='ghp_snapshot_only'\nexport GH_HOST='github.example.com'\n",
     )?;
     let (shell, snapshot) = shell_with_snapshot(ShellType::Bash, "/bin/bash", snapshot.abs());
     let mut env = HashMap::from([
         (
-            "OPENAI_API_KEY".to_string(),
+            "LEMEX_API_KEY".to_string(),
             "sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_".to_string(),
         ),
         ("GITHUB_TOKEN".to_string(), String::new()),
     ]);
     proxy.apply_to_env(&mut env);
-    let dummy = env["OPENAI_API_KEY"].clone();
+    let dummy = env["LEMEX_API_KEY"].clone();
     let command = vec![
         "/bin/bash".to_string(),
         "-lc".to_string(),
-        "printf '%s\\n%s\\n%s' \"$OPENAI_API_KEY\" \"${GITHUB_TOKEN-unset}\" \"$GH_HOST\""
+        "printf '%s\\n%s\\n%s' \"$LEMEX_API_KEY\" \"${GITHUB_TOKEN-unset}\" \"$GH_HOST\""
             .to_string(),
     ];
     let rewritten = maybe_wrap_shell_lc_with_snapshot(
@@ -1211,7 +1211,7 @@ fn maybe_wrap_shell_lc_with_snapshot_does_not_embed_override_values_in_argv() {
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
         &snapshot_path,
-        "# Snapshot file\nexport OPENAI_API_KEY='snapshot-value'\n",
+        "# Snapshot file\nexport LEMEX_API_KEY='snapshot-value'\n",
     )
     .expect("write snapshot");
     let (session_shell, shell_snapshot) =
@@ -1219,11 +1219,11 @@ fn maybe_wrap_shell_lc_with_snapshot_does_not_embed_override_values_in_argv() {
     let command = vec![
         "/bin/bash".to_string(),
         "-lc".to_string(),
-        "printf '%s' \"$OPENAI_API_KEY\"".to_string(),
+        "printf '%s' \"$LEMEX_API_KEY\"".to_string(),
     ];
     let explicit_env_overrides = HashMap::from([
         (
-            "OPENAI_API_KEY".to_string(),
+            "LEMEX_API_KEY".to_string(),
             "super-secret-value".to_string(),
         ),
         (
@@ -1237,7 +1237,7 @@ fn maybe_wrap_shell_lc_with_snapshot_does_not_embed_override_values_in_argv() {
         Some(&shell_snapshot),
         &explicit_env_overrides,
         &HashMap::from([(
-            "OPENAI_API_KEY".to_string(),
+            "LEMEX_API_KEY".to_string(),
             "super-secret-value".to_string(),
         )]),
         &RuntimePathPrepends::default(),
@@ -1247,7 +1247,7 @@ fn maybe_wrap_shell_lc_with_snapshot_does_not_embed_override_values_in_argv() {
     assert!(!rewritten[2].contains("openai_identity_token_file"));
     let output = Command::new(&rewritten[0])
         .args(&rewritten[1..])
-        .env("OPENAI_API_KEY", "super-secret-value")
+        .env("LEMEX_API_KEY", "super-secret-value")
         .output()
         .expect("run rewritten command");
     assert!(output.status.success(), "command failed: {output:?}");

@@ -303,7 +303,7 @@ fn lock_sandbox_dir(
     real_user_mask: u32,
     setup_mode: SetupMode,
 ) -> Result<()> {
-    // ProvisionOnly accepts another user's CODEX_HOME; keep its ACL mutation
+    // ProvisionOnly accepts another user's LEMEX_HOME; keep its ACL mutation
     // bound to a no-reparse handle without changing full setup behavior.
     let directory = match setup_mode {
         SetupMode::Full | SetupMode::ReadAclsOnly => {
@@ -420,7 +420,7 @@ pub fn main() -> Result<()> {
     let ret = real_main();
     if let Err(e) = &ret {
         // Best-effort: log unexpected top-level errors.
-        if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        if let Ok(codex_home) = std::env::var("LEMEX_HOME") {
             let sbx_dir = sandbox_dir(Path::new(&codex_home));
             let _ = std::fs::create_dir_all(&sbx_dir);
             if let Some(mut f) = log_writer(&sbx_dir) {
@@ -957,7 +957,7 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
 
         // These are deny-write carveouts, not deny-read paths. They may come from explicit
         // read-only-under-a-writable-root carveouts in the transformed sandbox policy, or from
-        // legacy protected children such as `.git`, `.codex`, and `.agents`.
+        // legacy protected children such as `.git`, `.lemex`, and `.agents`.
         //
         // Deny ACEs attach to filesystem objects; if an explicit policy carveout does not exist
         // during setup, the sandbox could otherwise create it later under a writable parent and
@@ -1304,7 +1304,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let codex_home = temp.path().join("codex-home");
         let workspace = temp.path().join("workspace");
-        let protected_dir = workspace.join(".codex");
+        let protected_dir = workspace.join(".lemex");
         let nested_root = protected_dir.join("nested-root");
         fs::create_dir_all(&codex_home).expect("create codex home");
         fs::create_dir_all(&workspace).expect("create workspace");

@@ -1,4 +1,4 @@
-//! Built-in pet catalog ported from the Codex App avatar catalog.
+//! Built-in pet catalog ported from the Lemex App avatar catalog.
 
 #[cfg(test)]
 use std::fs;
@@ -25,8 +25,8 @@ pub(super) struct BuiltinPet {
 pub(super) const BUILTIN_PETS: &[BuiltinPet] = &[
     BuiltinPet {
         id: "codex",
-        display_name: "Codex",
-        description: "The original Codex companion",
+        display_name: "Lemex",
+        description: "The original Lemex companion",
         spritesheet_file: "codex-spritesheet-v4.webp",
     },
     BuiltinPet {

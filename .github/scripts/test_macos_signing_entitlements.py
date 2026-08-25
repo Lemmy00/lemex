@@ -22,7 +22,7 @@ class MacosSigningEntitlementsTest(unittest.TestCase):
             ALLOW_JIT: True,
             ALLOW_UNSIGNED_EXECUTABLE_MEMORY: True,
         }
-        for binary in ["codex", "codex-app-server", "codex-code-mode-host"]:
+        for binary in ["codex", "codex-app-server", "lemex-code-mode-host"]:
             with self.subTest(binary=binary):
                 self.assertEqual(self.load(binary), expected)
 

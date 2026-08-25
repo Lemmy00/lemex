@@ -15,7 +15,7 @@ from openai_codex.generated.v2_all import (
 def _app_server_config(harness: AppServerHarness) -> CodexConfig:
     """Build an isolated login config without inheriting ambient API-key auth."""
     config = harness.app_server_config()
-    config.env = {**(config.env or {}), "OPENAI_API_KEY": ""}
+    config.env = {**(config.env or {}), "LEMEX_API_KEY": ""}
     return config
 
 

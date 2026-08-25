@@ -219,7 +219,7 @@ fn catalog_budget_uses_context_percentage_or_character_fallback() {
 
 #[test]
 fn host_only_prompts_preserve_existing_behavior_with_and_without_aliases() {
-    let root = "/Users/test/.codex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root";
+    let root = "/Users/test/.lemex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root";
     let catalog = SkillCatalog {
         entries: [
             ("alpha", "Alpha skill."),
@@ -248,9 +248,9 @@ fn host_only_prompts_preserve_existing_behavior_with_and_without_aliases() {
     ## Skills
     A skill is a set of instructions provided through a `SKILL.md` source. Below is the list of skills that can be used. Each entry includes a name, description, and source locator. `file` locators are on the host filesystem, `executor package` locators are owned by their execution environment, `orchestrator package` locators are opaque package identifiers, and `custom resource` locators use their provider's access mechanism.
     ### Available skills
-    - alpha: Alpha skill. (file: /Users/test/.codex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root/alpha/SKILL.md)
-    - beta: Beta skill. (file: /Users/test/.codex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root/beta/SKILL.md)
-    - gamma: Gamma skill. (file: /Users/test/.codex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root/gamma/SKILL.md)
+    - alpha: Alpha skill. (file: /Users/test/.lemex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root/alpha/SKILL.md)
+    - beta: Beta skill. (file: /Users/test/.lemex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root/beta/SKILL.md)
+    - gamma: Gamma skill. (file: /Users/test/.lemex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root/gamma/SKILL.md)
     ### How to use skills
     - Discovery: The list above is the skills available in this session (name + description + source locator). `file` entries live on the host filesystem, `executor package` and `orchestrator package` entries are accessed directly through `skills.read`, and `custom resource` entries use their provider's access mechanism.
     - Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches a skill's description shown above, you must use that skill for that turn. Multiple mentions mean use them all. Do not carry skills across turns unless re-mentioned.
@@ -283,7 +283,7 @@ fn host_only_prompts_preserve_existing_behavior_with_and_without_aliases() {
     ## Skills
     A skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and a short path that can be expanded into an absolute path using the skill roots table.
     ### Skill roots
-    - `r0` = `/Users/test/.codex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root`
+    - `r0` = `/Users/test/.lemex/plugins/cache/openai-curated/host-plugin/1.0.0/skills-with-a-long-shared-root`
     ### Available skills
     - alpha: Alpha skill. (file: r0/alpha/SKILL.md)
     - beta: Beta skill. (file: r0/beta/SKILL.md)
@@ -311,7 +311,7 @@ fn host_only_prompts_preserve_existing_behavior_with_and_without_aliases() {
 
 #[test]
 fn path_aliases_are_not_used_without_budget_pressure() {
-    let root = "/Users/test/.codex/plugins/cache/openai-curated/example/hash/skills";
+    let root = "/Users/test/.lemex/plugins/cache/openai-curated/example/hash/skills";
     let catalog = SkillCatalog {
         entries: vec![
             entry("alpha", "Alpha skill.", /*short_description*/ None)
@@ -342,7 +342,7 @@ fn path_aliases_are_not_used_without_budget_pressure() {
 
 #[test]
 fn path_aliases_retain_every_skill_under_budget_pressure() {
-    let root = "/Users/test/.codex/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix";
+    let root = "/Users/test/.lemex/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix";
     let entries = (0..12)
         .map(|index| {
             let name = format!("shared-root-skill-{index}");
@@ -490,7 +490,7 @@ async fn host_alias_roots_follow_core_discovery_order() -> Result<(), Box<dyn st
 
 #[test]
 fn mixed_catalogs_keep_absolute_authority_aware_rendering_under_budget_pressure() {
-    let root = "/Users/test/.codex/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix";
+    let root = "/Users/test/.lemex/plugins/cache/openai-curated/example/hash1234567890/skills-with-a-very-long-shared-prefix";
     let mut entries = (0..12)
         .map(|index| {
             let name = format!("host-skill-{index}");
@@ -616,7 +616,7 @@ fn mixed_catalogs_alias_all_skill_sources_under_budget_pressure() {
     let executor_root =
         "skill://executor-environment-with-a-long-shared-root/workspaces/project/.agents/skills";
     let orchestrator_root = "skill://plugin_connector_1p_2330815c823c8191941e5dc465bb899f";
-    let host_root = "/Users/test/.codex/plugins/cache/openai-curated/example/hash1234567890/skills";
+    let host_root = "/Users/test/.lemex/plugins/cache/openai-curated/example/hash1234567890/skills";
     let catalog =
         |source: SkillSourceKind, authority: &str, root: &str, prefix: &str| SkillCatalog {
             entries: (0..3)

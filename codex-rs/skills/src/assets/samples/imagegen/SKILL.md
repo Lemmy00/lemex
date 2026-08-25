@@ -11,8 +11,8 @@ Generates or edits images for the current project (for example website assets, g
 
 This skill has exactly two top-level modes:
 
-- **Default built-in tool mode (preferred):** built-in `image_gen` tool for image generation, editing, and transparent-image requests. Does not require `OPENAI_API_KEY`.
-- **Fallback CLI mode:** `scripts/image_gen.py` CLI. Use when the user explicitly asks for or confirms the CLI/API/model path. Requires `OPENAI_API_KEY`.
+- **Default built-in tool mode (preferred):** built-in `image_gen` tool for image generation, editing, and transparent-image requests. Does not require `LEMEX_API_KEY`.
+- **Fallback CLI mode:** `scripts/image_gen.py` CLI. Use when the user explicitly asks for or confirms the CLI/API/model path. Requires `LEMEX_API_KEY`.
 
 Within CLI fallback, the CLI exposes three subcommands:
 
@@ -26,19 +26,19 @@ Rules:
 - For transparent images, ask built-in `image_gen` for a transparent background and preserve the generated alpha.
 - Never silently switch from built-in `image_gen` or CLI `gpt-image-2` to CLI `gpt-image-1.5`; ask the user first unless they explicitly requested `gpt-image-1.5`.
 - The word `batch` by itself does not mean CLI fallback. If the user asks for many assets or says to batch-generate assets without explicitly asking for CLI/API/model controls, stay on the built-in path and issue one built-in call per requested asset or variant.
-- If the built-in tool fails or is unavailable, tell the user the CLI fallback exists and that it requires `OPENAI_API_KEY`. Proceed only if the user explicitly asks for that fallback.
+- If the built-in tool fails or is unavailable, tell the user the CLI fallback exists and that it requires `LEMEX_API_KEY`. Proceed only if the user explicitly asks for that fallback.
 - If the user explicitly asks for CLI mode, use the bundled `scripts/image_gen.py` workflow. Do not create one-off SDK runners.
 - Never modify `scripts/image_gen.py`. If something is missing, ask the user before doing anything else.
 
 Built-in save-path policy:
-- In built-in tool mode, Codex saves generated images under `$CODEX_HOME/*` by default.
+- In built-in tool mode, Codex saves generated images under `$LEMEX_HOME/*` by default.
 - Do not describe or rely on OS temp as the default built-in destination.
-- Do not describe or rely on a destination-path argument (if any) on the built-in `image_gen` tool. If a specific location is needed, generate first and then move or copy the selected output from `$CODEX_HOME/generated_images/...`.
+- Do not describe or rely on a destination-path argument (if any) on the built-in `image_gen` tool. If a specific location is needed, generate first and then move or copy the selected output from `$LEMEX_HOME/generated_images/...`.
 - Save-path precedence in built-in mode:
   1. If the user names a destination, move or copy the selected output there.
   2. If the image is meant for the current project, move or copy the final selected image into the workspace before finishing.
-  3. If the image is only for preview or brainstorming, render it inline; the underlying file can remain at the default `$CODEX_HOME/*` path.
-- Never leave a project-referenced asset only at the default `$CODEX_HOME/*` path.
+  3. If the image is only for preview or brainstorming, render it inline; the underlying file can remain at the default `$LEMEX_HOME/*` path.
+- Never leave a project-referenced asset only at the default `$LEMEX_HOME/*` path.
 - Do not overwrite an existing asset unless the user explicitly asked for replacement; otherwise create a sibling versioned filename such as `hero-v2.png` or `item-icon-edited.png`.
 
 Shared prompt guidance for both modes lives in `references/prompting.md` and `references/sample-prompts.md`.
@@ -106,8 +106,8 @@ Assume the user wants a new image unless they clearly ask to change an existing 
 11. For transparent-output requests, ask built-in `image_gen` for a transparent background and preserve the generated alpha channel.
 12. Inspect outputs and validate: subject, style, composition, text accuracy, and invariants/avoid items.
 13. Iterate with a single targeted change, then re-check.
-14. For preview-only work, render the image inline; the underlying file may remain at the default `$CODEX_HOME/generated_images/...` path.
-15. For project-bound work, move or copy the selected artifact into the workspace and update any consuming code or references. Never leave a project-referenced asset only at the default `$CODEX_HOME/generated_images/...` path.
+14. For preview-only work, render the image inline; the underlying file may remain at the default `$LEMEX_HOME/generated_images/...` path.
+15. For project-bound work, move or copy the selected artifact into the workspace and update any consuming code or references. Never leave a project-referenced asset only at the default `$LEMEX_HOME/generated_images/...` path.
 16. For batches or multi-asset requests, persist every requested deliverable final in the workspace unless the user explicitly asked to keep outputs preview-only. Discarded variants do not need to be kept unless requested.
 17. If the user explicitly chooses or confirms the CLI fallback, then use the fallback-only docs for model, quality, size, `input_fidelity`, masks, output format, output paths, and network setup.
 18. Always report the final saved path(s) for any workspace-bound asset(s), plus the final prompt or prompt set and whether the built-in tool or fallback CLI mode was used.
@@ -290,13 +290,13 @@ Portability note:
 - In uv-managed environments, `uv pip install ...` remains the preferred path.
 
 ### Environment
-- `OPENAI_API_KEY` must be set for live API calls.
-- Do not ask the user for `OPENAI_API_KEY` when using the built-in `image_gen` tool.
+- `LEMEX_API_KEY` must be set for live API calls.
+- Do not ask the user for `LEMEX_API_KEY` when using the built-in `image_gen` tool.
 - Never ask the user to paste the full key in chat. Ask them to set it locally and confirm when ready.
 
 If the key is missing, give the user these steps:
 1. Create an API key in the OpenAI platform UI: https://platform.openai.com/api-keys
-2. Set `OPENAI_API_KEY` as an environment variable in their system.
+2. Set `LEMEX_API_KEY` as an environment variable in their system.
 3. Offer to guide them through setting the environment variable for their OS/shell if needed.
 
 If installation is not possible in this environment, tell the user which dependency is missing and how to install it into their active environment.

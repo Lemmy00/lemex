@@ -261,7 +261,7 @@ async fn run_websocket_listener(bind_address: SocketAddr) -> Result<()> {
         limits: Arc::new(HostLimits::new()),
         bulk_connections: BulkConnectionRegistry::default(),
     };
-    info!("codex-code-mode-host listening on ws://{local_addr}");
+    info!("lemex-code-mode-host listening on ws://{local_addr}");
     println!("ws://{local_addr}");
     io::stdout()
         .flush()

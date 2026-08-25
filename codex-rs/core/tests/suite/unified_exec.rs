@@ -376,7 +376,7 @@ async fn exec_command_uses_installed_environment_shell_policy_with_explicit_over
     let harness = TestCodexHarness::with_auto_env_builder(builder).await?;
     let selection = harness
         .test()
-        .codex
+        .lemex
         .environment_selections()
         .await
         .into_iter()
@@ -384,7 +384,7 @@ async fn exec_command_uses_installed_environment_shell_policy_with_explicit_over
         .context("thread should select its executor environment")?;
     harness
         .test()
-        .codex
+        .lemex
         .environment_ready(
             &selection,
             EnvironmentConfig {

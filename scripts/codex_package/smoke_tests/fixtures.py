@@ -51,7 +51,7 @@ class SmokePackage:
         )
 
         # Isolate package configuration and state from the user's Codex setup.
-        environment["CODEX_HOME"] = str(config_dir)
+        environment["LEMEX_HOME"] = str(config_dir)
         # Shell startup files can replace PATH and hide the packaged ripgrep.
         environment.pop("BASH_ENV", None)
         environment["ZDOTDIR"] = str(directory)
@@ -160,7 +160,7 @@ def package(
 
 @pytest.fixture
 def responses_server(package: SmokePackage) -> Iterator[MockResponsesServer]:
-    config_path = Path(package.environment["CODEX_HOME"]) / "config.toml"
+    config_path = Path(package.environment["LEMEX_HOME"]) / "config.toml"
     original_config = config_path.read_text()
     with MockResponsesServer() as server:
         # Direct CLI commands and SDK-launched servers must share a provider;
@@ -191,7 +191,7 @@ def code_mode_host_debug_symbols(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Path:
     target = pytestconfig.getoption("package_target")
-    binaries = {"codex", "codex-app-server", "codex-code-mode-host"}
+    binaries = {"codex", "codex-app-server", "lemex-code-mode-host"}
     if "windows" in target:
         binaries.update({"codex-command-runner", "codex-windows-sandbox-setup"})
 
@@ -221,7 +221,7 @@ def code_mode_host_debug_symbols(
                 if not matches:
                     continue
                 found.add(binary)
-                if binary == "codex-code-mode-host":
+                if binary == "lemex-code-mode-host":
                     archive.extract(member, destination, filter="data")
                     symbol_path = destination / member.name
                 break

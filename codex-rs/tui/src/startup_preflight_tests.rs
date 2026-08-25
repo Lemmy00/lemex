@@ -21,7 +21,7 @@ fn startup_delays_composer_for_homes_without_authentication_state() -> std::io::
         &codex_home,
         Ok(system_config_path.clone()),
         || Ok(false),
-        |name| (name == codex_login::CODEX_ACCESS_TOKEN_ENV_VAR).then(|| "  ".into()),
+        |name| (name == codex_login::LEMEX_ACCESS_TOKEN_ENV_VAR).then(|| "  ".into()),
     ));
 
     std::fs::create_dir_all(codex_home.join("tmp").join("arg0"))?;
@@ -48,18 +48,15 @@ fn startup_delays_composer_for_homes_without_authentication_state() -> std::io::
         &codex_home,
         Ok(system_config_path.clone()),
         || Ok(false),
-        |name| (name == "CODEX_HOME").then(|| "/custom/home".into()),
+        |name| (name == "LEMEX_HOME").then(|| "/custom/home".into()),
     ));
     assert!(!should_delay_startup_composer_for_first_login(
         &codex_home,
         Ok(system_config_path.clone()),
         || Ok(false),
-        |name| { (name == codex_login::CODEX_ACCESS_TOKEN_ENV_VAR).then(|| "access-token".into()) },
+        |name| { (name == codex_login::LEMEX_ACCESS_TOKEN_ENV_VAR).then(|| "access-token".into()) },
     ));
-    for disabled_credential in [
-        codex_login::OPENAI_API_KEY_ENV_VAR,
-        codex_login::CODEX_API_KEY_ENV_VAR,
-    ] {
+    for disabled_credential in [codex_login::LEMEX_API_KEY_ENV_VAR] {
         assert!(should_delay_startup_composer_for_first_login(
             &codex_home,
             Ok(system_config_path.clone()),
@@ -86,15 +83,15 @@ fn startup_delays_composer_for_homes_without_authentication_state() -> std::io::
         &codex_home,
         Ok(system_config_path.clone()),
         || Ok(false),
-        |name| (name == "CODEX_HOME").then(|| "/custom/home".into()),
+        |name| (name == "LEMEX_HOME").then(|| "/custom/home".into()),
     ));
     assert!(!should_delay_startup_composer_for_first_login(
         &codex_home,
         Ok(system_config_path.clone()),
         || panic!("process credentials should not probe managed configuration"),
         |name| match name {
-            "CODEX_HOME" => Some("/custom/home".into()),
-            codex_login::CODEX_ACCESS_TOKEN_ENV_VAR => Some("access-token".into()),
+            "LEMEX_HOME" => Some("/custom/home".into()),
+            codex_login::LEMEX_ACCESS_TOKEN_ENV_VAR => Some("access-token".into()),
             _ => None,
         },
     ));

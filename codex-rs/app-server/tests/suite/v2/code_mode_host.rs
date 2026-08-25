@@ -35,7 +35,7 @@ async fn app_server_shares_flag_selected_grpc_code_mode_host_across_threads() ->
 }
 
 async fn assert_shared_remote_code_mode_host(listen_url: &str) -> Result<()> {
-    let host_program = codex_utils_cargo_bin::cargo_bin("codex-code-mode-host")?;
+    let host_program = codex_utils_cargo_bin::cargo_bin("lemex-code-mode-host")?;
     let mut code_mode_host = Command::new(host_program)
         .args(["--listen", listen_url])
         .stdin(Stdio::null())

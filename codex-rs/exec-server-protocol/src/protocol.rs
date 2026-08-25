@@ -1112,7 +1112,7 @@ mod tests {
                 FileSystemSandboxEntry::skip_missing_path(
                     FileSystemPath::Special {
                         value: FileSystemSpecialPath::ProjectRoots {
-                            subpath: Some(".codex".into()),
+                            subpath: Some(".lemex".into()),
                         },
                     },
                     FileSystemAccessMode::Read,

@@ -123,11 +123,11 @@ class InstallShTest(unittest.TestCase):
             install_bin = root / "install-bin"
             current = root / "codex-home" / "packages" / "standalone" / "current"
             codex_path = install_bin / "codex"
-            host_path = install_bin / "codex-code-mode-host"
+            host_path = install_bin / "lemex-code-mode-host"
             self.assertEqual(os.readlink(codex_path), str(current / "bin" / "codex"))
             self.assertEqual(
                 os.readlink(host_path),
-                str(current / "bin" / "codex-code-mode-host"),
+                str(current / "bin" / "lemex-code-mode-host"),
             )
             self.assertTrue(os.access(host_path, os.X_OK))
 
@@ -653,9 +653,9 @@ def run_installer_in(
     env = os.environ.copy()
     env.update(
         {
-            "CODEX_HOME": str(root / "codex-home"),
+            "LEMEX_HOME": str(root / "codex-home"),
             "CODEX_INSTALL_DIR": str(root / "install-bin"),
-            "CODEX_NON_INTERACTIVE": "1",
+            "LEMEX_NON_INTERACTIVE": "1",
             "CODEX_RELEASE": release,
             "CODEX_TEST_ARCHIVE_PATH": str(archive_path or ""),
             "CODEX_TEST_CHECKSUM_PATH": str(checksum_path or ""),
@@ -716,7 +716,7 @@ def create_package_release(
         f"#!/bin/sh\nprintf 'codex-cli {VERSION}\\n'\n",
     )
     write_executable(
-        package_dir / "bin" / "codex-code-mode-host",
+        package_dir / "bin" / "lemex-code-mode-host",
         "#!/bin/sh\nexit 0\n",
     )
     write_executable(package_dir / "codex-path" / "rg", "#!/bin/sh\nexit 0\n")

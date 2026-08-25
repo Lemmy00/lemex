@@ -55,7 +55,7 @@ async fn start_turn_if_idle_rejects_non_user_input_that_requests_plan_mode() {
     let original_collaboration_mode = test.codex.config_snapshot().await.collaboration_mode;
 
     let submission = test
-        .codex
+        .lemex
         .start_turn_if_idle(
             TurnInputRequest::new(TurnInput::ResponseItem(responses::user_message_item(
                 "automatic input",
@@ -102,7 +102,7 @@ async fn recover_turn_if_idle_preserves_id_and_resumes_plan_mode() {
     let turn_id = "durable-recovered-turn";
 
     let submission = test
-        .codex
+        .lemex
         .recover_turn_if_idle(RecoverTurnRequest {
             turn_id: turn_id.to_string(),
             thread_settings: ThreadSettingsOverrides {

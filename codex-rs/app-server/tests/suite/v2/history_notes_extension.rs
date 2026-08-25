@@ -56,7 +56,7 @@ async fn app_server_registers_history_and_notes_tools_for_token_budget_threads()
 
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized()
         .await?;
     let thread = app_server
@@ -207,7 +207,7 @@ async fn history_notes_and_async_message_emit_control_tool_analytics() -> Result
 
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .without_managed_config()
         .build_initialized()
         .await?;

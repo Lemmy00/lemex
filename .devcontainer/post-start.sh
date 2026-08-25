@@ -27,9 +27,9 @@ for domain in "${domains[@]}"; do
 done
 
 sudo install -d -m 0755 /etc/codex
-sudo cp "$tmp_file" /etc/codex/allowed_domains.txt
-sudo chown root:root /etc/codex/allowed_domains.txt
-sudo chmod 0444 /etc/codex/allowed_domains.txt
+sudo cp "$tmp_file" /etc/lemex/allowed_domains.txt
+sudo chown root:root /etc/lemex/allowed_domains.txt
+sudo chmod 0444 /etc/lemex/allowed_domains.txt
 rm -f "$tmp_file"
 
 echo "[devcontainer] Applying firewall policy for domains: ${domains[*]}"

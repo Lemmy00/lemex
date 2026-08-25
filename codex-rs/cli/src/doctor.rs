@@ -1,4 +1,4 @@
-//! Implements the `codex doctor` diagnostic report.
+//! Implements the `lemex doctor` diagnostic report.
 //!
 //! Doctor is intentionally read-mostly: checks inspect the current installation,
 //! configuration, authentication, terminal, state paths, and bounded reachability
@@ -49,14 +49,14 @@ use codex_install_context::InstallMethod;
 use codex_install_context::StandalonePlatform;
 use codex_login::AuthDotJson;
 use codex_login::AuthManager;
-use codex_login::CODEX_ACCESS_TOKEN_ENV_VAR;
-use codex_login::CODEX_API_KEY_ENV_VAR;
 use codex_login::CodexAuth;
-use codex_login::OPENAI_API_KEY_ENV_VAR;
+use codex_login::LEMEX_ACCESS_TOKEN_ENV_VAR;
+use codex_login::LEMEX_API_KEY_ENV_VAR;
 use codex_login::default_client::create_client_without_request_logging;
 use codex_login::default_client::default_headers;
 use codex_login::load_auth_dot_json;
 use codex_model_provider::create_model_provider;
+use codex_model_provider_info::DEFAULT_LEMEX_BASE_URL;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::protocol::AskForApproval;
 use codex_terminal_detection::Multiplexer;
@@ -160,7 +160,7 @@ const TMUX_OPTION_NAMES: &[&str] = &[
 const NARROW_TERMINAL_COLUMNS: u16 = 80;
 const NARROW_TERMINAL_ROWS: u16 = 24;
 
-/// Options for building a local Codex diagnostic report.
+/// Options for building a local Lemex diagnostic report.
 ///
 /// The command always runs the full bounded diagnostic set. Human output includes
 /// detailed diagnostics by default; --summary keeps the terminal output compact.
@@ -318,7 +318,7 @@ impl DoctorCheck {
 
 /// Builds, renders, and exits according to the current doctor report.
 ///
-/// This is the CLI entry point for codex doctor. It does not repair issues;
+/// This is the CLI entry point for lemex doctor. It does not repair issues;
 /// failures are represented in the report and cause a non-zero process exit so
 /// scripts can distinguish a clean environment from one that needs attention.
 pub async fn run_doctor(
@@ -422,7 +422,7 @@ async fn build_report(
                         )
                         .detail(error.to_string())
                         .remediation(
-                            "Fix the reported authentication error, then rerun codex doctor.",
+                            "Fix the reported authentication error, then rerun lemex doctor.",
                         ),
                     })
                 },
@@ -511,7 +511,7 @@ async fn build_report(
                             "config could not be loaded",
                         )
                         .detail(err.to_string())
-                        .remediation("Fix the reported config error, then rerun codex doctor.")
+                        .remediation("Fix the reported config error, then rerun lemex doctor.")
                     })
                 },
                 async {
@@ -591,7 +591,7 @@ async fn load_config(
         .harness_overrides(overrides)
         .build()
         .await
-        .context("failed to load Codex config")
+        .context("failed to load Lemex config")
 }
 
 fn config_overrides_from_interactive(
@@ -626,7 +626,7 @@ fn config_overrides_from_interactive(
     }
 }
 
-/// JSON support report emitted by `codex doctor --json`.
+/// JSON support report emitted by `lemex doctor --json`.
 ///
 /// The report is keyed by check id so support tooling can fetch paths like
 /// `checks["terminal.metadata"]` without scanning arrays. Human rendering can
@@ -869,16 +869,16 @@ fn installation_check(show_details: bool) -> DoctorCheck {
     ));
     details.push(format!(
         "managed by bun: {}",
-        env::var_os("CODEX_MANAGED_BY_BUN").is_some()
+        env::var_os("LEMEX_MANAGED_BY_BUN").is_some()
     ));
     details.push(format!(
         "managed by pnpm: {}",
-        env::var_os("CODEX_MANAGED_BY_PNPM").is_some()
+        env::var_os("LEMEX_MANAGED_BY_PNPM").is_some()
     ));
     push_env_path_detail(
         &mut details,
         "managed package root",
-        "CODEX_MANAGED_PACKAGE_ROOT",
+        "LEMEX_MANAGED_PACKAGE_ROOT",
     );
 
     let path_entries = codex_path_entries();
@@ -908,8 +908,7 @@ fn installation_check(show_details: bool) -> DoctorCheck {
                 npm_package_root,
             } => {
                 status = CheckStatus::Fail;
-                summary =
-                    "npm install -g @openai/codex would update a different install".to_string();
+                summary = "npm install -g lemex would update a different install".to_string();
                 remediation = Some(format!(
                     "Fix PATH or npm prefix so the running package root ({}) matches the npm global package root ({}).",
                     running_package_root.display(),
@@ -925,7 +924,7 @@ fn installation_check(show_details: bool) -> DoctorCheck {
                 status = status.max(CheckStatus::Warning);
                 summary = "npm-managed launch is missing package-root provenance".to_string();
                 remediation = Some(
-                    "Reinstall or update Codex so the JS shim provides CODEX_MANAGED_PACKAGE_ROOT."
+                    "Reinstall or update Lemex so the JS shim provides LEMEX_MANAGED_PACKAGE_ROOT."
                         .to_string(),
                 );
             }
@@ -956,14 +955,14 @@ fn doctor_install_context(current_exe: Option<&Path>) -> InstallContext {
 }
 
 fn doctor_managed_by_npm(current_exe: Option<&Path>) -> bool {
-    env::var_os("CODEX_MANAGED_BY_NPM").is_some()
+    env::var_os("LEMEX_MANAGED_BY_NPM").is_some()
         && !inherited_managed_env_for_cargo_binary(current_exe)
 }
 
 fn inherited_managed_env_for_cargo_binary(current_exe: Option<&Path>) -> bool {
-    if env::var_os("CODEX_MANAGED_BY_NPM").is_none()
-        && env::var_os("CODEX_MANAGED_BY_BUN").is_none()
-        && env::var_os("CODEX_MANAGED_BY_PNPM").is_none()
+    if env::var_os("LEMEX_MANAGED_BY_NPM").is_none()
+        && env::var_os("LEMEX_MANAGED_BY_BUN").is_none()
+        && env::var_os("LEMEX_MANAGED_BY_PNPM").is_none()
     {
         return false;
     }
@@ -1065,7 +1064,7 @@ enum NpmRootCheck {
 }
 
 fn npm_global_root_check() -> NpmRootCheck {
-    let Some(running_package_root) = env::var_os("CODEX_MANAGED_PACKAGE_ROOT").map(PathBuf::from)
+    let Some(running_package_root) = env::var_os("LEMEX_MANAGED_PACKAGE_ROOT").map(PathBuf::from)
     else {
         return NpmRootCheck::MissingPackageRoot;
     };
@@ -1082,7 +1081,7 @@ fn npm_global_root_check() -> NpmRootCheck {
 }
 
 fn compare_npm_package_roots(running_package_root: &Path, npm_root: &Path) -> NpmRootCheck {
-    let npm_package_root = npm_root.join("@openai").join("codex");
+    let npm_package_root = npm_root.join("lemex");
     let running = normalize_path_for_compare(running_package_root);
     let target = normalize_path_for_compare(&npm_package_root);
     if running == target {
@@ -1155,7 +1154,7 @@ where
 
 fn config_check(config: &Config) -> DoctorCheck {
     let mut details = Vec::new();
-    details.push(format!("CODEX_HOME: {}", config.codex_home.display()));
+    details.push(format!("LEMEX_HOME: {}", config.codex_home.display()));
     details.push(format!("cwd: {}", config.cwd.display()));
     details.push(format!(
         "model: {}",
@@ -1258,14 +1257,10 @@ fn auth_check(config: &Config) -> DoctorCheck {
     ));
     details.push(format!("auth file: {}", auth_path.display()));
 
-    let env_auth_vars = [
-        OPENAI_API_KEY_ENV_VAR,
-        CODEX_API_KEY_ENV_VAR,
-        CODEX_ACCESS_TOKEN_ENV_VAR,
-    ]
-    .into_iter()
-    .filter(|name| env_var_present(name))
-    .collect::<Vec<_>>();
+    let env_auth_vars = [LEMEX_API_KEY_ENV_VAR, LEMEX_ACCESS_TOKEN_ENV_VAR]
+        .into_iter()
+        .filter(|name| env_var_present(name))
+        .collect::<Vec<_>>();
     if !env_auth_vars.is_empty() {
         details.push(format!(
             "auth env vars present: {}",
@@ -1322,7 +1317,7 @@ fn auth_check(config: &Config) -> DoctorCheck {
                 DoctorCheck::new("auth.credentials", "auth", status, summary).details(details);
             if status == CheckStatus::Fail {
                 check =
-                    check.remediation("Run codex login again or provide a supported auth env var.");
+                    check.remediation("Run lemex login again or provide a supported auth env var.");
             }
             check
         }
@@ -1337,10 +1332,10 @@ fn auth_check(config: &Config) -> DoctorCheck {
             "auth.credentials",
             "auth",
             CheckStatus::Fail,
-            "no Codex credentials were found",
+            "no Lemex credentials were found",
         )
         .details(details)
-        .remediation("Run codex login or provide an API key through a supported auth env var."),
+        .remediation("Run lemex login or provide an API key through a supported auth env var."),
         Err(err) => DoctorCheck::new(
             "auth.credentials",
             "auth",
@@ -1348,7 +1343,7 @@ fn auth_check(config: &Config) -> DoctorCheck {
             "stored credentials could not be read",
         )
         .detail(err.to_string())
-        .remediation("Fix auth storage access or run codex login again."),
+        .remediation("Fix auth storage access or run lemex login again."),
     }
 }
 
@@ -1448,8 +1443,7 @@ fn stored_auth_issues(
                 .openai_api_key
                 .as_deref()
                 .is_some_and(|key| !key.trim().is_empty());
-            let env_key_present =
-                env_var_present(OPENAI_API_KEY_ENV_VAR) || env_var_present(CODEX_API_KEY_ENV_VAR);
+            let env_key_present = env_var_present(LEMEX_API_KEY_ENV_VAR);
             if !stored_key_present && !env_key_present {
                 issues.push("API key auth is missing an API key");
             }
@@ -2181,7 +2175,7 @@ fn non_empty_trimmed(value: String) -> Option<String> {
 
 async fn state_check(config: &Config) -> DoctorCheck {
     let mut details = Vec::new();
-    path_readiness(&mut details, "CODEX_HOME", &config.codex_home);
+    path_readiness(&mut details, "LEMEX_HOME", &config.codex_home);
     path_readiness(&mut details, "log dir", &config.log_dir);
     path_readiness(&mut details, "sqlite home", config.sqlite_config().home());
     let mut integrity_failures = Vec::new();
@@ -2547,14 +2541,14 @@ fn fallback_state_check() -> DoctorCheck {
             "state.paths",
             "state",
             CheckStatus::Ok,
-            "CODEX_HOME was resolved without config",
+            "LEMEX_HOME was resolved without config",
         )
-        .detail(format!("CODEX_HOME: {}", path.display())),
+        .detail(format!("LEMEX_HOME: {}", path.display())),
         Err(err) => DoctorCheck::new(
             "state.paths",
             "state",
             CheckStatus::Warning,
-            "CODEX_HOME could not be resolved",
+            "LEMEX_HOME could not be resolved",
         )
         .detail(err.to_string()),
     }
@@ -2651,11 +2645,11 @@ fn provider_auth_reachability_mode_from_auth(
     if provider_base_url.is_some_and(|url| !url.trim().is_empty())
         && provider_env_key
             .is_some_and(|env_key| !env_key.trim().is_empty() && env_var_present(env_key))
-        || env_var_present(CODEX_API_KEY_ENV_VAR)
+        || env_var_present(LEMEX_API_KEY_ENV_VAR)
     {
         return ProviderAuthReachabilityMode::ApiKey;
     }
-    if env_var_present(CODEX_ACCESS_TOKEN_ENV_VAR) {
+    if env_var_present(LEMEX_ACCESS_TOKEN_ENV_VAR) {
         return ProviderAuthReachabilityMode::Chatgpt;
     }
     match stored_auth.map(stored_auth_mode_value) {
@@ -2684,7 +2678,7 @@ fn provider_reachability_plan_from_parts(
 ) -> ReachabilityPlan {
     let provider_route_probe_url = provider_base_url
         .or_else(|| {
-            (mode == ProviderAuthReachabilityMode::ApiKey).then_some("https://api.openai.com/v1")
+            (mode == ProviderAuthReachabilityMode::ApiKey).then_some(DEFAULT_LEMEX_BASE_URL)
         })
         .and_then(|url| {
             should_probe_models_route(provider_name, url, is_amazon_bedrock)
@@ -2694,7 +2688,7 @@ fn provider_reachability_plan_from_parts(
         (ProviderAuthReachabilityMode::ApiKey, _) | (_, Some(_)) => vec![ReachabilityEndpoint {
             label: format!("{provider_id} API"),
             url: provider_url_for_path(
-                provider_base_url.unwrap_or("https://api.openai.com/v1"),
+                provider_base_url.unwrap_or(DEFAULT_LEMEX_BASE_URL),
                 "responses",
                 provider_query_params,
             ),
@@ -2828,7 +2822,7 @@ async fn provider_reachability_check(plan: ReachabilityPlan) -> DoctorCheck {
                     )
                     .measured(format!("{route_probe_url} returned {status}"))
                     .expected("GET /models returns 2xx, 401, or 403")
-                    .remedy("Set base_url to the provider API root, for example https://api.openai.com/v1")
+                    .remedy("Set base_url to the provider API root, for example https://inference.rcp.epfl.ch/v1")
                     .field("route probe"),
                 );
             }
@@ -3230,25 +3224,26 @@ mod tests {
 
     #[test]
     fn compare_npm_package_roots_detects_match() {
-        let running = PathBuf::from("/prefix/lib/node_modules/@openai/codex");
+        let running = PathBuf::from("/prefix/lib/node_modules/lemex");
+
         let npm_root = PathBuf::from("/prefix/lib/node_modules");
         assert_eq!(
             compare_npm_package_roots(&running, &npm_root),
             NpmRootCheck::Match {
-                package_root: npm_root.join("@openai").join("codex")
+                package_root: npm_root.join("lemex")
             }
         );
     }
 
     #[test]
     fn compare_npm_package_roots_detects_mismatch() {
-        let running = PathBuf::from("/old/lib/node_modules/@openai/codex");
+        let running = PathBuf::from("/old/lib/node_modules/lemex");
         let npm_root = PathBuf::from("/new/lib/node_modules");
         assert_eq!(
             compare_npm_package_roots(&running, &npm_root),
             NpmRootCheck::Mismatch {
                 running_package_root: running,
-                npm_package_root: npm_root.join("@openai").join("codex"),
+                npm_package_root: npm_root.join("lemex"),
             }
         );
     }
@@ -3354,7 +3349,7 @@ mod tests {
                 .detail(
                     "optional reachability failed: remote: https://user:pass@example.com/mcp?x=abc (connect failed)",
                 )
-                .detail("OPENAI_API_KEY: sk-live-secret")
+                .detail("LEMEX_API_KEY: sk-live-secret")
                 .detail("duplicate: one")
                 .detail("duplicate: two")
                 .detail("freeform note")
@@ -3410,7 +3405,7 @@ mod tests {
         );
         assert_eq!(json["checks"]["mcp.config"]["id"], "mcp.config");
         assert_eq!(
-            json["checks"]["mcp.config"]["details"]["OPENAI_API_KEY"],
+            json["checks"]["mcp.config"]["details"]["LEMEX_API_KEY"],
             "<redacted>"
         );
         assert_eq!(
@@ -3556,7 +3551,7 @@ mod tests {
         let check = provider_specific_auth_check(
             /*requires_openai_auth*/ false,
             Some("PROVIDER_API_KEY"),
-            Some("Set PROVIDER_API_KEY before running Codex."),
+            Some("Set PROVIDER_API_KEY before running Lemex."),
             Vec::new(),
             |_| false,
         )
@@ -3569,7 +3564,7 @@ mod tests {
         );
         assert_eq!(
             check.remediation,
-            Some("Set PROVIDER_API_KEY before running Codex.".to_string())
+            Some("Set PROVIDER_API_KEY before running Lemex.".to_string())
         );
     }
 
@@ -3590,7 +3585,7 @@ mod tests {
             stored_auth_issues(&auth, |_| false),
             vec!["API key auth is missing an API key"]
         );
-        assert!(stored_auth_issues(&auth, |name| name == OPENAI_API_KEY_ENV_VAR).is_empty());
+        assert!(stored_auth_issues(&auth, |name| name == LEMEX_API_KEY_ENV_VAR).is_empty());
     }
 
     #[test]
@@ -3667,7 +3662,7 @@ mod tests {
                 /*requires_openai_auth*/ true,
                 /*provider_env_key*/ None,
                 /*provider_base_url*/ None,
-                |name| name == CODEX_API_KEY_ENV_VAR,
+                |name| name == LEMEX_API_KEY_ENV_VAR,
                 /*stored_auth*/ None,
             ),
             ProviderAuthReachabilityMode::ApiKey
@@ -3683,7 +3678,7 @@ mod tests {
                 /*requires_openai_auth*/ true,
                 /*provider_env_key*/ None,
                 Some("https://custom.example/v1"),
-                |name| name == OPENAI_API_KEY_ENV_VAR,
+                |_| false,
                 Some(&chatgpt_auth),
             ),
             ProviderAuthReachabilityMode::Chatgpt
@@ -3691,9 +3686,9 @@ mod tests {
         assert_eq!(
             provider_auth_reachability_mode_from_auth(
                 /*requires_openai_auth*/ true,
-                Some(OPENAI_API_KEY_ENV_VAR),
+                Some(LEMEX_API_KEY_ENV_VAR),
                 Some("https://custom.example/v1"),
-                |name| name == OPENAI_API_KEY_ENV_VAR,
+                |name| name == LEMEX_API_KEY_ENV_VAR,
                 Some(&chatgpt_auth),
             ),
             ProviderAuthReachabilityMode::ApiKey
@@ -3703,7 +3698,7 @@ mod tests {
                 /*requires_openai_auth*/ true,
                 /*provider_env_key*/ None,
                 /*provider_base_url*/ None,
-                |name| name == CODEX_API_KEY_ENV_VAR,
+                |name| name == LEMEX_API_KEY_ENV_VAR,
                 Some(&chatgpt_auth),
             ),
             ProviderAuthReachabilityMode::ApiKey
@@ -3804,9 +3799,9 @@ mod tests {
             plan.endpoints,
             vec![ReachabilityEndpoint {
                 label: "openai API".to_string(),
-                url: "https://api.openai.com/v1/responses".to_string(),
+                url: "https://inference.rcp.epfl.ch/v1/responses".to_string(),
                 required: true,
-                route_probe_url: Some("https://api.openai.com/v1/models".to_string()),
+                route_probe_url: Some("https://inference.rcp.epfl.ch/v1/models".to_string()),
             }]
         );
     }
@@ -3879,7 +3874,9 @@ mod tests {
         assert_eq!(check.issues.len(), 1);
         assert_eq!(
             check.issues[0].remedy.as_deref(),
-            Some("Set base_url to the provider API root, for example https://api.openai.com/v1")
+            Some(
+                "Set base_url to the provider API root, for example https://inference.rcp.epfl.ch/v1"
+            )
         );
     }
 
