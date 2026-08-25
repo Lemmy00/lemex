@@ -6,17 +6,42 @@ Lemex CLI is a fork of the OpenAI Codex coding agent that runs locally on your c
 
 ### Installing and running Lemex CLI
 
-Install from npm:
+#### Option 1: Install from npm (once published)
 
 ```shell
 npm install -g lemex
 ```
 
-Then run:
+> **Note:** `lemex` is not yet published to npm. Until the first release is published, install from source using Option 2 or 3 below.
+
+#### Option 2: Install from source using the convenience script
 
 ```shell
-lemex
+git clone https://github.com/Lemmy00/lemex.git
+cd lemex
+./scripts/install/install_from_source.sh
 ```
+
+The script checks for Node.js/npm, installs the Rust toolchain if necessary, builds the CLI, installs the `lemex` command globally via npm, and copies a default RCP config (`config/config.toml` and `config/models.json`) into `~/.lemex` if none exists.
+
+To also copy an existing Lemex config from another machine (overriding the default):
+
+```bash
+LEMEX_COPY_CONFIG_FROM=otherhost:/home/you/.lemex ./scripts/install/install_from_source.sh
+```
+
+#### Option 3: Install from source manually
+
+```shell
+git clone https://github.com/Lemmy00/lemex.git
+cd lemex/codex-rs
+cargo build --release -p codex-cli
+cp target/release/lemex ../codex-cli/vendor/$(rustc -vV | sed -n 's|host: ||p')/bin/lemex
+cd ../codex-cli
+npm install -g .
+```
+
+Then run `lemex` from anywhere.
 
 ### Configuration
 
@@ -27,13 +52,20 @@ Lemex reads its own environment variables and config directory, so it will not i
 - `LEMEX_ACCESS_TOKEN` — ChatGPT-plan access token, if used.
 - `LEMEX_HOME` — Lemex config/state directory (defaults to `~/.lemex`).
 
-Example:
+Add the exports to your shell profile (e.g. `~/.zshrc`) so they persist:
 
 ```shell
 export LEMEX_API_KEY="sk-..."
 export LEMEX_BASE_URL="https://inference.rcp.epfl.ch/v1"
-lemex
 ```
+
+Then reload your profile:
+
+```shell
+source ~/.zshrc
+```
+
+When `LEMEX_API_KEY` is set and no `model_provider` is configured, Lemex defaults to the built-in `rcp` provider. Otherwise it falls back to the `openai` provider.
 
 ### RCP model catalog
 
@@ -53,6 +85,13 @@ requires_openai_auth = false
 ```
 
 Use `lemex exec -m <model-id> ...` to select a different model from the catalog for a single run.
+
+### Health check
+
+```shell
+lemex doctor
+lemex --version
+```
 
 ## Docs
 

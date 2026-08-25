@@ -8,11 +8,39 @@
 | Git (optional, recommended) | 2.23+ for built-in PR helpers                                   |
 | RAM                         | 4-GB minimum (8-GB recommended)                                 |
 
+### From npm
+
+Once `lemex` is published to npm, install it with:
+
+```bash
+npm install -g lemex
+```
+
+> **Note:** `lemex` is not yet published to npm. Build and install from source until the first release is available.
+
 ### DotSlash
 
-The GitHub Release also contains a [DotSlash](https://dotslash-cli.com/) file for the Lemex CLI named `lemex`. Using a DotSlash file makes it possible to make a lightweight commit to source control to ensure all contributors use the same version of an executable, regardless of what platform they use for development.
+Published GitHub Releases contain a [DotSlash](https://dotslash-cli.com/) file for the Lemex CLI named `lemex`. Using a DotSlash file makes it possible to make a lightweight commit to source control to ensure all contributors use the same version of an executable, regardless of what platform they use for development.
 
-### Build from source
+### Build from source (convenience script)
+
+The fastest way to install from source is the provided script:
+
+```bash
+git clone https://github.com/Lemmy00/lemex.git
+cd lemex
+./scripts/install/install_from_source.sh
+```
+
+The script checks for Node.js/npm, installs Rust if needed, builds the release binary, installs `lemex` globally via npm, and copies the bundled default RCP config (`config/config.toml` and `config/models.json`) into `~/.lemex` if none exists.
+
+To copy an existing Lemex config from another machine during install (overriding the default):
+
+```bash
+LEMEX_COPY_CONFIG_FROM=otherhost:/home/you/.lemex ./scripts/install/install_from_source.sh
+```
+
+### Build from source (manual)
 
 ```bash
 # Clone the repository and navigate to the root of the Cargo workspace.
@@ -31,8 +59,20 @@ cargo install --locked dotslash
 # Install nextest for the `just test` helper.
 cargo install --locked cargo-nextest
 
-# Build Lemex.
-cargo build
+# Build the Lemex CLI binary. Use `-p codex-cli` to avoid compiling crates
+# (such as the V8 proof-of-concept) that are not required by the CLI.
+cargo build --release -p codex-cli
+
+# Install the CLI globally via npm (optional). This places the `lemex`
+# command on your PATH.
+cp target/release/lemex ../codex-cli/vendor/$(rustc -vV | sed -n 's|host: ||p')/bin/lemex
+cd ../codex-cli
+npm install -g .
+
+# Copy the bundled default RCP config if you do not have one yet.
+mkdir -p "$HOME/.lemex"
+[ -f "$HOME/.lemex/config.toml" ] || cp ../config/config.toml "$HOME/.lemex/config.toml"
+[ -f "$HOME/.lemex/models.json" ] || cp ../config/models.json "$HOME/.lemex/models.json"
 
 # Launch the TUI with a sample prompt.
 cargo run --bin lemex -- "explain this codebase to me"

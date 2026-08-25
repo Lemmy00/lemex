@@ -16,7 +16,7 @@ REPO_ROOT = CODEX_CLI_ROOT.parent
 RESPONSES_API_PROXY_NPM_ROOT = REPO_ROOT / "codex-rs" / "responses-api-proxy" / "npm"
 CODEX_SDK_ROOT = REPO_ROOT / "sdk" / "typescript"
 LEMEX_NPM_NAME = "lemex"
-CODEX_PACKAGE_COMPONENT = "lemex-package"
+LEMEX_PACKAGE_COMPONENT = "lemex-package"
 
 # `npm_name` is the local optional-dependency alias consumed by `bin/lemex.js`.
 # The underlying package published to npm is always `lemex`.
@@ -71,12 +71,12 @@ PACKAGE_EXPANSIONS: dict[str, list[str]] = {
 
 PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
     "lemex": [],
-    "lemex-linux-x64": [CODEX_PACKAGE_COMPONENT],
-    "lemex-linux-arm64": [CODEX_PACKAGE_COMPONENT],
-    "lemex-darwin-x64": [CODEX_PACKAGE_COMPONENT],
-    "lemex-darwin-arm64": [CODEX_PACKAGE_COMPONENT],
-    "lemex-win32-x64": [CODEX_PACKAGE_COMPONENT],
-    "lemex-win32-arm64": [CODEX_PACKAGE_COMPONENT],
+    "lemex-linux-x64": [LEMEX_PACKAGE_COMPONENT],
+    "lemex-linux-arm64": [LEMEX_PACKAGE_COMPONENT],
+    "lemex-darwin-x64": [LEMEX_PACKAGE_COMPONENT],
+    "lemex-darwin-arm64": [LEMEX_PACKAGE_COMPONENT],
+    "lemex-win32-x64": [LEMEX_PACKAGE_COMPONENT],
+    "lemex-win32-arm64": [LEMEX_PACKAGE_COMPONENT],
     "lemex-responses-api-proxy": ["lemex-responses-api-proxy"],
     "lemex-sdk": [],
 }
@@ -302,15 +302,15 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
             }
 
         elif package == "lemex-sdk":
-        scripts = package_json.get("scripts")
-        if isinstance(scripts, dict):
-            scripts.pop("prepare", None)
+            scripts = package_json.get("scripts")
+            if isinstance(scripts, dict):
+                scripts.pop("prepare", None)
 
-        dependencies = package_json.get("dependencies")
-        if not isinstance(dependencies, dict):
-            dependencies = {}
-        dependencies[LEMEX_NPM_NAME] = version
-        package_json["dependencies"] = dependencies
+            dependencies = package_json.get("dependencies")
+            if not isinstance(dependencies, dict):
+                dependencies = {}
+            dependencies[LEMEX_NPM_NAME] = version
+            package_json["dependencies"] = dependencies
 
     with open(staging_dir / "package.json", "w", encoding="utf-8") as out:
         json.dump(package_json, out, indent=2)
@@ -381,14 +381,14 @@ def copy_native_binaries(
 
         dest_target_dir = vendor_dest / target_dir.name
 
-        if CODEX_PACKAGE_COMPONENT in components_set:
+        if LEMEX_PACKAGE_COMPONENT in components_set:
             if dest_target_dir.exists():
                 shutil.rmtree(dest_target_dir)
             shutil.copytree(target_dir, dest_target_dir)
         else:
             dest_target_dir.mkdir(parents=True, exist_ok=True)
 
-        for component in sorted(components_set - {CODEX_PACKAGE_COMPONENT}):
+        for component in sorted(components_set - {LEMEX_PACKAGE_COMPONENT}):
             src_component_dir = target_dir / component
             if not src_component_dir.exists():
                 raise RuntimeError(

@@ -11,7 +11,8 @@
     "node": ">=16"
   },
   "files": [
-    "bin/lemex.js"
+    "bin/lemex.js",
+    "vendor"
   ],
   "repository": {
     "type": "git",

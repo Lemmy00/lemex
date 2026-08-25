@@ -1337,9 +1337,9 @@ jobs:
             --release-version "$RELEASE_VERSION" \
             --workflow-url "$workflow_url" \
             --artifacts-dir "${GITHUB_WORKSPACE}/dist" \
-            --package codex \
-            --package codex-responses-api-proxy \
-            --package codex-sdk
+            --package lemex \
+            --package lemex-responses-api-proxy \
+            --package lemex-sdk
 
       - name: Stage installer scripts
         run: |
@@ -1436,7 +1436,6 @@ jobs:
           # Node 24 bundles npm >= 11.5.1, which trusted publishing requires.
           node-version: 24
           registry-url: "https://registry.npmjs.org"
-          scope: "@openai"
 
       - name: Download npm tarballs from release
         env:
@@ -1449,12 +1448,12 @@ jobs:
           tag="$RELEASE_TAG"
           mkdir -p dist/npm
           patterns=(
-            "codex-npm-${version}.tgz"
-            "codex-npm-linux-*-${version}.tgz"
-            "codex-npm-darwin-*-${version}.tgz"
-            "codex-npm-win32-*-${version}.tgz"
-            "codex-responses-api-proxy-npm-${version}.tgz"
-            "codex-sdk-npm-${version}.tgz"
+            "lemex-npm-${version}.tgz"
+            "lemex-npm-linux-*-${version}.tgz"
+            "lemex-npm-darwin-*-${version}.tgz"
+            "lemex-npm-win32-*-${version}.tgz"
+            "lemex-responses-api-proxy-npm-${version}.tgz"
+            "lemex-sdk-npm-${version}.tgz"
           )
           for pattern in "${patterns[@]}"; do
             gh release download "$tag" \
@@ -1475,19 +1474,19 @@ jobs:
             prefix="${NPM_TAG}-"
           fi
 
-          root_tarball="dist/npm/codex-npm-${VERSION}.tgz"
-          sdk_tarball="dist/npm/codex-sdk-npm-${VERSION}.tgz"
+          root_tarball="dist/npm/lemex-npm-${VERSION}.tgz"
+          sdk_tarball="dist/npm/lemex-sdk-npm-${VERSION}.tgz"
           # Keep this list in sync with CODEX_PLATFORM_PACKAGES in
           # codex-cli/scripts/build_npm_package.py. The root wrapper advances
           # @openai/codex@latest as soon as it publishes, so every platform
           # package it aliases must already exist in the registry first.
           platform_tarballs=(
-            "dist/npm/codex-npm-linux-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-linux-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-arm64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-linux-x64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-linux-arm64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-darwin-x64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-darwin-arm64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-win32-x64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-win32-arm64-${VERSION}.tgz"
           )
 
           for required_tarball in "${platform_tarballs[@]}" "${root_tarball}"; do
@@ -1536,12 +1535,12 @@ jobs:
             tag=""
 
             case "${filename}" in
-              codex-npm-linux-*-"${VERSION}".tgz|codex-npm-darwin-*-"${VERSION}".tgz|codex-npm-win32-*-"${VERSION}".tgz)
-                platform="${filename#codex-npm-}"
+              lemex-npm-linux-*-"${VERSION}".tgz|lemex-npm-darwin-*-"${VERSION}".tgz|lemex-npm-win32-*-"${VERSION}".tgz)
+                platform="${filename#lemex-npm-}"
                 platform="${platform%-${VERSION}.tgz}"
                 tag="${prefix}${platform}"
                 ;;
-              codex-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
+              lemex-npm-"${VERSION}".tgz|lemex-responses-api-proxy-npm-"${VERSION}".tgz|lemex-sdk-npm-"${VERSION}".tgz)
                 tag="${NPM_TAG}"
                 ;;
               *)
