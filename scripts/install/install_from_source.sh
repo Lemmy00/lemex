@@ -63,6 +63,9 @@ check_base_deps() {
     if ! command_exists node || ! command_exists npm; then
         error "Node.js and npm are required but not installed."
     fi
+    if ! command_exists rg; then
+        error "ripgrep (rg) is required for the complete CLI runtime package."
+    fi
 }
 
 install_rust() {
@@ -154,6 +157,9 @@ PY
             cp "$BUILD_OUTPUT_DIR/bwrap" "$CODEX_CLI_DIR/vendor/$HOST_TARGET/codex-resources/bwrap"
             ;;
     esac
+    python3 "$REPO_ROOT/scripts/install/prepare_source_package.py" \
+        "$CODEX_CLI_DIR/vendor/$HOST_TARGET" \
+        --target "$HOST_TARGET" --rg "$(command -v rg)"
     printf "Copied binary to %s\n" "$VENDOR_DIR/lemex"
 }
 

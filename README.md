@@ -30,7 +30,7 @@ To also copy an existing Lemex config from another machine (overriding the defau
 LEMEX_COPY_CONFIG_FROM=otherhost:/home/you/.lemex ./scripts/install/install_from_source.sh
 ```
 
-On Ubuntu, source builds need Python 3, `build-essential`, `pkg-config`, and
+On Ubuntu, source builds need Python 3, `ripgrep`, `build-essential`, `pkg-config`, and
 `libssl-dev`, and on Linux `libcap-dev`, in addition to Node.js/npm and Rust. The installer downloads
 checksum-verified V8 binaries instead of compiling V8 from source.
 
@@ -89,6 +89,8 @@ The source installer builds only Lemex and its required helpers, strips release
 symbols, and removes its temporary build directory on exit. Set `LEMEX_KEEP_BUILD=1`
 to retain that directory, or set `CARGO_TARGET_DIR` to reuse a build cache that the
 installer will leave in place.
+The runtime package also includes ripgrep, package metadata, and compatibility
+names required by the upstream background server, so plain `lemex` can start it.
 
 ### Health check
 
