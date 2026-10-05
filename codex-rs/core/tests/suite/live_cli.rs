@@ -10,8 +10,7 @@ use std::process::Stdio;
 use tempfile::TempDir;
 
 fn require_api_key() -> String {
-    std::env::var("LEMEX_API_KEY")
-        .expect("LEMEX_API_KEY env var not set — skip running live tests")
+    std::env::var("LEMEX_API_KEY").expect("LEMEX_API_KEY env var not set — skip running live tests")
 }
 
 /// Helper that spawns the binary inside a TempDir with minimal flags. Returns (Assert, TempDir).

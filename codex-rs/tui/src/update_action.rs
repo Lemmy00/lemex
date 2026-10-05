@@ -8,10 +8,14 @@ use codex_install_context::StandalonePlatform;
 /// Update action the CLI should perform after the TUI exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateAction {
+    /// Replace the local daemon after restoring the terminal.
+    Daemon(DaemonUpdateSource),
     /// Update via `npm install -g lemex@latest`.
     NpmGlobalLatest,
     /// Update via `bun install -g lemex@latest`.
     BunGlobalLatest,
+    /// Update via `vp install -g lemex@latest`.
+    VitePlusGlobalLatest,
     /// Update via `pnpm add -g lemex@latest`.
     PnpmGlobalLatest,
     /// Update via `brew upgrade lemex`.
@@ -28,6 +32,7 @@ impl UpdateAction {
         match &context.method {
             InstallMethod::Npm => Some(UpdateAction::NpmGlobalLatest),
             InstallMethod::Bun => Some(UpdateAction::BunGlobalLatest),
+            InstallMethod::VitePlus => Some(UpdateAction::VitePlusGlobalLatest),
             InstallMethod::Pnpm => Some(UpdateAction::PnpmGlobalLatest),
             InstallMethod::Brew => Some(UpdateAction::BrewUpgrade),
             InstallMethod::Standalone { platform, .. } => Some(match platform {
@@ -41,8 +46,10 @@ impl UpdateAction {
     /// Returns the list of command-line arguments for invoking the update.
     pub fn command_args(self) -> (&'static str, &'static [&'static str]) {
         match self {
+            UpdateAction::Daemon(source) => ("lemex", source.command_args()),
             UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "lemex"]),
             UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "lemex"]),
+            UpdateAction::VitePlusGlobalLatest => ("vp", &["install", "-g", "lemex"]),
             UpdateAction::PnpmGlobalLatest => ("pnpm", &["add", "-g", "lemex"]),
             UpdateAction::BrewUpgrade => ("brew", &["upgrade", "--cask", "lemex"]),
             UpdateAction::StandaloneUnix => (
@@ -172,5 +179,21 @@ mod tests {
                 ][..],
             )
         );
+    }
+}
+
+/// Package source explicitly selected by the user in the daemon menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonUpdateSource {
+    PublicStable,
+    ThisCli,
+}
+
+impl DaemonUpdateSource {
+    pub fn command_args(self) -> &'static [&'static str] {
+        match self {
+            Self::PublicStable => &["app-server", "daemon", "update"],
+            Self::ThisCli => &["app-server", "daemon", "update", "--from-cli", "--yes"],
+        }
     }
 }

@@ -157,6 +157,8 @@ async fn exec_server_http_request_rejects_protected_environment_headers() -> any
         "CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN",
         "codex_exec_server_noise_auth_token",
         "LEMEX_API_KEY",
+        "CODEX_GUARDIAN_DECISIONS_API_KEY",
+        "codex_guardian_decisions_api_key",
         "LEMEX_ACCESS_TOKEN",
         "CODEX_CONNECTORS_TOKEN",
         "AWS_SECRET_ACCESS_KEY",

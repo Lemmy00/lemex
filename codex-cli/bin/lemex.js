@@ -2,7 +2,7 @@
 // Unified entry point for the Lemex CLI.
 
 import { spawn } from "node:child_process";
-import { existsSync, realpathSync } from "fs";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { createRequire } from "node:module";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -85,14 +85,20 @@ function findLemexExecutable() {
     vendorRoot = path.join(__dirname, "..", "vendor");
   }
 
-  const lemexExecutable = path.join(
-    vendorRoot,
-    targetTriple,
-    "bin",
-    process.platform === "win32" ? "lemex.exe" : "lemex",
-  );
-  if (existsSync(lemexExecutable)) {
-    return lemexExecutable;
+  const localTargets = [targetTriple];
+  if (targetTriple.endsWith("-unknown-linux-musl")) {
+    localTargets.push(targetTriple.replace(/-musl$/, "-gnu"));
+  }
+  for (const localTarget of localTargets) {
+    const lemexExecutable = path.join(
+      vendorRoot,
+      localTarget,
+      "bin",
+      process.platform === "win32" ? "lemex.exe" : "lemex",
+    );
+    if (existsSync(lemexExecutable)) {
+      return lemexExecutable;
+    }
   }
 
   const packageManager = detectPackageManager();
@@ -101,7 +107,9 @@ function findLemexExecutable() {
       ? "bun install -g lemex@latest"
       : packageManager === "pnpm"
         ? "pnpm add -g lemex@latest"
-        : "npm install -g lemex@latest";
+        : packageManager === "vite-plus"
+          ? "vp install -g lemex@latest"
+          : "npm install -g lemex@latest";
   throw new Error(
     `Missing optional dependency ${platformPackage}. Reinstall Lemex: ${updateCommand}`,
   );
@@ -122,11 +130,50 @@ function isPnpmOwnedLemexInstall(nodeModulesDir) {
 
   try {
     return (
-      realpathSync(path.join(nodeModulesDir, "lemex")) === lemexPackageRoot
+      realpathSync(path.join(nodeModulesDir, "lemex")) ===
+      codexPackageRoot
     );
   } catch {
     return false;
   }
+}
+
+function isVitePlusOwnedCodexInstall(packagesDir) {
+  if (path.basename(packagesDir) !== "packages") {
+    return false;
+  }
+
+  try {
+    const metadata = JSON.parse(
+      readFileSync(path.join(packagesDir, "lemex.json"), "utf8"),
+    );
+    if (metadata.name !== "lemex") {
+      return false;
+    }
+
+    // Vite+ records the active global installation in packages/lemex.json.
+    // Older installs have no ID or append a #-prefixed ID to the package name;
+    // newer installs put the ID in a subdirectory of the package prefix.
+    const installId = metadata.installId || "";
+    const installDir = installId.startsWith("#")
+      ? path.join(packagesDir, `lemex${installId}`)
+      : path.join(packagesDir, "lemex", installId);
+    for (const nodeModulesDir of [
+      path.join(installDir, "lib", "node_modules"),
+      path.join(installDir, "node_modules"),
+    ]) {
+      const packageRoot = path.join(nodeModulesDir, "lemex");
+      if (
+        existsSync(packageRoot) &&
+        realpathSync(packageRoot) === codexPackageRoot
+      ) {
+        return true;
+      }
+    }
+  } catch {
+    // Missing or unreadable ownership metadata must not prevent Codex starting.
+  }
+  return false;
 }
 
 /**
@@ -134,9 +181,9 @@ function isPnpmOwnedLemexInstall(nodeModulesDir) {
  * in order to give the user a hint about how to update it.
  */
 function detectPackageManager() {
-  // pnpm's owning node_modules directory can be several parents above the
-  // package in isolated global layouts. Search ancestors of both the canonical
-  // package root and lexical entrypoint because pnpm may link either path.
+  // Package-manager ownership metadata can be several parents above the package.
+  // Search ancestors of both the canonical package root and lexical entrypoint
+  // because the package manager may link either path.
   const entrypointDir = path.dirname(path.resolve(process.argv[1]));
   for (const startDir of new Set([lemexPackageRoot, entrypointDir])) {
     const filesystemRoot = path.parse(startDir).root;
@@ -145,6 +192,9 @@ function detectPackageManager() {
       currentDir !== filesystemRoot;
       currentDir = path.dirname(currentDir)
     ) {
+      if (isVitePlusOwnedCodexInstall(currentDir)) {
+        return "vite-plus";
+      }
       if (isPnpmOwnedLemexInstall(path.join(currentDir, "node_modules"))) {
         return "pnpm";
       }
@@ -181,7 +231,9 @@ const packageManagerEnvVar =
     ? "LEMEX_MANAGED_BY_BUN"
     : packageManager === "pnpm"
       ? "LEMEX_MANAGED_BY_PNPM"
-      : "LEMEX_MANAGED_BY_NPM";
+      : packageManager === "vite-plus"
+        ? "LEMEX_MANAGED_BY_VITE_PLUS"
+        : "LEMEX_MANAGED_BY_NPM";
 const env = {
   ...process.env,
   LEMEX_MANAGED_PACKAGE_ROOT: lemexPackageRoot,
@@ -189,6 +241,7 @@ const env = {
 delete env.LEMEX_MANAGED_BY_NPM;
 delete env.LEMEX_MANAGED_BY_BUN;
 delete env.LEMEX_MANAGED_BY_PNPM;
+delete env.LEMEX_MANAGED_BY_VITE_PLUS;
 env[packageManagerEnvVar] = "1";
 
 const child = spawn(binaryPath, process.argv.slice(2), {

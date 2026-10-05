@@ -341,6 +341,62 @@
         "token_budget": null,
         "guardian_v2": null
       }
+    },
+    {
+      "slug": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "display_name": "DeepSeek V4.1 Flash",
+      "description": "DeepSeek V4.1 Flash via RCP",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        }
+      ],
+      "shell_type": "unified_exec",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 7,
+      "availability_nux": null,
+      "upgrade": null,
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_image_detail_original": false,
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "input_modalities": [
+        "text"
+      ],
+      "supports_search_tool": false,
+      "use_responses_lite": false,
+      "supports_reasoning_summary_parameter": false,
+      "default_reasoning_summary": "none",
+      "experimental_supported_tools": [],
+      "model_messages": {
+        "instructions_template": "You are Lemex, an agentic coding assistant running in the Lemex CLI. You and the user share the same workspace and collaborate to achieve the user's goals. Be precise, safe, and helpful. Prefer concise, actionable responses.",
+        "instructions_variables": null,
+        "approvals": null,
+        "collaboration_modes": null,
+        "auto_review": null,
+        "permissions": null,
+        "multi_agent": null,
+        "token_budget": null,
+        "guardian_v2": null
+      }
     }
   ]
 }

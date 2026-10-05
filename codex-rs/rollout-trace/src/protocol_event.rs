@@ -220,12 +220,9 @@ struct ExecCommandEndTracePayload<'a> {
     source: ExecCommandSource,
     #[serde(skip_serializing_if = "Option::is_none")]
     interaction_input: Option<&'a str>,
-    stdout: &'a str,
-    stderr: &'a str,
     aggregated_output: &'a str,
     exit_code: i32,
     duration: Duration,
-    formatted_output: &'a str,
     status: &'a ExecCommandStatus,
 }
 
@@ -243,12 +240,9 @@ impl<'a> From<&'a ExecCommandEndEvent> for ExecCommandEndTracePayload<'a> {
             parsed_cmd,
             source,
             interaction_input,
-            stdout,
-            stderr,
             aggregated_output,
             exit_code,
             duration,
-            formatted_output,
             status,
         } = event;
         Self {
@@ -263,12 +257,9 @@ impl<'a> From<&'a ExecCommandEndEvent> for ExecCommandEndTracePayload<'a> {
             parsed_cmd,
             source: *source,
             interaction_input: interaction_input.as_deref(),
-            stdout,
-            stderr,
             aggregated_output,
             exit_code: *exit_code,
             duration: *duration,
-            formatted_output,
             status,
         }
     }
@@ -363,6 +354,8 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
         EventMsg::SubAgentActivity(_) => None,
         EventMsg::Error(_)
         | EventMsg::Warning(_)
+        | EventMsg::AuthRecoveryStarted(_)
+        | EventMsg::AuthRecoveryCompleted(_)
         | EventMsg::GuardianWarning(_)
         | EventMsg::SafetyBuffering(_)
         | EventMsg::RealtimeConversationStarted(_)
@@ -442,7 +435,9 @@ pub(crate) fn wrapped_protocol_event_type(event: &EventMsg) -> Option<&'static s
         EventMsg::Error(_) => Some("error"),
         EventMsg::Warning(_) => Some("warning"),
         EventMsg::ShutdownComplete => Some("shutdown_complete"),
-        EventMsg::GuardianWarning(_)
+        EventMsg::AuthRecoveryStarted(_)
+        | EventMsg::AuthRecoveryCompleted(_)
+        | EventMsg::GuardianWarning(_)
         | EventMsg::SafetyBuffering(_)
         | EventMsg::RealtimeConversationStarted(_)
         | EventMsg::RealtimeConversationRealtime(_)

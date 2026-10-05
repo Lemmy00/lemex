@@ -17,6 +17,7 @@ use codex_config::RequirementSource;
 use codex_config::TomlValue;
 use codex_config::version_for_toml;
 use codex_plugin::PluginHookSource;
+use codex_plugin::is_allowlisted_bundled_cleanup_hook;
 use codex_protocol::protocol::HookEventName;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
@@ -28,8 +29,8 @@ use super::HookListEntry;
 use super::HookListEntryHandler;
 use super::dispatcher::hook_event_name_label;
 use crate::config_rules::hook_states_from_stack;
+use crate::engine::HookMatcher;
 use crate::events::common::matcher_pattern_for_event;
-use crate::events::common::validate_matcher_pattern;
 use crate::events::session_end::SESSION_END_DEFAULT_TIMEOUT_SEC;
 use crate::events::session_end::SESSION_END_MAX_TIMEOUT_SEC;
 use crate::output_spill::AdditionalContextLimit;
@@ -485,20 +486,22 @@ fn append_matcher_groups(
 ) {
     for (group_index, group) in groups.into_iter().enumerate() {
         let matcher = matcher_pattern_for_event(event_name, group.matcher.as_deref());
-        if let Some(matcher) = matcher
-            && let Err(err) = validate_matcher_pattern(matcher)
-        {
-            let warning = format!(
-                "invalid matcher {matcher:?} in {}: {err}",
-                source.path.display()
-            );
-            if group.hooks.is_empty() {
-                warnings.push(warning);
-            } else {
-                source.record_load_failure(warning, warnings);
+        let compiled_matcher = match matcher.map(HookMatcher::new).transpose() {
+            Ok(matcher) => matcher,
+            Err(err) => {
+                let matcher = matcher.unwrap_or_default();
+                let warning = format!(
+                    "invalid matcher {matcher:?} in {}: {err}",
+                    source.path.display()
+                );
+                if group.hooks.is_empty() {
+                    warnings.push(warning);
+                } else {
+                    source.record_load_failure(warning, warnings);
+                }
+                continue;
             }
-            continue;
-        }
+        };
         for (handler_index, handler) in group.hooks.iter().cloned().enumerate() {
             let normalized = match handler {
                 HookHandlerConfig::Command {
@@ -660,12 +663,22 @@ fn append_matcher_groups(
                 status_message,
                 additional_context_limit,
             } = normalized;
-            let current_hash = hook_hash(event_name, matcher, &group, config);
+            let current_hash = hook_hash(event_name, matcher, &group, &config);
             let key = crate::hook_key(&source.key_source, event_name, group_index, handler_index);
             let state = source.hook_states.get(&key);
-            let enabled = hook_enabled(source.is_managed, state);
+            let builtin = source.plugin_id.as_deref().is_some_and(|plugin_id| {
+                is_allowlisted_bundled_cleanup_hook(
+                    plugin_id,
+                    event_name,
+                    group.matcher.as_deref(),
+                    &config,
+                    /*app_connector_id*/ None,
+                )
+            });
+            let enabled = hook_enabled(source.is_managed, builtin, state);
             let trusted_hash = hook_trusted_hash(source.is_managed, state);
-            let trust_status = hook_trust_status(source.is_managed, &current_hash, trusted_hash);
+            let trust_status =
+                hook_trust_status(source.is_managed, builtin, &current_hash, trusted_hash);
             let handler = match &kind {
                 ConfiguredHandlerKind::Command {
                     command, r#async, ..
@@ -682,6 +695,7 @@ fn append_matcher_groups(
             };
 
             hook_entries.push(HookListEntry {
+                builtin,
                 key,
                 event_name,
                 handler,
@@ -706,8 +720,9 @@ fn append_matcher_groups(
                     ))
             {
                 handlers.push(ConfiguredHandler {
+                    builtin,
                     event_name,
-                    matcher: matcher.map(ToOwned::to_owned),
+                    matcher: compiled_matcher.clone(),
                     timeout_sec,
                     status_message,
                     additional_context_limit: AdditionalContextLimit::from_config(
@@ -763,11 +778,11 @@ fn hook_hash(
     event_name: codex_protocol::protocol::HookEventName,
     matcher: Option<&str>,
     group: &MatcherGroup,
-    normalized_handler: HookHandlerConfig,
+    normalized_handler: &HookHandlerConfig,
 ) -> String {
     let mut group = group.clone();
     group.matcher = matcher.map(ToOwned::to_owned);
-    group.hooks = vec![normalized_handler];
+    group.hooks = vec![normalized_handler.clone()];
     let identity = NormalizedHookIdentity {
         event_name: crate::hook_event_key_label(event_name),
         group,
@@ -780,10 +795,13 @@ fn hook_hash(
 
 fn hook_trust_status(
     is_managed: bool,
+    is_builtin: bool,
     current_hash: &str,
     trusted_hash: Option<&str>,
 ) -> HookTrustStatus {
-    if is_managed {
+    if is_builtin {
+        HookTrustStatus::Trusted
+    } else if is_managed {
         HookTrustStatus::Managed
     } else {
         match trusted_hash {
@@ -794,8 +812,8 @@ fn hook_trust_status(
     }
 }
 
-fn hook_enabled(is_managed: bool, state: Option<&HookStateToml>) -> bool {
-    is_managed || state.and_then(|state| state.enabled) != Some(false)
+fn hook_enabled(is_managed: bool, is_builtin: bool, state: Option<&HookStateToml>) -> bool {
+    is_builtin || is_managed || state.and_then(|state| state.enabled) != Some(false)
 }
 
 fn hook_trusted_hash(is_managed: bool, state: Option<&HookStateToml>) -> Option<&str> {
@@ -846,6 +864,7 @@ fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> Hoo
 
 #[cfg(test)]
 mod tests {
+    use super::HookMatcher;
     use codex_config::ConfigLayerEntry;
     use codex_config::ConfigLayerSource;
     use codex_config::HookEventsToml;
@@ -1238,6 +1257,7 @@ mod tests {
         assert_eq!(
             handlers,
             vec![ConfiguredHandler {
+                builtin: false,
                 event_name: HookEventName::UserPromptSubmit,
                 matcher: None,
                 timeout_sec: 600,
@@ -1277,8 +1297,9 @@ mod tests {
         assert_eq!(
             handlers,
             vec![ConfiguredHandler {
+                builtin: false,
                 event_name: HookEventName::PreToolUse,
-                matcher: Some("^Bash$".to_string()),
+                matcher: Some(HookMatcher::new("^Bash$").expect("valid matcher")),
                 timeout_sec: 600,
                 status_message: None,
                 additional_context_limit: Default::default(),
@@ -1348,7 +1369,7 @@ mod tests {
         assert_eq!(
             handlers
                 .iter()
-                .map(|handler| handler.matcher.as_deref())
+                .map(|handler| handler.matcher.as_ref().map(HookMatcher::as_str))
                 .collect::<Vec<_>>(),
             vec![Some("other"), Some("other")]
         );
@@ -1428,7 +1449,7 @@ mod tests {
                 .iter()
                 .map(|handler| (
                     handler.timeout_sec,
-                    handler.matcher.as_deref(),
+                    handler.matcher.as_ref().map(HookMatcher::as_str),
                     handler.execution_mode()
                 ))
                 .collect::<Vec<_>>(),
@@ -1540,7 +1561,10 @@ mod tests {
 
         assert_eq!(warnings, Vec::<String>::new());
         assert_eq!(handlers.len(), 1);
-        assert_eq!(handlers[0].matcher.as_deref(), Some("*"));
+        assert_eq!(
+            handlers[0].matcher.as_ref().map(HookMatcher::as_str),
+            Some("*")
+        );
     }
 
     #[test]
@@ -1564,7 +1588,10 @@ mod tests {
         assert_eq!(warnings, Vec::<String>::new());
         assert_eq!(handlers.len(), 1);
         assert_eq!(handlers[0].event_name, HookEventName::PostToolUse);
-        assert_eq!(handlers[0].matcher.as_deref(), Some("Edit|Write"));
+        assert_eq!(
+            handlers[0].matcher.as_ref().map(HookMatcher::as_str),
+            Some("Edit|Write")
+        );
     }
 
     #[test]

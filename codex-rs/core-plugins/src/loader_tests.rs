@@ -314,10 +314,16 @@ async fn installed_agent_plugin_uses_isolated_data_root_for_stdio_mcp() {
 }
 
 #[test]
-fn configured_plugins_from_stack_merges_user_layers() {
+fn configured_plugins_from_stack_merges_enabled_effective_layers() {
     let temp_dir = TempDir::new().expect("tempdir");
     let stack = ConfigLayerStack::new(
         vec![
+            ConfigLayerEntry::new(
+                ConfigLayerSource::System {
+                    file: user_config_path(&temp_dir, "system.toml"),
+                },
+                toml::from_str("[plugins.system]\nenabled = true\n").expect("system config toml"),
+            ),
             user_layer(
                 user_config_path(&temp_dir, "config.toml"),
                 "[plugins.base]\nenabled = true\n",
@@ -326,12 +332,36 @@ fn configured_plugins_from_stack_merges_user_layers() {
                 user_config_path(&temp_dir, "work.config.toml"),
                 "[plugins.profile]\nenabled = false\n",
             ),
+            ConfigLayerEntry::new(
+                ConfigLayerSource::Project {
+                    dot_codex_folder: user_config_path(&temp_dir, "project/.codex"),
+                },
+                toml::from_str(
+                    "[plugins.profile]\nenabled = true\n[plugins.profile.mcp_servers.example]\nenabled = false\n",
+                )
+                .expect("project config toml"),
+            ),
+            ConfigLayerEntry::new_disabled(
+                ConfigLayerSource::Project {
+                    dot_codex_folder: user_config_path(&temp_dir, "project/untrusted/.codex"),
+                },
+                toml::from_str("[plugins.untrusted]\nenabled = true\n")
+                    .expect("untrusted project config toml"),
+                "project is untrusted",
+            ),
         ],
         ConfigRequirements::default(),
         ConfigRequirementsToml::default(),
     )
     .expect("valid config layer stack");
 
+    let project_mcp_servers = HashMap::from([(
+        "example".to_string(),
+        PluginMcpServerConfig {
+            enabled: false,
+            ..PluginMcpServerConfig::default()
+        },
+    )]);
     let plugins = configured_plugins_from_stack(&stack, temp_dir.path());
 
     assert_eq!(
@@ -347,12 +377,71 @@ fn configured_plugins_from_stack_merges_user_layers() {
             (
                 "profile".to_string(),
                 PluginConfig {
-                    enabled: false,
+                    enabled: true,
+                    mcp_servers: project_mcp_servers.clone(),
+                },
+            ),
+            (
+                "system".to_string(),
+                PluginConfig {
+                    enabled: true,
                     mcp_servers: HashMap::new(),
                 },
             ),
         ])
     );
+    assert_eq!(
+        configured_plugin_mcp_server_policies(&stack).get("profile"),
+        Some(&project_mcp_servers)
+    );
+}
+
+#[tokio::test]
+async fn legacy_ema_policy_disables_installed_and_selected_plugin_servers() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    let plugin_root = temp_dir.path().join("plugin");
+    write_file(
+        &plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"plugin","mcpServers":"./mcp.json"}"#,
+    );
+    write_file(
+        &plugin_root.join("mcp.json"),
+        r#"{"mcpServers":{"example":{"url":"https://resource.example/mcp"}}}"#,
+    );
+    for endpoint in ["https://resource.example/mcp", "https://other.example/mcp"] {
+        let stack = ConfigLayerStack::new(
+            vec![user_layer(
+                user_config_path(&temp_dir, "config.toml"),
+                &format!(
+                    "[plugins.\"plugin@market\".mcp_servers.example.ema_auth]\nurl = '{endpoint}'"
+                ),
+            )],
+            ConfigRequirements::default(),
+            ConfigRequirementsToml::default(),
+        )
+        .expect("legacy policy stack");
+        let policies = configured_plugin_mcp_server_policies(&stack);
+        let policy = policies.get("plugin@market").expect("plugin policy");
+        let installed = load_plugin_mcp_servers_with_policy(
+            &plugin_root,
+            /*auth_mode*/ None,
+            Some(policy),
+        )
+        .await;
+        let mut selected = load_plugin_mcp_servers(&plugin_root, /*auth_mode*/ None).await;
+        assert!(selected["example"].enabled);
+        apply_configured_plugin_mcp_server_policies(policy, &mut selected);
+        assert!(!installed["example"].enabled);
+        assert_eq!(installed, selected);
+
+        let round_trip: HashMap<String, PluginMcpServerConfig> =
+            toml::from_str(&toml::to_string(policy).expect("serialize policy"))
+                .expect("deserialize policy");
+        assert_eq!(
+            &round_trip, policy,
+            "serialization must preserve the denial"
+        );
+    }
 }
 
 #[tokio::test]

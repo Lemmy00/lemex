@@ -12,7 +12,7 @@ Lemex CLI is a fork of the OpenAI Codex coding agent that runs locally on your c
 npm install -g lemex
 ```
 
-> **Note:** `lemex` is not yet published to npm. Until the first release is published, install from source using Option 2 or 3 below.
+> **Note:** `lemex` is not yet published to npm. Until the first release is published, install from source using Option 2 below.
 
 #### Option 2: Install from source using the convenience script
 
@@ -30,16 +30,9 @@ To also copy an existing Lemex config from another machine (overriding the defau
 LEMEX_COPY_CONFIG_FROM=otherhost:/home/you/.lemex ./scripts/install/install_from_source.sh
 ```
 
-#### Option 3: Install from source manually
-
-```shell
-git clone https://github.com/Lemmy00/lemex.git
-cd lemex/codex-rs
-cargo build --release -p codex-cli
-cp target/release/lemex ../codex-cli/vendor/$(rustc -vV | sed -n 's|host: ||p')/bin/lemex
-cd ../codex-cli
-npm install -g .
-```
+On Ubuntu, source builds need Python 3, `build-essential`, `pkg-config`, and
+`libssl-dev`, in addition to Node.js/npm and Rust. The installer downloads
+checksum-verified V8 binaries instead of compiling V8 from source.
 
 Then run `lemex` from anywhere.
 
@@ -85,6 +78,17 @@ requires_openai_auth = false
 ```
 
 Use `lemex exec -m <model-id> ...` to select a different model from the catalog for a single run.
+
+For DeepSeek V4.1 Flash on RCP:
+
+```shell
+lemex -m deepseek-ai/DeepSeek-V4.1-Flash
+```
+
+The source installer builds only Lemex and its code-mode helper, strips release
+symbols, and removes its temporary build directory on exit. Set `LEMEX_KEEP_BUILD=1`
+to retain that directory, or set `CARGO_TARGET_DIR` to reuse a build cache that the
+installer will leave in place.
 
 ### Health check
 

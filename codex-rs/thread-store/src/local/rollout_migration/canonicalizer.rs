@@ -22,6 +22,7 @@ use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_rollout::RolloutItem;
 use codex_rollout::RolloutLine;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -278,10 +279,7 @@ impl LegacyRolloutCanonicalizer {
                     }
                 } else {
                     let item = RolloutItem::EventMsg(event);
-                    if codex_rollout::is_persisted_rollout_item(&item, ThreadHistoryMode::Paginated)
-                    {
-                        self.write_item(writer, &timestamp, item).await?;
-                    }
+                    self.write_item(writer, &timestamp, item).await?;
                 }
             }
             item @ RolloutItem::InterAgentCommunication(_) => {
@@ -292,7 +290,9 @@ impl LegacyRolloutCanonicalizer {
             }
             item @ (RolloutItem::InterAgentCommunicationMetadata { .. }
             | RolloutItem::TurnContext(_)
+            | RolloutItem::TokenUsageRecord(_)
             | RolloutItem::RealtimeItem(_)
+            | RolloutItem::RetainedContext(_)
             | RolloutItem::SecurityRiskScore(_)
             | RolloutItem::WorldState(_)) => {
                 self.write_item(writer, &timestamp, item).await?;
@@ -346,6 +346,7 @@ impl LegacyRolloutCanonicalizer {
             timestamp,
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id,
+                root_turn_id: None,
                 trace_id: None,
                 started_at: Some(started_at),
                 model_context_window: None,
@@ -463,6 +464,12 @@ impl LegacyRolloutCanonicalizer {
         timestamp: &str,
         item: RolloutItem,
     ) -> ThreadStoreResult<()> {
+        let item = match codex_rollout::persisted_rollout_item(&item, ThreadHistoryMode::Paginated)
+        {
+            Some(Cow::Borrowed(_)) => item,
+            Some(Cow::Owned(item)) => item,
+            None => return Ok(()),
+        };
         let mut bytes = serde_json::to_vec(&RolloutLine {
             timestamp: timestamp.to_string(),
             ordinal: Some(self.next_ordinal),

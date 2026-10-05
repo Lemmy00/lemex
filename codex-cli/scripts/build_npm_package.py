@@ -88,8 +88,11 @@ PACKAGE_TARGET_FILTERS: dict[str, str] = {
 
 PACKAGE_CHOICES = tuple(PACKAGE_NATIVE_COMPONENTS)
 
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build or stage the Lemex CLI npm package.")
+    parser = argparse.ArgumentParser(
+        description="Build or stage the Codex CLI npm package."
+    )
     parser.add_argument(
         "--package",
         choices=PACKAGE_CHOICES,
@@ -102,9 +105,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--release-version",
-        help=(
-            "Version to stage for npm release."
-        ),
+        help=("Version to stage for npm release."),
     )
     parser.add_argument(
         "--staging-dir",
@@ -141,7 +142,9 @@ def main() -> int:
     release_version = args.release_version
     if release_version:
         if version and version != release_version:
-            raise RuntimeError("--version and --release-version must match when both are provided.")
+            raise RuntimeError(
+                "--version and --release-version must match when both are provided."
+            )
         version = release_version
 
     if not version:
@@ -253,7 +256,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
             lemex_package_json = json.load(fh)
 
         package_json = {
-            "name": platform_package["npm_name"],
+            "name": LEMEX_NPM_NAME,
             "version": platform_version,
             "license": lemex_package_json.get("license", "Apache-2.0"),
             "os": [platform_package["os"]],
@@ -262,17 +265,19 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
             "repository": lemex_package_json.get("repository"),
         }
 
-        engines = codex_package_json.get("engines")
+        engines = lemex_package_json.get("engines")
         if isinstance(engines, dict):
             package_json["engines"] = engines
 
-        package_manager = codex_package_json.get("packageManager")
+        package_manager = lemex_package_json.get("packageManager")
         if isinstance(package_manager, str):
             package_json["packageManager"] = package_manager
     elif package == "lemex-responses-api-proxy":
         bin_dir = staging_dir / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-        launcher_src = RESPONSES_API_PROXY_NPM_ROOT / "bin" / "lemex-responses-api-proxy.js"
+        launcher_src = (
+            RESPONSES_API_PROXY_NPM_ROOT / "bin" / "lemex-responses-api-proxy.js"
+        )
         shutil.copy2(launcher_src, bin_dir / "lemex-responses-api-proxy.js")
 
         readme_src = RESPONSES_API_PROXY_NPM_ROOT / "README.md"
@@ -291,26 +296,27 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
             package_json = json.load(fh)
         package_json["version"] = version
 
-        if package == "lemex":
-            package_json["files"] = ["bin/lemex.js"]
-            package_json["optionalDependencies"] = {
-                LEMEX_PLATFORM_PACKAGES[platform_package]["npm_name"]: (
-                    f"{compute_platform_package_version(version, LEMEX_PLATFORM_PACKAGES[platform_package]['npm_tag'])}"
-                )
-                for platform_package in PACKAGE_EXPANSIONS["lemex"]
-                if platform_package != "lemex"
-            }
+    if package == "lemex":
+        package_json["files"] = ["bin/lemex.js"]
+        package_json["optionalDependencies"] = {
+            LEMEX_PLATFORM_PACKAGES[platform_package]["npm_name"]: (
+                f"npm:{LEMEX_NPM_NAME}@"
+                f"{compute_platform_package_version(version, LEMEX_PLATFORM_PACKAGES[platform_package]['npm_tag'])}"
+            )
+            for platform_package in PACKAGE_EXPANSIONS["lemex"]
+            if platform_package != "lemex"
+        }
 
-        elif package == "lemex-sdk":
-            scripts = package_json.get("scripts")
-            if isinstance(scripts, dict):
-                scripts.pop("prepare", None)
+    elif package == "lemex-sdk":
+        scripts = package_json.get("scripts")
+        if isinstance(scripts, dict):
+            scripts.pop("prepare", None)
 
-            dependencies = package_json.get("dependencies")
-            if not isinstance(dependencies, dict):
-                dependencies = {}
-            dependencies[LEMEX_NPM_NAME] = version
-            package_json["dependencies"] = dependencies
+        dependencies = package_json.get("dependencies")
+        if not isinstance(dependencies, dict):
+            dependencies = {}
+        dependencies[LEMEX_NPM_NAME] = version
+        package_json["dependencies"] = dependencies
 
     with open(staging_dir / "package.json", "w", encoding="utf-8") as out:
         json.dump(package_json, out, indent=2)
@@ -404,7 +410,10 @@ def copy_native_binaries(
         missing_targets = sorted(target_filter - copied_targets)
         if missing_targets:
             missing_list = ", ".join(missing_targets)
-            raise RuntimeError(f"Missing target directories in vendor source: {missing_list}")
+            raise RuntimeError(
+                f"Missing target directories in vendor source: {missing_list}"
+            )
+
 
 def run_npm_pack(staging_dir: Path, output_path: Path) -> Path:
     output_path = output_path.resolve()

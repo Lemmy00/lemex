@@ -30,7 +30,7 @@ Environment
     → Microsoft Defender: Add a certificate or executable-path exclusion for Lemex and its helpers. If Attack Surface Reduction blocks Lemex, add a rule exclusion. If Controlled Folder Access blocks Lemex, allow the app.
   ✓ runtime      running local build on darwin-arm64
   ✓ install      consistent
-      managed by               npm: no · bun: no · pnpm: no · package root —
+      managed by               npm: no · bun: no · pnpm: no · Vite+: no · package root —
   ✓ search       search is OK (bundled)
   ✓ git          git version 2.54.0
       selected git             /usr/bin/git
@@ -45,6 +45,9 @@ Environment
   ✓ state        state paths inspectable
 
 Configuration
+  ✓ config       loaded
+      feature flags            0 enabled · 0 overridden
+      configured TUI mode      fullscreen
   ✗ auth         token expired — Run `lemex login`.
       LEMEX_API_KEY            present
 
@@ -69,7 +72,7 @@ Background Server
   ✓ app-server   background server is not running
 
 ─────────────────────────────────────────────────────────────
-15 ok · 5 notes · 3 warn · 1 fail failed
+16 ok · 5 notes · 3 warn · 1 fail failed
 
 --summary compact output           --all expand truncated lists
 --json redacted report

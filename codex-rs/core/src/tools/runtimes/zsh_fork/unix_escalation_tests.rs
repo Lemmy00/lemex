@@ -358,6 +358,7 @@ async fn unsandboxed_intercepted_exec_strips_managed_network_env() -> anyhow::Re
     let workdir = test_sandbox_cwd();
     let network = test_credential_broker_network_proxy().await?;
     let executor = CoreShellCommandExecutor {
+        sandbox_manager: codex_sandboxing::SandboxManager::new(),
         command: Vec::new(),
         cwd: workdir.clone(),
         permission_profile: PermissionProfile::workspace_write(),
@@ -491,26 +492,15 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
         .config
         .codex_home
         .join("permission_request_hook_log.jsonl");
-    std::fs::write(
+    codex_utils_cargo_bin::write_executable(
         &script_path,
-        format!(
+        &format!(
             "#!/bin/sh\ncat > {log_path}\nprintf '%s\\n' '{response}'\n",
             log_path = shlex::try_quote(log_path.to_string_lossy().as_ref())?,
             response = "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
         ),
     )
     .with_context(|| format!("write hook script to {}", script_path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mut permissions = std::fs::metadata(&script_path)
-            .with_context(|| format!("read hook script metadata from {}", script_path.display()))?
-            .permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&script_path, permissions)
-            .with_context(|| format!("set hook script permissions on {}", script_path.display()))?;
-    }
     std::fs::write(
         turn_context.config.codex_home.join("hooks.json"),
         serde_json::json!({

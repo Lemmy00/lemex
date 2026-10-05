@@ -12,6 +12,9 @@
 #   LEMEX_INSTALL_PREFIX      npm global prefix override; passed to npm --prefix.
 #   LEMEX_SKIP_RUST_INSTALL   Set to 1 to skip the rustup installation check.
 #   LEMEX_COPY_CONFIG_FROM    ssh host:path to copy an existing ~/.lemex config from.
+#   LEMEX_KEEP_BUILD          Set to 1 to retain the temporary Cargo build directory.
+#   CARGO_TARGET_DIR          Reuse an existing build directory; it is never deleted.
+#   CARGO_BUILD_JOBS          Parallel build jobs (default: 4).
 
 set -euo pipefail
 
@@ -22,6 +25,15 @@ CODEX_CLI_DIR="$REPO_ROOT/codex-cli"
 LEMEX_BUILD="${LEMEX_BUILD:-release}"
 LEMEX_SKIP_RUST_INSTALL="${LEMEX_SKIP_RUST_INSTALL:-0}"
 LEMEX_HOME_DIR="${LEMEX_HOME:-$HOME/.lemex}"
+LEMEX_TEMP_BUILD_DIR=""
+
+cleanup() {
+    if [ -n "$LEMEX_TEMP_BUILD_DIR" ] && [ "${LEMEX_KEEP_BUILD:-0}" != "1" ]; then
+        rm -rf -- "$LEMEX_TEMP_BUILD_DIR"
+    fi
+}
+
+trap cleanup EXIT
 
 step() {
     printf '\n==> %s\n' "$1"
@@ -45,7 +57,10 @@ check_base_deps() {
     if ! command_exists git; then
         error "git is required but not installed."
     fi
-    if ! command_exists node && ! command_exists npm; then
+    if ! command_exists python3; then
+        error "Python 3 is required to fetch the verified V8 build artifacts."
+    fi
+    if ! command_exists node || ! command_exists npm; then
         error "Node.js and npm are required but not installed."
     fi
 }
@@ -72,24 +87,63 @@ build_binary() {
     step "Building Lemex CLI ($LEMEX_BUILD)"
     cd "$CODEX_RS_DIR"
 
+    if [ -z "${CARGO_TARGET_DIR:-}" ]; then
+        local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}"
+        mkdir -p "$cache_dir"
+        LEMEX_TEMP_BUILD_DIR="$(mktemp -d "$cache_dir/lemex-build.XXXXXX")"
+        export CARGO_TARGET_DIR="$LEMEX_TEMP_BUILD_DIR"
+    elif [[ "$CARGO_TARGET_DIR" != /* ]]; then
+        export CARGO_TARGET_DIR="$CODEX_RS_DIR/$CARGO_TARGET_DIR"
+    fi
+    export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+    export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+    export STABLE_GIT_COMMIT="${STABLE_GIT_COMMIT:-$(git -C "$REPO_ROOT" rev-parse HEAD)}"
+
+    HOST_TARGET=$(rustc -vV | sed -n 's|^host: ||p')
+    local v8_paths
+    v8_paths="$(CODEX_REPO_ROOT="$REPO_ROOT" python3 - "$REPO_ROOT" "$HOST_TARGET" "$CARGO_TARGET_DIR/v8" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
+from codex_package.targets import TARGET_SPECS
+from codex_package.v8 import resolve_codex_v8_cargo_env
+
+env = resolve_codex_v8_cargo_env(
+    TARGET_SPECS[sys.argv[2]], cache_root=Path(sys.argv[3])
+)
+if env:
+    print(env["RUSTY_V8_ARCHIVE"])
+    print(env["RUSTY_V8_SRC_BINDING_PATH"])
+PY
+    )" || error "Failed to fetch the verified V8 build artifacts."
+    if [ -n "$v8_paths" ]; then
+        local v8_artifacts
+        mapfile -t v8_artifacts <<< "$v8_paths"
+        export RUSTY_V8_ARCHIVE="${v8_artifacts[0]}"
+        export RUSTY_V8_SRC_BINDING_PATH="${v8_artifacts[1]}"
+    fi
+
     case "$LEMEX_BUILD" in
         release)
-            cargo build --release -p codex-cli
-            SOURCE_BIN="$CODEX_RS_DIR/target/release/lemex"
+            export CARGO_PROFILE_RELEASE_DEBUG="${CARGO_PROFILE_RELEASE_DEBUG:-0}"
+            export CARGO_PROFILE_RELEASE_STRIP="${CARGO_PROFILE_RELEASE_STRIP:-symbols}"
+            cargo build --locked --release --bin lemex --bin lemex-code-mode-host
+            BUILD_OUTPUT_DIR="$CARGO_TARGET_DIR/release"
             ;;
         debug)
-            cargo build -p codex-cli
-            SOURCE_BIN="$CODEX_RS_DIR/target/debug/lemex"
+            cargo build --locked --profile dev-small --bin lemex --bin lemex-code-mode-host
+            BUILD_OUTPUT_DIR="$CARGO_TARGET_DIR/dev-small"
             ;;
         *)
             error "Unknown LEMEX_BUILD value: $LEMEX_BUILD. Use 'release' or 'debug'."
             ;;
     esac
 
-    HOST_TARGET=$(rustc -vV | sed -n 's|^host: ||p')
     VENDOR_DIR="$CODEX_CLI_DIR/vendor/$HOST_TARGET/bin"
     mkdir -p "$VENDOR_DIR"
-    cp "$SOURCE_BIN" "$VENDOR_DIR/lemex"
+    cp "$BUILD_OUTPUT_DIR/lemex" "$VENDOR_DIR/lemex"
+    cp "$BUILD_OUTPUT_DIR/lemex-code-mode-host" "$VENDOR_DIR/lemex-code-mode-host"
     printf "Copied binary to %s\n" "$VENDOR_DIR/lemex"
 }
 
