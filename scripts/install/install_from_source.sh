@@ -100,6 +100,10 @@ build_binary() {
     export STABLE_GIT_COMMIT="${STABLE_GIT_COMMIT:-$(git -C "$REPO_ROOT" rev-parse HEAD)}"
 
     HOST_TARGET=$(rustc -vV | sed -n 's|^host: ||p')
+    local build_binaries=(--bin lemex --bin lemex-code-mode-host)
+    case "$HOST_TARGET" in
+        *-linux-*) build_binaries+=(--bin bwrap) ;;
+    esac
     local v8_paths
     v8_paths="$(CODEX_REPO_ROOT="$REPO_ROOT" python3 - "$REPO_ROOT" "$HOST_TARGET" "$CARGO_TARGET_DIR/v8" <<'PY'
 import sys
@@ -128,11 +132,11 @@ PY
         release)
             export CARGO_PROFILE_RELEASE_DEBUG="${CARGO_PROFILE_RELEASE_DEBUG:-0}"
             export CARGO_PROFILE_RELEASE_STRIP="${CARGO_PROFILE_RELEASE_STRIP:-symbols}"
-            cargo build --locked --release --bin lemex --bin lemex-code-mode-host
+            cargo build --locked --release "${build_binaries[@]}"
             BUILD_OUTPUT_DIR="$CARGO_TARGET_DIR/release"
             ;;
         debug)
-            cargo build --locked --profile dev-small --bin lemex --bin lemex-code-mode-host
+            cargo build --locked --profile dev-small "${build_binaries[@]}"
             BUILD_OUTPUT_DIR="$CARGO_TARGET_DIR/dev-small"
             ;;
         *)
@@ -144,6 +148,12 @@ PY
     mkdir -p "$VENDOR_DIR"
     cp "$BUILD_OUTPUT_DIR/lemex" "$VENDOR_DIR/lemex"
     cp "$BUILD_OUTPUT_DIR/lemex-code-mode-host" "$VENDOR_DIR/lemex-code-mode-host"
+    case "$HOST_TARGET" in
+        *-linux-*)
+            mkdir -p "$CODEX_CLI_DIR/vendor/$HOST_TARGET/codex-resources"
+            cp "$BUILD_OUTPUT_DIR/bwrap" "$CODEX_CLI_DIR/vendor/$HOST_TARGET/codex-resources/bwrap"
+            ;;
+    esac
     printf "Copied binary to %s\n" "$VENDOR_DIR/lemex"
 }
 

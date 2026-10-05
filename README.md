@@ -31,7 +31,7 @@ LEMEX_COPY_CONFIG_FROM=otherhost:/home/you/.lemex ./scripts/install/install_from
 ```
 
 On Ubuntu, source builds need Python 3, `build-essential`, `pkg-config`, and
-`libssl-dev`, in addition to Node.js/npm and Rust. The installer downloads
+`libssl-dev`, and on Linux `libcap-dev`, in addition to Node.js/npm and Rust. The installer downloads
 checksum-verified V8 binaries instead of compiling V8 from source.
 
 Then run `lemex` from anywhere.
@@ -85,7 +85,7 @@ For DeepSeek V4.1 Flash on RCP:
 lemex -m deepseek-ai/DeepSeek-V4.1-Flash
 ```
 
-The source installer builds only Lemex and its code-mode helper, strips release
+The source installer builds only Lemex and its required helpers, strips release
 symbols, and removes its temporary build directory on exit. Set `LEMEX_KEEP_BUILD=1`
 to retain that directory, or set `CARGO_TARGET_DIR` to reuse a build cache that the
 installer will leave in place.
