@@ -103,6 +103,26 @@ installer will leave in place.
 The runtime package also includes ripgrep, package metadata, and compatibility
 names required by the upstream background server, so plain `lemex` can start it.
 
+### Thinking traces
+
+The default RCP config enables full thinking traces returned by the provider:
+
+```toml
+show_raw_agent_reasoning = true
+```
+
+Press **Ctrl+T** to open the expanded transcript and see completed thinking
+blocks. Press **Ctrl+T** again or **q** to return to the compact view.
+While a block is still being generated, the status line shows its latest
+reasoning activity; the full block appears in the transcript when it completes.
+
+To disable raw thinking text, set `show_raw_agent_reasoning = false` in
+`~/.lemex/config.toml`, or override it for one launch:
+
+```shell
+lemex -c show_raw_agent_reasoning=false
+```
+
 ### Health check
 
 ```shell
