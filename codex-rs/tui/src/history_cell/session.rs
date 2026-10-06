@@ -44,7 +44,7 @@ pub(crate) fn with_border_with_inner_width(
 pub(crate) fn codex_title(version: &str) -> Vec<Span<'static>> {
     vec![
         ">_ ".fg(accent_color()),
-        "OpenAI Codex".bold(),
+        "RCP AI Lemex".bold(),
         format!(" (v{version})").dim(),
     ]
 }

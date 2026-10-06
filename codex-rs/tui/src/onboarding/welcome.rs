@@ -127,7 +127,7 @@ impl WidgetRef for &WelcomeWidget {
             "  ".into(),
             "Welcome to ".into(),
             "Lemex".bold(),
-            ", OpenAI's command-line coding agent".into(),
+            ", RCP AI's command-line coding agent".into(),
         ]));
 
         Paragraph::new(lines)
