@@ -85,6 +85,17 @@ For DeepSeek V4.1 Flash on RCP:
 lemex -m deepseek-ai/DeepSeek-V4.1-Flash
 ```
 
+The catalog also includes Qwen 3.8 Flash Next and Qwen 3.8 27B:
+
+```shell
+lemex -m Qwen/Qwen3.8-Flash-Next -c 'model_reasoning_effort="xhigh"'
+lemex -m Qwen/Qwen3.8-27B -c 'model_reasoning_effort="xhigh"'
+```
+
+These Qwen models accept `low`, `medium`, and `xhigh` reasoning on RCP;
+`high` is rejected. The explicit override also works when your saved default
+reasoning effort is `high` for a different model.
+
 The source installer builds only Lemex and its required helpers, strips release
 symbols, and removes its temporary build directory on exit. Set `LEMEX_KEEP_BUILD=1`
 to retain that directory, or set `CARGO_TARGET_DIR` to reuse a build cache that the
