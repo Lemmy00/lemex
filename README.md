@@ -123,6 +123,53 @@ To disable raw thinking text, set `show_raw_agent_reasoning = false` in
 lemex -c show_raw_agent_reasoning=false
 ```
 
+### Web search with RCP models
+
+RCP provides model inference but does not provide OpenAI's hosted web-search
+service. Lemex's default RCP config uses the hosted [Exa MCP server](https://exa.ai/docs/get-started/exa-mcp)
+for web search, page fetching, and searches with domain or date filters. This
+works independently of the inference provider and needs no additional API key
+to get started. Keyless use is free and rate limited.
+
+For an existing installation, add the server:
+
+```shell
+lemex mcp add exa --url 'https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa,web_search_advanced_exa'
+```
+
+Add these **top-level** settings in `~/.lemex/config.toml`, before any `[table]`:
+
+```toml
+# Disable the unsupported hosted service. MCP web tools remain available.
+web_search = "disabled"
+developer_instructions = """
+Use the Exa MCP web tools when information may have changed, when a fact is uncertain,
+or when the user asks to search or verify. Search first, then fetch relevant source
+pages before answering. Prefer official documentation for technical questions and
+use advanced search for domain or date filters. Cite source URLs in the answer.
+If the web tools fail, report the failure and distinguish unverified knowledge
+from retrieved evidence.
+"""
+```
+
+If you already have `developer_instructions`, append the web guidance to it.
+Keep `supports_standalone_web_search = false` for RCP: that setting describes
+the provider's search endpoint, not MCP support. If you switch to an OpenAI
+provider, you can enable its native search with `web_search = "live"`.
+
+Start a new Lemex session and use `/mcp` to check that `exa` exposes
+`web_search_exa`, `web_fetch_exa`, and `web_search_advanced_exa`. A configured
+server is not enough to prove retrieval works; verify both search and fetch:
+
+```shell
+lemex exec --ephemeral --json 'Use Exa to search for the official Python tomllib documentation, fetch that page, and report which Python version introduced tomllib. Cite the fetched source. Do not use shell commands or answer from memory.'
+```
+
+Look for completed `mcp_tool_call` events for search and fetch with no error,
+and a final answer grounded in the returned page. If keyless usage hits a rate
+limit, configure your own Exa key or another search MCP server; access to the
+internet alone does not supply a search backend.
+
 ### Health check
 
 ```shell
