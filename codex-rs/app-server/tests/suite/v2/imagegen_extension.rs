@@ -116,7 +116,7 @@ async fn standalone_image_generation_returns_saved_path_hint_to_model(
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     let turn_id = start_image_generation_turn(
@@ -271,7 +271,7 @@ async fn transparent_image_preserves_output_metadata_and_persisted_history() -> 
     )?;
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     start_image_generation_turn(&mut mcp, ThreadStartParams::default()).await?;
@@ -303,7 +303,7 @@ async fn transparent_image_preserves_output_metadata_and_persisted_history() -> 
     drop(mcp);
     let mut resumed = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     let read_id = resumed
@@ -382,7 +382,7 @@ async fn automatic_image_background_preserves_unknown_transparency() -> Result<(
     )?;
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     start_image_generation_turn(&mut mcp, ThreadStartParams::default()).await?;
@@ -452,7 +452,7 @@ async fn invalid_transparent_background_does_not_dispatch(
     )?;
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     start_image_generation_turn(&mut mcp, ThreadStartParams::default()).await?;
@@ -526,7 +526,7 @@ async fn standalone_image_generation_failure_emits_terminal_item() -> Result<()>
     )?;
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     start_image_generation_turn(&mut mcp, ThreadStartParams::default()).await?;
@@ -637,7 +637,7 @@ async fn image_generation_usage_limit_preserves_correlated_failure_metadata() ->
     )?;
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     start_image_generation_turn(&mut mcp, ThreadStartParams::default()).await?;
@@ -835,7 +835,7 @@ async fn standalone_image_generation_is_exposed_in_code_mode_only() -> Result<()
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     start_image_generation_turn(&mut mcp, ThreadStartParams::default()).await?;
@@ -907,7 +907,7 @@ generatedImage(result);
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     start_image_generation_turn(&mut mcp, ThreadStartParams::default()).await?;
@@ -1018,7 +1018,7 @@ async fn run_image_edit_test(
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     let turn_id = start_turn(

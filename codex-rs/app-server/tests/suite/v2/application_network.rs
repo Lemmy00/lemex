@@ -54,7 +54,7 @@ async fn standalone_startup_applies_local_policy_before_fetching_stored_account_
     )?;
     let _app = TestAppServer::builder()
         .with_codex_home(home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized()
         .await?;
     assert!(

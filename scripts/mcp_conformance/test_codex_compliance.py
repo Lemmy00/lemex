@@ -207,16 +207,16 @@ def test_isolated_environment_drops_model_credentials(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("CODEX_API_KEY", "secret")
-    monkeypatch.setenv("CODEX_ACCESS_TOKEN", "secret")
-    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("LEMEX_API_KEY", "secret")
+    monkeypatch.setenv("LEMEX_ACCESS_TOKEN", "secret")
+    monkeypatch.setenv("LEMEX_API_KEY", "secret")
 
     env = _isolated_environment(tmp_path)
 
-    assert env["CODEX_HOME"] == str(tmp_path)
-    assert "CODEX_API_KEY" not in env
-    assert "CODEX_ACCESS_TOKEN" not in env
-    assert "OPENAI_API_KEY" not in env
+    assert env["LEMEX_HOME"] == str(tmp_path)
+    assert "LEMEX_API_KEY" not in env
+    assert "LEMEX_ACCESS_TOKEN" not in env
+    assert "LEMEX_API_KEY" not in env
     assert env.get("PATH") == os.environ.get("PATH")
 
 

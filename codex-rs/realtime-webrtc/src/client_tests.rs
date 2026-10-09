@@ -17,7 +17,7 @@ fn forwards_only_explicit_device_network_and_os_inputs() {
         ("ALSA_PLUGIN_DIR", "untrusted-alsa-plugins"),
         ("GST_REGISTRY", "untrusted-registry"),
         ("GST_REGISTRY_FORK", "yes"),
-        ("OPENAI_API_KEY", "secret"),
+        ("LEMEX_API_KEY", "secret"),
     ];
     assert_eq!(
         child_environment(

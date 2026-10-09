@@ -170,7 +170,7 @@ int main(void) {
                                 root / variant.executable_stem
                             ),
                             code_mode_host_bin=touch_executable(
-                                root / "codex-code-mode-host"
+                                root / "lemex-code-mode-host"
                             ),
                             rg_bin=rg_bin,
                             bwrap_bin=None,
@@ -197,7 +197,7 @@ int main(void) {
             package_dir.mkdir()
             inputs = PackageInputs(
                 entrypoint_bin=touch_executable(root / "codex-app-server"),
-                code_mode_host_bin=touch_executable(root / "codex-code-mode-host"),
+                code_mode_host_bin=touch_executable(root / "lemex-code-mode-host"),
                 rg_bin=touch_executable(root / "rg"),
                 bwrap_bin=touch_executable(root / "bwrap"),
                 codex_command_runner_bin=None,
@@ -217,7 +217,7 @@ int main(void) {
                 TARGET_SPECS["x86_64-unknown-linux-musl"],
             )
 
-            self.assertTrue((package_dir / "bin" / "codex-code-mode-host").is_file())
+            self.assertTrue((package_dir / "bin" / "lemex-code-mode-host").is_file())
 
 
 def touch_executable(path: Path) -> Path:

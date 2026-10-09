@@ -511,7 +511,7 @@ def main() -> int:
             proxy_home.mkdir(parents=True, exist_ok=True)
             proxy_url = f"http://127.0.0.1:{proxy_port}"
             proxy_env = {
-                "CODEX_HOME": str(proxy_home),
+                "LEMEX_HOME": str(proxy_home),
                 "HTTP_PROXY": proxy_url,
                 "http_proxy": proxy_url,
                 "ALL_PROXY": proxy_url,
@@ -555,7 +555,7 @@ def main() -> int:
                 "workspace-write",
                 direct_cmd,
                 WS_ROOT,
-                env_extra={"CODEX_HOME": str(proxy_home)},
+                env_extra={"LEMEX_HOME": str(proxy_home)},
             )
             add(
                 "WS: direct loopback blocked",
@@ -763,8 +763,8 @@ def main() -> int:
         f"rc={rc}",
     )
 
-    # 34. WS: policy tamper (.codex artifacts) denied
-    codex_home = Path(os.environ["USERPROFILE"]) / ".codex"
+    # 34. WS: policy tamper (.lemex artifacts) denied
+    codex_home = Path(os.environ["USERPROFILE"]) / ".lemex"
     cap_sid_target = codex_home / "cap_sid"
     rc, out, err = run_sbx(
         "workspace-write",
@@ -774,8 +774,8 @@ def main() -> int:
     rc2, out2, err2 = run_sbx(
         "workspace-write", ["cmd", "/c", "echo tamper > .codex\\policy.json"], WS_ROOT
     )
-    add("WS: .codex cap_sid tamper denied", rc != 0, f"rc={rc}, err={err}")
-    add("WS: .codex policy tamper denied", rc2 != 0, f"rc={rc2}, err={err2}")
+    add("WS: .lemex cap_sid tamper denied", rc != 0, f"rc={rc}, err={err}")
+    add("WS: .lemex policy tamper denied", rc2 != 0, f"rc={rc2}, err={err2}")
 
     # 35. WS: PATH stub bypass denied (ssh before stubs)
     tools_dir = WS_ROOT / "tools"

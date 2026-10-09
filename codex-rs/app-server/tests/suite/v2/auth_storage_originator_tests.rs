@@ -198,7 +198,7 @@ async fn turn_token_refresh_exports_thread_storage_originator() -> Result<()> {
     let mut server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (
                 REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
                 Some(refresh_url.as_str()),

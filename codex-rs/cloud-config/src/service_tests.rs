@@ -62,7 +62,7 @@ async fn write_test_cache(cache: &CloudConfigBundleCache, bundle: CloudConfigBun
 async fn auth_manager_with_api_key() -> Arc<AuthManager> {
     let tmp = tempdir().expect("tempdir");
     let auth_json = json!({
-        "OPENAI_API_KEY": "sk-test-key",
+        "LEMEX_API_KEY": "sk-test-key",
         "tokens": null,
         "last_refresh": null,
     });
@@ -166,7 +166,7 @@ fn chatgpt_auth_json_with_last_refresh(
 ) -> serde_json::Value {
     let fake_jwt = fake_chatgpt_jwt(plan_type, chatgpt_user_id, b"sig");
     json!({
-        "OPENAI_API_KEY": null,
+        "LEMEX_API_KEY": null,
         "tokens": {
             "id_token": fake_jwt,
             "access_token": access_token,

@@ -178,9 +178,9 @@ impl Respond for SandboxMcpServer {
                 let mut command = background_command(&self.codex);
                 command
                     .current_dir(&self.cwd)
-                    .env("CODEX_HOME", &self.codex_home)
-                    .env_remove("CODEX_ACCESS_TOKEN")
-                    .env_remove("OPENAI_API_KEY")
+                    .env("LEMEX_HOME", &self.codex_home)
+                    .env_remove("LEMEX_ACCESS_TOKEN")
+                    .env_remove("LEMEX_API_KEY")
                     .env("CODEX_TEST_WRITE_PATH", target_path)
                     .stdin(Stdio::null())
                     .args(["sandbox", "--sandbox-state-json", &state.to_string(), "--"]);

@@ -239,7 +239,7 @@ mod windows_tests {
             ("WinDir", "C:\\Windows"),
             ("AppData", "C:\\Users\\codex\\AppData\\Roaming"),
             ("TmpDir", "C:\\Temp\\custom"),
-            ("OPENAI_API_KEY", "secret"),
+            ("LEMEX_API_KEY", "secret"),
         ]);
 
         let policy = ShellEnvironmentPolicy {
@@ -316,7 +316,7 @@ mod non_windows_tests {
             ("path", "/usr/bin"),
             ("home", "/home/codex"),
             ("TmpDir", "/tmp/custom"),
-            ("OPENAI_API_KEY", "secret"),
+            ("LEMEX_API_KEY", "secret"),
         ]);
 
         let policy = ShellEnvironmentPolicy {

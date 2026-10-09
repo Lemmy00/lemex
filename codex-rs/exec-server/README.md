@@ -70,15 +70,15 @@ The forwarder does not replay requests or persist execution state, so recovery
 is limited by the destination's session and process-output retention.
 It uses the standard Codex ChatGPT sign-in state; run `codex login` first when
 remote registration needs authentication. Containerized callers that receive an
-Agent Identity JWT in `CODEX_ACCESS_TOKEN` can opt into that auth path with
+Agent Identity JWT in `LEMEX_ACCESS_TOKEN` can opt into that auth path with
 `--use-agent-identity-auth`; Codex then registers an Agent task and sends the
 derived AgentAssertion headers on the registry request.
 
-Alternatively, API users can instead use `CODEX_API_KEY`;
+Alternatively, API users can instead use `LEMEX_API_KEY`;
 Codex sends it as a bearer token on the registration request. For example:
 
 ```sh
-CODEX_API_KEY="$OPENAI_API_KEY" \
+LEMEX_API_KEY="$LEMEX_API_KEY" \
 codex exec-server \
   --remote ... \
   --environment-id "$ENVIRONMENT_ID"

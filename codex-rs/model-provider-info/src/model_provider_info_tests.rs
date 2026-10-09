@@ -191,7 +191,7 @@ fn test_deserialize_chat_wire_api_shows_helpful_error() {
     let provider_toml = r#"
 name = "OpenAI using Chat Completions"
 base_url = "https://api.openai.com/v1"
-env_key = "OPENAI_API_KEY"
+env_key = "LEMEX_API_KEY"
 wire_api = "chat"
         "#;
 

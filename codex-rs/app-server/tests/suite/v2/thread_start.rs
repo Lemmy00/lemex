@@ -998,7 +998,7 @@ async fn thread_start_respects_project_config_from_cwd() -> Result<()> {
     create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
 
     let workspace = TempDir::new()?;
-    let project_config_dir = workspace.path().join(".codex");
+    let project_config_dir = workspace.path().join(".lemex");
     std::fs::create_dir_all(&project_config_dir)?;
     std::fs::write(
         project_config_dir.join("config.toml"),
@@ -1485,7 +1485,7 @@ async fn config_requests_surface_cloud_config_bundle_load_errors(
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (
                 REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
                 Some(refresh_token_url.as_str()),
@@ -1536,7 +1536,7 @@ async fn thread_start_workspace_write_respects_effective_permissions_for_project
     create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
 
     let workspace = TempDir::new()?;
-    let project_config_dir = workspace.path().join(".codex");
+    let project_config_dir = workspace.path().join(".lemex");
     std::fs::create_dir_all(&project_config_dir)?;
     std::fs::write(
         project_config_dir.join("config.toml"),
@@ -1608,7 +1608,7 @@ async fn thread_start_with_managed_read_only_does_not_trust_or_load_project_mcp(
 
     let workspace = TempDir::new()?;
     std::fs::create_dir(workspace.path().join(".git"))?;
-    let project_config_dir = workspace.path().join(".codex");
+    let project_config_dir = workspace.path().join(".lemex");
     std::fs::create_dir(&project_config_dir)?;
     std::fs::write(
         project_config_dir.join("config.toml"),
@@ -1839,7 +1839,7 @@ async fn thread_start_skips_trust_write_when_project_is_already_trusted() -> Res
     create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
 
     let workspace = TempDir::new()?;
-    let project_config_dir = workspace.path().join(".codex");
+    let project_config_dir = workspace.path().join(".lemex");
     std::fs::create_dir_all(&project_config_dir)?;
     std::fs::write(
         project_config_dir.join("config.toml"),

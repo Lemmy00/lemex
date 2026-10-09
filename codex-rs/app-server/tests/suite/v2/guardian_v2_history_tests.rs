@@ -298,7 +298,7 @@ async fn guardians_retain_evidence_after_compaction_and_resume(
     write_models_cache_with_models(codex_home.path(), models).await?;
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(TIMEOUT)
         .await?;
     let thread = app_server
@@ -324,7 +324,7 @@ async fn guardians_retain_evidence_after_compaction_and_resume(
             app_server.shutdown_gracefully().await?;
             app_server = TestAppServer::builder()
                 .with_codex_home(codex_home.path())
-                .with_env_overrides(&[("OPENAI_API_KEY", None)])
+                .with_env_overrides(&[("LEMEX_API_KEY", None)])
                 .build_initialized_with_timeout(TIMEOUT)
                 .await?;
             let id = app_server

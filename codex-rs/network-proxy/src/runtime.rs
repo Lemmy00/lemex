@@ -1406,9 +1406,9 @@ mod tests {
             .force_reload()
             .await
             .expect("enable credential broker");
-        let mut env = HashMap::from([("OPENAI_API_KEY".to_string(), "sk-real".to_string())]);
+        let mut env = HashMap::from([("LEMEX_API_KEY".to_string(), "sk-real".to_string())]);
         state.virtualize_child_credentials(&mut env);
-        assert_ne!(env["OPENAI_API_KEY"], "sk-real");
+        assert_ne!(env["LEMEX_API_KEY"], "sk-real");
     }
 
     #[test]
@@ -1425,11 +1425,11 @@ mod tests {
         )
         .expect("managed-disabled credential broker should fail open");
         let state = NetworkProxyState::with_reloader(config_state, Arc::new(NoopReloader));
-        let mut env = HashMap::from([("OPENAI_API_KEY".to_string(), "sk-real".to_string())]);
+        let mut env = HashMap::from([("LEMEX_API_KEY".to_string(), "sk-real".to_string())]);
 
         state.virtualize_child_credentials(&mut env);
 
-        assert_eq!(env["OPENAI_API_KEY"], "sk-real");
+        assert_eq!(env["LEMEX_API_KEY"], "sk-real");
     }
 
     #[tokio::test]

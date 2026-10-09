@@ -10,7 +10,7 @@ use app_test_support::write_chatgpt_auth;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_login::AuthKeyringBackendKind;
 use codex_login::CLIENT_ID;
-use codex_login::CODEX_ACCESS_TOKEN_ENV_VAR;
+use codex_login::LEMEX_ACCESS_TOKEN_ENV_VAR;
 use codex_login::REVOKE_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_login::login_with_bedrock_access_keys;
 use codex_protocol::shell_environment::OPENAI_FEDERATION_RULE_ID_ENV_VAR;
@@ -29,7 +29,7 @@ use wiremock::matchers::path;
 
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
-    cmd.env("CODEX_HOME", codex_home);
+    cmd.env("LEMEX_HOME", codex_home);
     Ok(cmd)
 }
 
@@ -64,7 +64,7 @@ fn login_with_api_key_reads_stdin_and_writes_auth_json() -> Result<()> {
     .stderr(contains("Successfully logged in"));
 
     let auth = read_auth_json(codex_home.path())?;
-    assert_eq!(auth["OPENAI_API_KEY"], "sk-test");
+    assert_eq!(auth["LEMEX_API_KEY"], "sk-test");
     assert!(auth.get("tokens").is_none());
     assert!(auth.get("agent_identity").is_none());
 
@@ -93,7 +93,7 @@ fn login_status_validates_configured_workload_identity() -> Result<()> {
     let missing_assertion = codex_home.path().join("missing-identity-token");
 
     codex_command(codex_home.path())?
-        .env_remove(CODEX_ACCESS_TOKEN_ENV_VAR)
+        .env_remove(LEMEX_ACCESS_TOKEN_ENV_VAR)
         .env(OPENAI_FEDERATION_RULE_ID_ENV_VAR, "rule-test")
         .env(OPENAI_IDENTITY_TOKEN_FILE_ENV_VAR, &missing_assertion)
         .args(["login", "status"])
@@ -167,7 +167,7 @@ fn logout_clears_only_the_selected_bedrock_provider() -> Result<()> {
         };
 
         codex_command(codex_home.path())?
-            .env_remove(CODEX_ACCESS_TOKEN_ENV_VAR)
+            .env_remove(LEMEX_ACCESS_TOKEN_ENV_VAR)
             .env("AWS_ACCESS_KEY_ID", "environment-access-key-id")
             .env("AWS_SECRET_ACCESS_KEY", "environment-secret-access-key")
             .args(["logout"])
@@ -221,9 +221,9 @@ async fn logout_survives_enterprise_cleanup_failure_with_xaa_disabled() -> Resul
             .current_dir(home.path())
             .env("NO_PROXY", "127.0.0.1,localhost")
             .env("no_proxy", "127.0.0.1,localhost")
-            .env_remove("CODEX_API_KEY")
-            .env_remove("OPENAI_API_KEY")
-            .env_remove(CODEX_ACCESS_TOKEN_ENV_VAR)
+            .env_remove("LEMEX_API_KEY")
+            .env_remove("LEMEX_API_KEY")
+            .env_remove(LEMEX_ACCESS_TOKEN_ENV_VAR)
             .args([
                 "-c",
                 &format!("features.use_xaa={enabled}"),
@@ -244,9 +244,9 @@ async fn logout_survives_enterprise_cleanup_failure_with_xaa_disabled() -> Resul
             REVOKE_TOKEN_URL_OVERRIDE_ENV_VAR,
             format!("{}/oauth/revoke", server.uri()),
         )
-        .env_remove("CODEX_API_KEY")
-        .env_remove("OPENAI_API_KEY")
-        .env_remove(CODEX_ACCESS_TOKEN_ENV_VAR)
+        .env_remove("LEMEX_API_KEY")
+        .env_remove("LEMEX_API_KEY")
+        .env_remove(LEMEX_ACCESS_TOKEN_ENV_VAR)
         .args(["logout"])
         .assert()
         .success()
@@ -305,8 +305,8 @@ async fn debug_prompt_input_follows_authenticated_attribution_setting() -> Resul
         let output = codex_command(codex_home.path())?
             .env("NO_PROXY", "127.0.0.1,localhost")
             .env("no_proxy", "127.0.0.1,localhost")
-            .env_remove("CODEX_ACCESS_TOKEN")
-            .env_remove("OPENAI_API_KEY")
+            .env_remove("LEMEX_ACCESS_TOKEN")
+            .env_remove("LEMEX_API_KEY")
             .args(["debug", "prompt-input"])
             .output()?;
         assert!(output.status.success());
@@ -367,7 +367,7 @@ async fn device_login_revokes_existing_auth_before_requesting_new_tokens() -> Re
         codex_home.path().join("auth.json"),
         serde_json::to_vec(&json!({
             "auth_mode": "chatgpt",
-            "OPENAI_API_KEY": null,
+            "LEMEX_API_KEY": null,
             "tokens": {
                 "id_token": "eyJhbGciOiJub25lIn0.e30.c2ln",
                 "access_token": "old-access",
@@ -385,8 +385,8 @@ async fn device_login_revokes_existing_auth_before_requesting_new_tokens() -> Re
     )
     .env("NO_PROXY", "127.0.0.1,localhost")
     .env("no_proxy", "127.0.0.1,localhost")
-    .env_remove("CODEX_ACCESS_TOKEN")
-    .env_remove("OPENAI_API_KEY")
+    .env_remove("LEMEX_ACCESS_TOKEN")
+    .env_remove("LEMEX_API_KEY")
     .args(["login", "--device-auth", "--experimental_issuer", &issuer])
     .assert()
     .success()

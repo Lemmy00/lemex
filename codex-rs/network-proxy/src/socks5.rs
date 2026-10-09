@@ -876,7 +876,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
 
-    // Managed MITM CA files live under the shared test CODEX_HOME, so MITM-enabled config state
+    // Managed MITM CA files live under the shared test LEMEX_HOME, so MITM-enabled config state
     // must be materialized one test at a time.
     static MITM_CONFIG_STATE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1040,7 +1040,7 @@ mod tests {
         };
         settings.set_allowed_domains(vec!["api.openai.com".to_string()]);
         let state = state_for_settings(settings);
-        let mut env = HashMap::from([("OPENAI_API_KEY".to_string(), "sk-real".to_string())]);
+        let mut env = HashMap::from([("LEMEX_API_KEY".to_string(), "sk-real".to_string())]);
         state.virtualize_child_credentials(&mut env);
         let mut request = TcpRequest::new(
             HostWithPort::try_from("api.openai.com:8443").expect("valid authority"),

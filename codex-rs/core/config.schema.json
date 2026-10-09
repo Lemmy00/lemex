@@ -357,7 +357,7 @@
       "description": "Determine where Codex should store CLI auth credentials.",
       "oneOf": [
         {
-          "description": "Persist credentials in CODEX_HOME/auth.json.",
+          "description": "Persist credentials in LEMEX_HOME/auth.json.",
           "enum": [
             "file"
           ],
@@ -371,7 +371,7 @@
           "type": "string"
         },
         {
-          "description": "Use keyring when available; otherwise, fall back to a file in CODEX_HOME.",
+          "description": "Use keyring when available; otherwise, fall back to a file in LEMEX_HOME.",
           "enum": [
             "auto"
           ],
@@ -2062,7 +2062,7 @@
     },
     "History": {
       "additionalProperties": false,
-      "description": "Settings that govern if and what will be written to `~/.codex/history.jsonl`.",
+      "description": "Settings that govern if and what will be written to `~/.lemex/history.jsonl`.",
       "properties": {
         "max_bytes": {
           "default": null,
@@ -3366,7 +3366,7 @@
           "type": "string"
         },
         {
-          "description": "CODEX_HOME/.credentials.json This file will be readable to Codex and other applications running as the same user.",
+          "description": "LEMEX_HOME/.credentials.json This file will be readable to Codex and other applications running as the same user.",
           "enum": [
             "file"
           ],
@@ -4877,7 +4877,7 @@
         },
         "pet": {
           "default": null,
-          "description": "Pet id to preselect in the terminal pet picker.\n\nCustom pet ids resolve against CODEX_HOME/pets/<pet-id>/pet.json.",
+          "description": "Pet id to preselect in the terminal pet picker.\n\nCustom pet ids resolve against LEMEX_HOME/pets/<pet-id>/pet.json.",
           "type": "string"
         },
         "pet_anchor": {
@@ -4984,7 +4984,7 @@
         },
         "theme": {
           "default": null,
-          "description": "Syntax highlighting theme name (kebab-case).\n\nWhen set, overrides automatic light/dark theme detection. Use `/theme` in the TUI or see `$CODEX_HOME/themes` for custom themes.",
+          "description": "Syntax highlighting theme name (kebab-case).\n\nWhen set, overrides automatic light/dark theme detection. Use `/theme` in the TUI or see `$LEMEX_HOME/themes` for custom themes.",
           "type": "string"
         },
         "vim_mode_default": {
@@ -6818,7 +6818,7 @@
       "type": "object"
     }
   },
-  "description": "Base config deserialized from ~/.codex/config.toml.",
+  "description": "Base config deserialized from ~/.lemex/config.toml.",
   "properties": {
     "agents": {
       "allOf": [
@@ -7620,7 +7620,7 @@
         "max_bytes": null,
         "persistence": "save-all"
       },
-      "description": "Settings that govern if and what will be written to `~/.codex/history.jsonl`."
+      "description": "Settings that govern if and what will be written to `~/.lemex/history.jsonl`."
     },
     "hooks": {
       "allOf": [
@@ -7660,7 +7660,7 @@
           "$ref": "#/definitions/AbsolutePathBuf"
         }
       ],
-      "description": "Directory where Codex writes log files. Setting this value explicitly also enables the TUI text log in this directory. Defaults to `$CODEX_HOME/log`."
+      "description": "Directory where Codex writes log files. Setting this value explicitly also enables the TUI text log in this directory. Defaults to `$LEMEX_HOME/log`."
     },
     "marketplaces": {
       "additionalProperties": {
@@ -7889,7 +7889,7 @@
     },
     "project_root_markers": {
       "default": null,
-      "description": "Markers used to detect the project root when searching parent directories for `.codex` folders. Defaults to [\".git\"] when unset.",
+      "description": "Markers used to detect the project root when searching parent directories for `.lemex` folders. Defaults to [\".git\"] when unset.",
       "items": {
         "type": "string"
       },
@@ -7975,7 +7975,7 @@
           "$ref": "#/definitions/AbsolutePathBuf"
         }
       ],
-      "description": "Directory where Codex stores the SQLite state DB. Defaults to `$CODEX_SQLITE_HOME` when set. Otherwise uses `$CODEX_HOME`."
+      "description": "Directory where Codex stores the SQLite state DB. Defaults to `$LEMEX_SQLITE_HOME` when set. Otherwise uses `$LEMEX_HOME`."
     },
     "suppress_unstable_features_warning": {
       "description": "Suppress warnings about unstable (under development) features.",

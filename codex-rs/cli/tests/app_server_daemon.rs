@@ -45,7 +45,7 @@ impl TestDaemon {
             // Translate the fixture before timed daemon capability and readiness checks.
             ensure!(
                 Command::new(&managed)
-                    .env("CODEX_HOME", home.path())
+                    .env("LEMEX_HOME", home.path())
                     .arg("--version")
                     .output()?
                     .status
@@ -75,7 +75,7 @@ impl TestDaemon {
 
     fn command(&self) -> Command {
         let mut command = Command::new(&self.codex);
-        command.env("CODEX_HOME", self.home.path());
+        command.env("LEMEX_HOME", self.home.path());
         command
     }
 
@@ -144,7 +144,7 @@ fn managed_daemon_restarts_from_deleted_working_directory() -> Result<()> {
         .arg(&project)
         .arg(&daemon.codex)
         .current_dir(&project)
-        .env("CODEX_HOME", daemon.home.path())
+        .env("LEMEX_HOME", daemon.home.path())
         .output()?;
     ensure!(
         restarted.status.success(),

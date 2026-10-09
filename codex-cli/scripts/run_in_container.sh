@@ -58,7 +58,7 @@ cleanup
 
 # Run the container with the specified directory mounted at the same path inside the container.
 docker run --name "$CONTAINER_NAME" -d \
-  -e OPENAI_API_KEY \
+  -e LEMEX_API_KEY \
   --cap-add=NET_ADMIN \
   --cap-add=NET_RAW \
   -v "$WORK_DIR:/app$WORK_DIR" \
@@ -73,11 +73,11 @@ for domain in $OPENAI_ALLOWED_DOMAINS; do
     echo "Error: Invalid domain format: $domain"
     exit 1
   fi
-  echo "$domain" | docker exec --user root -i "$CONTAINER_NAME" bash -c "cat >> /etc/codex/allowed_domains.txt"
+  echo "$domain" | docker exec --user root -i "$CONTAINER_NAME" bash -c "cat >> /etc/lemex/allowed_domains.txt"
 done
 
 # Set proper permissions on the domains file
-docker exec --user root "$CONTAINER_NAME" bash -c "chmod 444 /etc/codex/allowed_domains.txt && chown root:root /etc/codex/allowed_domains.txt"
+docker exec --user root "$CONTAINER_NAME" bash -c "chmod 444 /etc/lemex/allowed_domains.txt && chown root:root /etc/lemex/allowed_domains.txt"
 
 # Initialize the firewall inside the container as root user
 docker exec --user root "$CONTAINER_NAME" bash -c "/usr/local/bin/init_firewall.sh"

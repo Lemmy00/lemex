@@ -96,7 +96,7 @@ async fn get_auth_status_no_auth() -> Result<()> {
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -167,8 +167,8 @@ async fn personal_access_token_without_email_supports_auth_status_and_account_re
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
-            ("CODEX_ACCESS_TOKEN", Some("at-test-token")),
+            ("LEMEX_API_KEY", None),
+            ("LEMEX_ACCESS_TOKEN", Some("at-test-token")),
             ("CODEX_AUTHAPI_BASE_URL", Some(authapi_base_url.as_str())),
         ])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
@@ -361,7 +361,7 @@ async fn get_auth_status_omits_token_after_permanent_refresh_failure() -> Result
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (
                 REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
                 Some(refresh_url.as_str()),
@@ -435,7 +435,7 @@ async fn get_auth_status_omits_token_after_proactive_refresh_failure() -> Result
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (
                 REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
                 Some(refresh_url.as_str()),
@@ -498,7 +498,7 @@ async fn get_auth_status_returns_token_after_proactive_refresh_recovery() -> Res
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (
                 REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
                 Some(refresh_url.as_str()),

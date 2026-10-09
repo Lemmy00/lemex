@@ -1140,7 +1140,7 @@ async fn guardian_session_prewarms_and_is_reused_for_first_review(
     assert_eq!(guardian_review.get("generate"), None);
 
     let guardian_rollout_path = test
-        .codex
+        .lemex
         .guardian_trunk_rollout_path()
         .await
         .expect("guardian trunk rollout path");

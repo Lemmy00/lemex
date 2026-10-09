@@ -97,7 +97,7 @@ pub(super) async fn background_server_check(config: &Config) -> DoctorCheck {
     )
     .details(details);
     if status.check_status() == CheckStatus::Warning {
-        check = check.remediation("Run codex app-server daemon version for more details.");
+        check = check.remediation("Run lemex app-server daemon version for more details.");
     }
     check
 }
@@ -336,7 +336,7 @@ mod tests {
             })
             .map(|detail| {
                 detail
-                    .replace(&temp.path().display().to_string(), "CODEX_HOME")
+                    .replace(&temp.path().display().to_string(), "LEMEX_HOME")
                     .replace('\\', "/")
             })
             .collect::<Vec<_>>()

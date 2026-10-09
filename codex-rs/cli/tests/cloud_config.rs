@@ -126,12 +126,12 @@ impl CloudManagedConfigFixture {
         command
             .kill_on_drop(true)
             .current_dir(self.codex_home.path())
-            .env("CODEX_HOME", self.codex_home.path())
+            .env("LEMEX_HOME", self.codex_home.path())
             .env("NO_PROXY", "127.0.0.1,localhost")
             .env("no_proxy", "127.0.0.1,localhost")
-            .env_remove("CODEX_ACCESS_TOKEN")
-            .env_remove("CODEX_API_KEY")
-            .env_remove("OPENAI_API_KEY")
+            .env_remove("LEMEX_ACCESS_TOKEN")
+            .env_remove("LEMEX_API_KEY")
+            .env_remove("LEMEX_API_KEY")
             .args(args);
         Ok(command)
     }

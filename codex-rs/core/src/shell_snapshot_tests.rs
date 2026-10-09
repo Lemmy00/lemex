@@ -623,8 +623,8 @@ async fn inactive_profiles_keep_snapshots_but_active_brokers_require_sandbox() -
     new_env = context
         .prepare_child_environment(&proxy, new_env, /*environment_id*/ None)?
         .env;
-    assert_ne!(new_env["OPENAI_API_KEY"], old_env["OPENAI_API_KEY"]);
-    assert_ne!(new_env["OPENAI_API_KEY"], "sk-snapshot-cache-test");
+    assert_ne!(new_env["LEMEX_API_KEY"], old_env["LEMEX_API_KEY"]);
+    assert_ne!(new_env["LEMEX_API_KEY"], "sk-snapshot-cache-test");
 
     // A credential change during capture should recapture once under the new configuration.
     fs::remove_file(refreshed.path()).await?;
@@ -1052,7 +1052,7 @@ async fn snapshot_discovers_and_redacts_shell_initialized_credentials() -> Resul
         ("GH_ENTERPRISE_TOKEN", "ghp_enterprise_secret"),
         ("GITHUB_ENTERPRISE_TOKEN", "ghp_removed_enterprise_secret"),
         ("UNSET_AUTH_HEADER", "Bearer ghp_removed_enterprise_secret"),
-        ("OPENAI_API_KEY", "sk-proj-snapshot-secret"),
+        ("LEMEX_API_KEY", "sk-proj-snapshot-secret"),
         ("STRIPE_API_KEY", "stripe_live_abcdefghijklmnopqrstuvwx"),
         ("STRIPE_HOST", "api.stripe.example"),
         ("VENDOR_PASSWORD", "pin_abcdefgh"),
@@ -1132,7 +1132,7 @@ async fn snapshot_discovers_and_redacts_shell_initialized_credentials() -> Resul
         restored_env = context
             .prepare_child_environment(&network_proxy, restored_env, /*environment_id*/ None)?
             .env;
-        assert_ne!(restored_env["OPENAI_API_KEY"], "sk-proj-snapshot-secret");
+        assert_ne!(restored_env["LEMEX_API_KEY"], "sk-proj-snapshot-secret");
         assert_eq!(
             restored_env["OPENAI_BASE_URL"],
             if excluded_context {
@@ -1215,7 +1215,7 @@ async fn snapshot_discovers_and_redacts_shell_initialized_credentials() -> Resul
     assert_ne!(env["GH_TOKEN"], "ghp_shell_only_secret");
     assert_ne!(env["GITHUB_TOKEN"], "ghp_readonly_secret");
     assert_ne!(env["GH_ENTERPRISE_TOKEN"], "ghp_enterprise_secret");
-    assert_ne!(env["OPENAI_API_KEY"], "sk-proj-snapshot-secret");
+    assert_ne!(env["LEMEX_API_KEY"], "sk-proj-snapshot-secret");
     assert_ne!(
         env["STRIPE_API_KEY"],
         "stripe_live_abcdefghijklmnopqrstuvwx"
@@ -1253,7 +1253,7 @@ async fn snapshot_discovers_and_redacts_shell_initialized_credentials() -> Resul
             env["GITHUB_TOKEN"],
             env["GH_TOKEN"],
             env["GH_TOKEN"],
-            env["OPENAI_API_KEY"],
+            env["LEMEX_API_KEY"],
             env["VENDOR_PASSWORD"],
             env["VENDOR_HOST"]
         )
@@ -1283,7 +1283,7 @@ async fn snapshot_discovers_and_redacts_shell_initialized_credentials() -> Resul
     };
     for (github_token, openai_api_key) in [
         ("ghp_shell_only_secret", "sk-proj-snapshot-secret"),
-        (env["GH_TOKEN"].as_str(), env["OPENAI_API_KEY"].as_str()),
+        (env["GH_TOKEN"].as_str(), env["LEMEX_API_KEY"].as_str()),
     ] {
         std::fs::write(
             &startup,

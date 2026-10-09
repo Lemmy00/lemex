@@ -181,7 +181,7 @@ async fn root_turn_suspension_preserves_unfinished_turn_history() {
 
     assert_eq!(
         resumed
-            .codex
+            .lemex
             .recover_turn_if_idle(codex_core::RecoverTurnRequest {
                 turn_id: turn_id.clone(),
                 thread_settings: Default::default(),

@@ -10,19 +10,19 @@ use codex_install_context::StandalonePlatform;
 pub enum UpdateAction {
     /// Replace the local daemon after restoring the terminal.
     Daemon(DaemonUpdateSource),
-    /// Update via `npm install -g @openai/codex@latest`.
+    /// Update via `npm install -g lemex@latest`.
     NpmGlobalLatest,
-    /// Update via `bun install -g @openai/codex@latest`.
+    /// Update via `bun install -g lemex@latest`.
     BunGlobalLatest,
-    /// Update via `vp install -g @openai/codex@latest`.
+    /// Update via `vp install -g lemex@latest`.
     VitePlusGlobalLatest,
-    /// Update via `pnpm add -g @openai/codex@latest`.
+    /// Update via `pnpm add -g lemex@latest`.
     PnpmGlobalLatest,
-    /// Update via `brew upgrade codex`.
+    /// Update via `brew upgrade lemex`.
     BrewUpgrade,
-    /// Update via `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh`.
+    /// Update via `curl -fsSL https://github.com/Lemmy00/lemex/raw/main/scripts/install/install.sh | LEMEX_NON_INTERACTIVE=1 sh`.
     StandaloneUnix,
-    /// Update via `$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex`.
+    /// Update via `$env:LEMEX_NON_INTERACTIVE=1; irm https://github.com/Lemmy00/lemex/raw/main/scripts/install/install.ps1 | iex`.
     StandaloneWindows,
 }
 
@@ -46,17 +46,17 @@ impl UpdateAction {
     /// Returns the list of command-line arguments for invoking the update.
     pub fn command_args(self) -> (&'static str, &'static [&'static str]) {
         match self {
-            UpdateAction::Daemon(source) => ("codex", source.command_args()),
-            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "@openai/codex"]),
-            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "@openai/codex"]),
-            UpdateAction::VitePlusGlobalLatest => ("vp", &["install", "-g", "@openai/codex"]),
-            UpdateAction::PnpmGlobalLatest => ("pnpm", &["add", "-g", "@openai/codex"]),
-            UpdateAction::BrewUpgrade => ("brew", &["upgrade", "--cask", "codex"]),
+            UpdateAction::Daemon(source) => ("lemex", source.command_args()),
+            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "lemex"]),
+            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "lemex"]),
+            UpdateAction::VitePlusGlobalLatest => ("vp", &["install", "-g", "lemex"]),
+            UpdateAction::PnpmGlobalLatest => ("pnpm", &["add", "-g", "lemex"]),
+            UpdateAction::BrewUpgrade => ("brew", &["upgrade", "--cask", "lemex"]),
             UpdateAction::StandaloneUnix => (
                 "sh",
                 &[
                     "-c",
-                    "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+                    "curl -fsSL https://github.com/Lemmy00/lemex/raw/main/scripts/install/install.sh | LEMEX_NON_INTERACTIVE=1 sh",
                 ],
             ),
             UpdateAction::StandaloneWindows => (
@@ -65,7 +65,7 @@ impl UpdateAction {
                     "-ExecutionPolicy",
                     "Bypass",
                     "-c",
-                    "$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex",
+                    "$env:LEMEX_NON_INTERACTIVE=1; irm https://github.com/Lemmy00/lemex/raw/main/scripts/install/install.ps1 | iex",
                 ],
             ),
         }
@@ -163,7 +163,7 @@ mod tests {
                 "sh",
                 &[
                     "-c",
-                    "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"
+                    "curl -fsSL https://github.com/Lemmy00/lemex/raw/main/scripts/install/install.sh | LEMEX_NON_INTERACTIVE=1 sh"
                 ][..],
             )
         );
@@ -175,7 +175,7 @@ mod tests {
                     "-ExecutionPolicy",
                     "Bypass",
                     "-c",
-                    "$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex"
+                    "$env:LEMEX_NON_INTERACTIVE=1; irm https://github.com/Lemmy00/lemex/raw/main/scripts/install/install.ps1 | iex"
                 ][..],
             )
         );

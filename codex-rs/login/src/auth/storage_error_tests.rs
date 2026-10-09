@@ -60,11 +60,11 @@ fn secure_storage_errors_display_the_underlying_cause() -> anyhow::Result<()> {
 fn json_syntax_and_eof_errors_preserve_diagnostics() {
     for (input, category) in [
         (
-            r#"{"OPENAI_API_KEY" "private-credential-value"}"#,
+            r#"{"LEMEX_API_KEY" "private-credential-value"}"#,
             serde_json::error::Category::Syntax,
         ),
         (
-            r#"{"OPENAI_API_KEY":"private-credential-value""#,
+            r#"{"LEMEX_API_KEY":"private-credential-value""#,
             serde_json::error::Category::Eof,
         ),
     ] {

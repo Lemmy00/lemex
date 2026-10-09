@@ -590,8 +590,8 @@ async fn turn_start_forwards_cyber_access_program_with_personal_access_token() -
         .with_codex_home(home.path())
         .without_managed_config()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
-            ("CODEX_ACCESS_TOKEN", Some("at-test-token")),
+            ("LEMEX_API_KEY", None),
+            ("LEMEX_ACCESS_TOKEN", Some("at-test-token")),
             ("CODEX_AUTHAPI_BASE_URL", Some(authapi_base_url.as_str())),
         ])
         .build_initialized()
@@ -666,8 +666,8 @@ async fn start_api_key_app(home: &Path, server: &MockServer) -> Result<TestAppSe
         .with_codex_home(home)
         .without_managed_config()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
-            ("CODEX_API_KEY", None),
+            ("LEMEX_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             ("OPENAI_BASE_URL", None),
         ])
         .build_initialized()

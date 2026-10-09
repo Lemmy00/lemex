@@ -523,7 +523,7 @@ fn explicit_unreadable_paths_are_excluded_from_full_disk_read_and_write_access()
         writable_definitions,
         vec![
             "-DWRITABLE_ROOT_0=/".to_string(),
-            "-DWRITABLE_ROOT_0_EXCLUDED_0=/.codex".to_string(),
+            "-DWRITABLE_ROOT_0_EXCLUDED_0=/.lemex".to_string(),
             format!("-DWRITABLE_ROOT_0_EXCLUDED_1={}", unreadable_root.display()),
         ],
         "unexpected write carveout parameters in args: {args:#?}"
@@ -1887,7 +1887,7 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
     };
 
     // Create the Seatbelt command to wrap a shell command that tries to
-    // write to .codex/config.toml in the vulnerable root.
+    // write to .lemex/config.toml in the vulnerable root.
     let shell_command: Vec<String> = [
         "bash",
         "-c",
@@ -1927,7 +1927,7 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
     assert!(
         policy_text.contains("WRITABLE_ROOT_1_EXCLUDED_0")
             && policy_text.contains("WRITABLE_ROOT_1_EXCLUDED_1"),
-        "expected explicit writable root .git/.codex carveouts in policy:\n{policy_text}",
+        "expected explicit writable root .git/.lemex carveouts in policy:\n{policy_text}",
     );
     assert!(
         policy_text.contains(&seatbelt_protected_metadata_name_requirements(
@@ -1959,7 +1959,7 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
             "-DWRITABLE_ROOT_0_EXCLUDED_0={}",
             cwd.canonicalize()
                 .expect("canonicalize cwd")
-                .join(".codex")
+                .join(".lemex")
                 .display()
         ),
         format!(
@@ -2015,7 +2015,7 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
         .expect("seatbelt args should include command separator");
     assert_eq!(args[command_index + 1..], shell_command);
 
-    // Verify that .codex/config.toml cannot be modified under the generated
+    // Verify that .lemex/config.toml cannot be modified under the generated
     // Seatbelt policy.
     let config_toml = dot_codex_canonical.join("config.toml");
     let output = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
@@ -2073,7 +2073,7 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
     );
     assert_seatbelt_denied(&output.stderr, &pre_commit_hook);
 
-    // Verify that writing a file to the folder containing .git and .codex is allowed.
+    // Verify that writing a file to the folder containing .git and .lemex is allowed.
     let allowed_file = vulnerable_root_canonical.join("allowed.txt");
     let shell_command_allowed: Vec<String> = [
         "bash",
@@ -2699,7 +2699,7 @@ fn create_seatbelt_args_block_first_time_dot_codex_creation_with_metadata_name_r
         .output()
         .expect("git init .");
 
-    let dot_codex = repo_root.join(".codex");
+    let dot_codex = repo_root.join(".lemex");
     let config_toml = dot_codex.join("config.toml");
     let policy = SandboxPolicy::WorkspaceWrite {
         writable_roots: vec![repo_root.as_path().try_into().expect("absolute repo root")],
@@ -3021,7 +3021,7 @@ struct PopulatedTmp {
     /// For the purposes of this test, we consider this a "vulnerable" root
     /// because a bad actor could write to .git/hooks/pre-commit so an
     /// unsuspecting user would run code as privileged the next time they
-    /// ran `git commit` themselves, or modified .codex/config.toml to
+    /// ran `git commit` themselves, or modified .lemex/config.toml to
     /// contain `sandbox_mode = "danger-full-access"` so the agent would
     /// have full privileges the next time it ran in that repo.
     vulnerable_root: PathBuf,
@@ -3049,12 +3049,12 @@ fn populate_tmpdir(tmp: &Path) -> PopulatedTmp {
         .output()
         .expect("git init .");
 
-    fs::create_dir_all(vulnerable_root.join(".codex")).expect("create .codex");
+    fs::create_dir_all(vulnerable_root.join(".lemex")).expect("create .lemex");
     fs::write(
-        vulnerable_root.join(".codex").join("config.toml"),
+        vulnerable_root.join(".lemex").join("config.toml"),
         "sandbox_mode = \"read-only\"\n",
     )
-    .expect("write .codex/config.toml");
+    .expect("write .lemex/config.toml");
 
     let empty_root = tmp.join("empty_root");
     fs::create_dir_all(&empty_root).expect("create empty_root");
@@ -3065,7 +3065,7 @@ fn populate_tmpdir(tmp: &Path) -> PopulatedTmp {
         .expect("canonicalize vulnerable_root");
     let dot_git_canonical = vulnerable_root_canonical.join(".git");
     let dot_agents_canonical = vulnerable_root_canonical.join(".agents");
-    let dot_codex_canonical = vulnerable_root_canonical.join(".codex");
+    let dot_codex_canonical = vulnerable_root_canonical.join(".lemex");
     let empty_root_canonical = empty_root.canonicalize().expect("canonicalize empty_root");
     PopulatedTmp {
         vulnerable_root,

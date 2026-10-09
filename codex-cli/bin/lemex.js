@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Unified entry point for the Codex CLI.
+// Unified entry point for the Lemex CLI.
 
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "fs";
@@ -11,15 +11,15 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-const codexPackageRoot = realpathSync(path.join(__dirname, ".."));
+const lemexPackageRoot = realpathSync(path.join(__dirname, ".."));
 
 const PLATFORM_PACKAGE_BY_TARGET = {
-  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
-  "aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
-  "x86_64-apple-darwin": "@openai/codex-darwin-x64",
-  "aarch64-apple-darwin": "@openai/codex-darwin-arm64",
-  "x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
-  "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
+  "x86_64-unknown-linux-musl": "lemex-linux-x64",
+  "aarch64-unknown-linux-musl": "lemex-linux-arm64",
+  "x86_64-apple-darwin": "lemex-darwin-x64",
+  "aarch64-apple-darwin": "lemex-darwin-arm64",
+  "x86_64-pc-windows-msvc": "lemex-win32-x64",
+  "aarch64-pc-windows-msvc": "lemex-win32-arm64",
 };
 
 const { platform, arch } = process;
@@ -76,7 +76,7 @@ if (!platformPackage) {
   throw new Error(`Unsupported target triple: ${targetTriple}`);
 }
 
-function findCodexExecutable() {
+function findLemexExecutable() {
   let vendorRoot;
   try {
     const packageJsonPath = require.resolve(`${platformPackage}/package.json`);
@@ -85,31 +85,37 @@ function findCodexExecutable() {
     vendorRoot = path.join(__dirname, "..", "vendor");
   }
 
-  const codexExecutable = path.join(
-    vendorRoot,
-    targetTriple,
-    "bin",
-    process.platform === "win32" ? "codex.exe" : "codex",
-  );
-  if (existsSync(codexExecutable)) {
-    return codexExecutable;
+  const localTargets = [targetTriple];
+  if (targetTriple.endsWith("-unknown-linux-musl")) {
+    localTargets.push(targetTriple.replace(/-musl$/, "-gnu"));
+  }
+  for (const localTarget of localTargets) {
+    const lemexExecutable = path.join(
+      vendorRoot,
+      localTarget,
+      "bin",
+      process.platform === "win32" ? "lemex.exe" : "lemex",
+    );
+    if (existsSync(lemexExecutable)) {
+      return lemexExecutable;
+    }
   }
 
   const packageManager = detectPackageManager();
   const updateCommand =
     packageManager === "bun"
-      ? "bun install -g @openai/codex@latest"
+      ? "bun install -g lemex@latest"
       : packageManager === "pnpm"
-        ? "pnpm add -g @openai/codex@latest"
+        ? "pnpm add -g lemex@latest"
         : packageManager === "vite-plus"
-          ? "vp install -g @openai/codex@latest"
-          : "npm install -g @openai/codex@latest";
+          ? "vp install -g lemex@latest"
+          : "npm install -g lemex@latest";
   throw new Error(
-    `Missing optional dependency ${platformPackage}. Reinstall Codex: ${updateCommand}`,
+    `Missing optional dependency ${platformPackage}. Reinstall Lemex: ${updateCommand}`,
   );
 }
 
-const binaryPath = findCodexExecutable();
+const binaryPath = findLemexExecutable();
 
 // Use an asynchronous spawn instead of spawnSync so that Node is able to
 // respond to signals (e.g. Ctrl-C / SIGINT) while the native binary is
@@ -117,14 +123,14 @@ const binaryPath = findCodexExecutable();
 // and guarantees that when either the child terminates or the parent
 // receives a fatal signal, both processes exit in a predictable manner.
 
-function isPnpmOwnedCodexInstall(nodeModulesDir) {
+function isPnpmOwnedLemexInstall(nodeModulesDir) {
   if (!existsSync(path.join(nodeModulesDir, ".modules.yaml"))) {
     return false;
   }
 
   try {
     return (
-      realpathSync(path.join(nodeModulesDir, "@openai", "codex")) ===
+      realpathSync(path.join(nodeModulesDir, "lemex")) ===
       codexPackageRoot
     );
   } catch {
@@ -139,24 +145,24 @@ function isVitePlusOwnedCodexInstall(packagesDir) {
 
   try {
     const metadata = JSON.parse(
-      readFileSync(path.join(packagesDir, "@openai", "codex.json"), "utf8"),
+      readFileSync(path.join(packagesDir, "lemex.json"), "utf8"),
     );
-    if (metadata.name !== "@openai/codex") {
+    if (metadata.name !== "lemex") {
       return false;
     }
 
-    // Vite+ records the active global installation in packages/@openai/codex.json.
+    // Vite+ records the active global installation in packages/lemex.json.
     // Older installs have no ID or append a #-prefixed ID to the package name;
     // newer installs put the ID in a subdirectory of the package prefix.
     const installId = metadata.installId || "";
     const installDir = installId.startsWith("#")
-      ? path.join(packagesDir, `@openai/codex${installId}`)
-      : path.join(packagesDir, "@openai/codex", installId);
+      ? path.join(packagesDir, `lemex${installId}`)
+      : path.join(packagesDir, "lemex", installId);
     for (const nodeModulesDir of [
       path.join(installDir, "lib", "node_modules"),
       path.join(installDir, "node_modules"),
     ]) {
-      const packageRoot = path.join(nodeModulesDir, "@openai", "codex");
+      const packageRoot = path.join(nodeModulesDir, "lemex");
       if (
         existsSync(packageRoot) &&
         realpathSync(packageRoot) === codexPackageRoot
@@ -171,7 +177,7 @@ function isVitePlusOwnedCodexInstall(packagesDir) {
 }
 
 /**
- * Use heuristics to detect the package manager that was used to install Codex
+ * Use heuristics to detect the package manager that was used to install Lemex
  * in order to give the user a hint about how to update it.
  */
 function detectPackageManager() {
@@ -179,7 +185,7 @@ function detectPackageManager() {
   // Search ancestors of both the canonical package root and lexical entrypoint
   // because the package manager may link either path.
   const entrypointDir = path.dirname(path.resolve(process.argv[1]));
-  for (const startDir of new Set([codexPackageRoot, entrypointDir])) {
+  for (const startDir of new Set([lemexPackageRoot, entrypointDir])) {
     const filesystemRoot = path.parse(startDir).root;
     for (
       let currentDir = startDir;
@@ -189,12 +195,12 @@ function detectPackageManager() {
       if (isVitePlusOwnedCodexInstall(currentDir)) {
         return "vite-plus";
       }
-      if (isPnpmOwnedCodexInstall(path.join(currentDir, "node_modules"))) {
+      if (isPnpmOwnedLemexInstall(path.join(currentDir, "node_modules"))) {
         return "pnpm";
       }
     }
 
-    if (isPnpmOwnedCodexInstall(path.join(filesystemRoot, "node_modules"))) {
+    if (isPnpmOwnedLemexInstall(path.join(filesystemRoot, "node_modules"))) {
       return "pnpm";
     }
   }
@@ -222,20 +228,20 @@ function detectPackageManager() {
 const packageManager = detectPackageManager();
 const packageManagerEnvVar =
   packageManager === "bun"
-    ? "CODEX_MANAGED_BY_BUN"
+    ? "LEMEX_MANAGED_BY_BUN"
     : packageManager === "pnpm"
-      ? "CODEX_MANAGED_BY_PNPM"
+      ? "LEMEX_MANAGED_BY_PNPM"
       : packageManager === "vite-plus"
-        ? "CODEX_MANAGED_BY_VITE_PLUS"
-        : "CODEX_MANAGED_BY_NPM";
+        ? "LEMEX_MANAGED_BY_VITE_PLUS"
+        : "LEMEX_MANAGED_BY_NPM";
 const env = {
   ...process.env,
-  CODEX_MANAGED_PACKAGE_ROOT: codexPackageRoot,
+  LEMEX_MANAGED_PACKAGE_ROOT: lemexPackageRoot,
 };
-delete env.CODEX_MANAGED_BY_NPM;
-delete env.CODEX_MANAGED_BY_BUN;
-delete env.CODEX_MANAGED_BY_PNPM;
-delete env.CODEX_MANAGED_BY_VITE_PLUS;
+delete env.LEMEX_MANAGED_BY_NPM;
+delete env.LEMEX_MANAGED_BY_BUN;
+delete env.LEMEX_MANAGED_BY_PNPM;
+delete env.LEMEX_MANAGED_BY_VITE_PLUS;
 env[packageManagerEnvVar] = "1";
 
 const child = spawn(binaryPath, process.argv.slice(2), {

@@ -702,7 +702,7 @@ async fn environment_command_restrictions_override_saved_prefix_approvals() -> R
     let server = start_mock_server().await;
     let test = builder.build_with_auto_env(&server).await?;
     let selection = test
-        .codex
+        .lemex
         .environment_selections()
         .await
         .into_iter()
@@ -711,7 +711,7 @@ async fn environment_command_restrictions_override_saved_prefix_approvals() -> R
     let mut invalid_policy = Policy::empty();
     invalid_policy.add_prefix_rule(&["echo".to_string()], Decision::Allow)?;
     let error = test
-        .codex
+        .lemex
         .environment_ready(
             &selection,
             EnvironmentConfig {
@@ -830,7 +830,7 @@ async fn environment_command_policy_changes_invalidate_session_approvals() -> Re
     let server = start_mock_server().await;
     let test = builder.build_with_auto_env(&server).await?;
     let selection = test
-        .codex
+        .lemex
         .environment_selections()
         .await
         .into_iter()

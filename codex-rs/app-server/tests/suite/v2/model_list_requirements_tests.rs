@@ -86,7 +86,7 @@ requires_openai_auth = true
     )?;
     let mut server = TestAppServer::builder()
         .with_codex_home(home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized()
         .await?;
 

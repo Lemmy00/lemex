@@ -95,7 +95,7 @@ fn login_with_api_key_overwrites_existing_auth_json() {
     let dir = tempdir().unwrap();
     let auth_path = dir.path().join("auth.json");
     let stale_auth = json!({
-        "OPENAI_API_KEY": "sk-old",
+        "LEMEX_API_KEY": "sk-old",
         "tokens": {
             "id_token": "stale.header.payload",
             "access_token": "stale-access",
@@ -1084,7 +1084,7 @@ async fn loads_api_key_from_auth_json() {
     let auth_file = dir.path().join("auth.json");
     std::fs::write(
         auth_file,
-        r#"{"OPENAI_API_KEY":"sk-test-key","tokens":null,"last_refresh":null}"#,
+        r#"{"LEMEX_API_KEY":"sk-test-key","tokens":null,"last_refresh":null}"#,
     )
     .unwrap();
 
@@ -1766,7 +1766,7 @@ fn write_auth_file(params: AuthFileParams, codex_home: &Path) -> std::io::Result
     let fake_jwt = fake_jwt_for_auth_file_params(&params)?;
     let auth_file = get_auth_file(codex_home);
     let auth_json_data = json!({
-        "OPENAI_API_KEY": params.openai_api_key,
+        "LEMEX_API_KEY": params.openai_api_key,
         "tokens": {
             "id_token": fake_jwt,
             "access_token": "test-access-token",
@@ -1872,7 +1872,7 @@ impl Drop for EnvVarGuard {
 }
 
 fn remove_access_token_env_var() -> EnvVarGuard {
-    EnvVarGuard::remove(CODEX_ACCESS_TOKEN_ENV_VAR)
+    EnvVarGuard::remove(LEMEX_ACCESS_TOKEN_ENV_VAR)
 }
 
 struct TestAuthManagerConfig(AuthConfig);
@@ -1948,7 +1948,7 @@ fn auth_config_from_preserves_all_fields() {
 async fn shared_from_config_prefers_workload_identity_to_explicit_access_token() {
     let codex_home = tempdir().expect("tempdir");
     let config = test_auth_manager_config(codex_home.path());
-    let _access_token_guard = EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, "at-explicit");
+    let _access_token_guard = EnvVarGuard::set(LEMEX_ACCESS_TOKEN_ENV_VAR, "at-explicit");
     let _rule_guard = EnvVarGuard::set(OPENAI_FEDERATION_RULE_ID_ENV_VAR, "rule-one");
     let _assertion_file_guard = EnvVarGuard::remove(OPENAI_IDENTITY_TOKEN_FILE_ENV_VAR);
 
@@ -1987,7 +1987,7 @@ async fn load_auth_reads_access_token_from_env() {
         .mount(&server)
         .await;
     expected_record.task_id = Some("task-123".to_string());
-    let _access_token_guard = EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, &agent_identity);
+    let _access_token_guard = EnvVarGuard::set(LEMEX_ACCESS_TOKEN_ENV_VAR, &agent_identity);
 
     let authapi_base_url = server.uri();
     let chatgpt_base_url = format!("{authapi_base_url}/backend-api");
@@ -2034,7 +2034,7 @@ async fn load_auth_reads_personal_access_token_from_env() {
         .mount(&server)
         .await;
     let _authapi_guard = EnvVarGuard::set("CODEX_AUTHAPI_BASE_URL", &server.uri());
-    let _access_token_guard = EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, "at-env-test");
+    let _access_token_guard = EnvVarGuard::set(LEMEX_ACCESS_TOKEN_ENV_VAR, "at-env-test");
 
     for auth_credentials_store_mode in [
         AuthCredentialsStoreMode::File,
@@ -2094,7 +2094,7 @@ async fn auth_manager_rejects_env_personal_access_token_workspace_mismatch() {
         .await;
     let _authapi_guard = EnvVarGuard::set("CODEX_AUTHAPI_BASE_URL", &server.uri());
     let _access_token_guard =
-        EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, "at-env-workspace-mismatch");
+        EnvVarGuard::set(LEMEX_ACCESS_TOKEN_ENV_VAR, "at-env-workspace-mismatch");
 
     let manager = AuthManager::new(
         codex_home.path().to_path_buf(),
@@ -2180,7 +2180,7 @@ async fn personal_access_token_does_not_offer_unauthorized_recovery() {
         .await;
     let _authapi_guard = EnvVarGuard::set("CODEX_AUTHAPI_BASE_URL", &server.uri());
     let _access_token_guard =
-        EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, "at-no-unauthorized-recovery");
+        EnvVarGuard::set(LEMEX_ACCESS_TOKEN_ENV_VAR, "at-no-unauthorized-recovery");
     let manager = Arc::new(
         AuthManager::new(
             codex_home.path().to_path_buf(),
@@ -2211,8 +2211,8 @@ async fn load_auth_keeps_codex_api_key_env_precedence() {
     let codex_home = tempdir().unwrap();
     let record = agent_identity_record(WORKSPACE_ID_ALLOWED);
     let agent_identity = fake_agent_identity_jwt(&record).expect("fake agent identity");
-    let _access_token_guard = EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, &agent_identity);
-    let _api_key_guard = EnvVarGuard::set(CODEX_API_KEY_ENV_VAR, "sk-env");
+    let _access_token_guard = EnvVarGuard::set(LEMEX_ACCESS_TOKEN_ENV_VAR, &agent_identity);
+    let _api_key_guard = EnvVarGuard::set(LEMEX_API_KEY_ENV_VAR, "sk-env");
 
     let auth = super::load_auth(
         codex_home.path(),
@@ -2304,7 +2304,7 @@ async fn api_only_policy_rejects_access_tokens_before_hydration() {
     let codex_home = tempdir().unwrap();
     let server = MockServer::start().await;
     let _authapi_guard = EnvVarGuard::set("CODEX_AUTHAPI_BASE_URL", &server.uri());
-    let _access_token_guard = EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, "at-rejected");
+    let _access_token_guard = EnvVarGuard::set(LEMEX_ACCESS_TOKEN_ENV_VAR, "at-rejected");
     let mut config = build_config(
         codex_home.path(),
         /*forced_login_method*/ None,
@@ -2338,7 +2338,7 @@ async fn workspace_policy_rejects_agent_identity_before_hydration() {
         signed_agent_identity_jwt(&record, json!(record.plan_type)).expect("signed agent identity");
     let _authapi_guard = EnvVarGuard::set("CODEX_AUTHAPI_BASE_URL", &server.uri());
     let _access_token_reset = remove_access_token_env_var();
-    let access_token_guard = EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, &agent_identity);
+    let access_token_guard = EnvVarGuard::set(LEMEX_ACCESS_TOKEN_ENV_VAR, &agent_identity);
     let mut config = build_config(
         codex_home.path(),
         /*forced_login_method*/ None,
@@ -2682,7 +2682,7 @@ async fn enforce_login_restrictions_allows_api_key_if_login_method_not_set_but_f
 #[tokio::test]
 #[serial(codex_auth_env)]
 async fn enforce_login_restrictions_blocks_env_api_key_when_chatgpt_required() {
-    let _guard = EnvVarGuard::set(CODEX_API_KEY_ENV_VAR, "sk-env");
+    let _guard = EnvVarGuard::set(LEMEX_API_KEY_ENV_VAR, "sk-env");
     let _access_token_guard = remove_access_token_env_var();
     let codex_home = tempdir().unwrap();
 

@@ -2,7 +2,7 @@
 //!
 //! Providers can be defined in two places:
 //!   1. Built-in defaults compiled into the binary so Codex works out-of-the-box.
-//!   2. User-defined entries inside `~/.codex/config.toml` under the `model_providers`
+//!   2. User-defined entries inside `~/.lemex/config.toml` under the `model_providers`
 //!      key. These override or extend the defaults at runtime.
 //!
 //! API provider construction applies the process-wide managed residency policy also
@@ -78,6 +78,15 @@ const OPENAI_PROVIDER_NAME: &str = "OpenAI";
 const OPENAI_ACTOR_AUTHORIZATION_HEADER: &str = "x-openai-actor-authorization";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+/// Default base URL for the built-in `openai` provider when neither the
+/// `openai_base_url` config value nor `LEMEX_BASE_URL` is set.
+pub const DEFAULT_LEMEX_BASE_URL: &str = "https://inference.rcp.epfl.ch/v1";
+/// Environment variable that overrides the built-in `openai` provider base URL.
+pub const LEMEX_BASE_URL_ENV_VAR: &str = "LEMEX_BASE_URL";
+/// Environment variable that provides the API key for the built-in `rcp` provider.
+pub const LEMEX_API_KEY_ENV_VAR: &str = "LEMEX_API_KEY";
+const RCP_PROVIDER_NAME: &str = "RCP";
+pub const RCP_PROVIDER_ID: &str = "rcp";
 const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
 pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
 const AMAZON_BEDROCK_RUNTIME_PROVIDER_NAME: &str = "Amazon Bedrock Runtime";
@@ -437,7 +446,7 @@ other non-default provider fields are not supported"
         ) {
             CHATGPT_CODEX_BASE_URL
         } else {
-            "https://api.openai.com/v1"
+            DEFAULT_LEMEX_BASE_URL
         };
         let base_url = self
             .base_url
@@ -565,6 +574,40 @@ other non-default provider fields are not supported"
         }
     }
 
+    pub fn create_rcp_provider(base_url: Option<String>) -> ModelProviderInfo {
+        let base_url = base_url
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_LEMEX_BASE_URL.to_string());
+        ModelProviderInfo {
+            name: RCP_PROVIDER_NAME.into(),
+            base_url: Some(base_url),
+            model_catalog_url: None,
+            env_key: Some(LEMEX_API_KEY_ENV_VAR.to_string()),
+            env_key_instructions: None,
+            experimental_bearer_token: None,
+            auth: None,
+            gateway_oauth: None,
+            aws: None,
+            wire_api: WireApi::Responses,
+            query_params: None,
+            http_headers: Some(
+                [("version".to_string(), env!("CARGO_PKG_VERSION").into())]
+                    .into_iter()
+                    .collect(),
+            ),
+            env_http_headers: None,
+            request_max_retries: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
+            websocket_connect_timeout_ms: None,
+            requires_openai_auth: false,
+            supports_websockets: false,
+            supports_standalone_web_search: false,
+            capabilities: None,
+            include_internal_metadata: false,
+        }
+    }
+
     pub fn create_amazon_bedrock_provider(
         aws: Option<ModelProviderAwsAuthInfo>,
     ) -> ModelProviderInfo {
@@ -656,12 +699,40 @@ pub const DEFAULT_OLLAMA_PORT: u16 = 11434;
 pub const LMSTUDIO_OSS_PROVIDER_ID: &str = "lmstudio";
 pub const OLLAMA_OSS_PROVIDER_ID: &str = "ollama";
 
+/// Resolves the base URL for the built-in `openai` provider: a non-empty
+/// configured value wins, then the `LEMEX_BASE_URL` environment variable.
+/// `None` means callers fall back to [`DEFAULT_LEMEX_BASE_URL`].
+pub fn resolve_openai_base_url(configured: Option<String>) -> Option<String> {
+    configured
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var(LEMEX_BASE_URL_ENV_VAR)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+/// Resolves the base URL for the built-in `rcp` provider: a non-empty
+/// configured value wins, then the `LEMEX_BASE_URL` environment variable.
+/// Falls back to [`DEFAULT_LEMEX_BASE_URL`] when neither is set.
+pub fn resolve_rcp_base_url(configured: Option<String>) -> Option<String> {
+    configured
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var(LEMEX_BASE_URL_ENV_VAR)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or(Some(DEFAULT_LEMEX_BASE_URL.to_string()))
+}
+
 /// Built-in default provider list.
 pub fn built_in_model_providers(
     openai_base_url: Option<String>,
 ) -> HashMap<String, ModelProviderInfo> {
     use ModelProviderInfo as P;
-    let openai_provider = P::create_openai_provider(openai_base_url);
+    let openai_provider = P::create_openai_provider(resolve_openai_base_url(openai_base_url));
+    let rcp_provider = P::create_rcp_provider(resolve_rcp_base_url(/*configured*/ None));
     let amazon_bedrock_provider = P::create_amazon_bedrock_provider(/*aws*/ None);
     let amazon_bedrock_runtime_provider =
         P::create_amazon_bedrock_runtime_provider(/*aws*/ None);
@@ -672,6 +743,7 @@ pub fn built_in_model_providers(
     // `model_providers` in config.toml to add their own providers.
     [
         (OPENAI_PROVIDER_ID, openai_provider),
+        (RCP_PROVIDER_ID, rcp_provider),
         (AMAZON_BEDROCK_PROVIDER_ID, amazon_bedrock_provider),
         (
             AMAZON_BEDROCK_RUNTIME_PROVIDER_ID,

@@ -1550,9 +1550,9 @@ enabled = true
   ]
 }"#,
     )?;
-    std::fs::create_dir_all(workspace_enabled.path().join(".codex"))?;
+    std::fs::create_dir_all(workspace_enabled.path().join(".lemex"))?;
     std::fs::write(
-        workspace_enabled.path().join(".codex/config.toml"),
+        workspace_enabled.path().join(".lemex/config.toml"),
         r#"[plugins."shared-plugin@codex-curated"]
 enabled = false
 "#,

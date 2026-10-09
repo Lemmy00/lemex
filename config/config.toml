@@ -1,0 +1,13 @@
+model_provider = "rcp"
+model = "moonshotai/Kimi-K2.7-Code"
+model_catalog_json = "models.json"
+model_reasoning_effort = "medium"
+
+[model_providers.rcp]
+name = "RCP"
+base_url = "https://inference.rcp.epfl.ch/v1"
+env_key = "LEMEX_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+supports_standalone_web_search = false

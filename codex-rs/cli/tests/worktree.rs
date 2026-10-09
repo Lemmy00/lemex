@@ -237,7 +237,7 @@ trust_level = "trusted"
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     anyhow::ensure!(
         Command::new(&program)
-            .env("CODEX_HOME", &home)
+            .env("LEMEX_HOME", &home)
             .arg("--version")
             .output()?
             .status
@@ -245,7 +245,7 @@ trust_level = "trusted"
         "failed to prepare CLI test executable"
     );
     let mut env: HashMap<String, String> = std::env::vars().collect();
-    env.insert("CODEX_HOME".into(), home.display().to_string());
+    env.insert("LEMEX_HOME".into(), home.display().to_string());
     env.insert("CODEX_SQLITE_HOME".into(), home.display().to_string());
     env.insert("NO_PROXY".into(), "127.0.0.1,localhost".into());
     env.insert("no_proxy".into(), "127.0.0.1,localhost".into());
@@ -254,9 +254,9 @@ trust_level = "trusted"
     env.insert("OTEL_METRIC_EXPORT_INTERVAL".into(), "100".into());
     for key in [
         "CODEX_EXEC_SERVER_URL",
-        "CODEX_ACCESS_TOKEN",
-        "OPENAI_API_KEY",
-        "CODEX_API_KEY",
+        "LEMEX_ACCESS_TOKEN",
+        "LEMEX_API_KEY",
+        "LEMEX_API_KEY",
         "TMUX",
         "TMUX_PANE",
         "ZELLIJ",

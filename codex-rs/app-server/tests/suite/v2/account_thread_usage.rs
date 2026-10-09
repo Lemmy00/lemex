@@ -43,7 +43,7 @@ async fn account_thread_usage_uses_active_workspace_and_canonical_thread_ids() -
 
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     write_chatgpt_auth(
@@ -142,7 +142,7 @@ async fn account_thread_usage_supports_externally_managed_authentication() -> Re
         .await;
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
     let login_id = app_server
@@ -211,7 +211,7 @@ async fn account_thread_usage_hides_unavailable_billing_routes() -> Result<()> {
         .await;
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 
@@ -245,7 +245,7 @@ async fn account_thread_usage_rejects_malformed_thread_ids_before_backend_reques
         .await;
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await?;
 

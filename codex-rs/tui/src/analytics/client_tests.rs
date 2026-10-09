@@ -123,7 +123,7 @@ async fn analytics_rejects_account_and_user_changes_before_requests() {
 
 #[tokio::test]
 async fn analytics_requires_local_chatgpt_authentication() {
-    for auth in [None, Some(json!({"OPENAI_API_KEY": "sk-test-only"}))] {
+    for auth in [None, Some(json!({"LEMEX_API_KEY": "sk-test-only"}))] {
         let server = MockServer::start().await;
         let (home, live) = live(&server, "plus").await;
         let path = home.path().join("auth.json");

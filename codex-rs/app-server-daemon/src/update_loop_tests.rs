@@ -108,7 +108,7 @@ fn updater_reexec_preserves_paths_and_recovers_deleted_working_directory() {
             .env("CODEX_TEST_UPDATER_STATE", &state)
             .env("CODEX_TEST_UPDATER_OUTPUT", &output)
             .env("CODEX_TEST_UPDATER_DELETE_CWD", delete_cwd.to_string())
-            .env("CODEX_HOME", format!("../{home_name}"))
+            .env("LEMEX_HOME", format!("../{home_name}"))
             .env("CODEX_SQLITE_HOME", " sqlite ")
             .env("AWS_CONFIG_FILE", "~/config")
             .env("NPM_CONFIG_CAFILE", ca_file)

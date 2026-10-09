@@ -766,12 +766,12 @@ interrupt_message = false
         let system_file = if cfg!(windows) {
             absolute_path("C:\\etc\\codex\\config.toml")
         } else {
-            absolute_path("/etc/codex/config.toml")
+            absolute_path("/etc/lemex/config.toml")
         };
         let project_folder = if cfg!(windows) {
-            absolute_path("C:\\repo\\.codex")
+            absolute_path("C:\\repo\\.lemex")
         } else {
-            absolute_path("/repo/.codex")
+            absolute_path("/repo/.lemex")
         };
 
         let layers = vec![
@@ -805,9 +805,9 @@ interrupt_message = false
     #[test]
     fn debug_config_output_lists_requirement_sources() {
         let requirements_file = if cfg!(windows) {
-            absolute_path("C:\\ProgramData\\OpenAI\\Codex\\requirements.toml")
+            absolute_path("C:\\ProgramData\\OpenAI\\Lemex\\requirements.toml")
         } else {
-            absolute_path("/etc/codex/requirements.toml")
+            absolute_path("/etc/lemex/requirements.toml")
         };
         let denied_path = if cfg!(windows) {
             absolute_path("C:\\Users\\alice\\.gitconfig")
@@ -815,19 +815,19 @@ interrupt_message = false
             absolute_path("/home/alice/.gitconfig")
         };
         let sqlite_home = if cfg!(windows) {
-            absolute_path("C:\\Users\\alice\\.codex\\state")
+            absolute_path("C:\\Users\\alice\\.lemex\\state")
         } else {
-            absolute_path("/home/alice/.codex/state")
+            absolute_path("/home/alice/.lemex/state")
         };
         let log_dir = if cfg!(windows) {
-            absolute_path("C:\\Users\\alice\\.codex\\logs")
+            absolute_path("C:\\Users\\alice\\.lemex\\logs")
         } else {
-            absolute_path("/home/alice/.codex/logs")
+            absolute_path("/home/alice/.lemex/logs")
         };
         let model_catalog_json = if cfg!(windows) {
-            absolute_path("C:\\Users\\alice\\.codex\\models.json")
+            absolute_path("C:\\Users\\alice\\.lemex\\models.json")
         } else {
-            absolute_path("/home/alice/.codex/models.json")
+            absolute_path("/home/alice/.lemex/models.json")
         };
 
         let requirements = ConfigRequirements {
@@ -1004,9 +1004,9 @@ interrupt_message = false
         };
 
         let user_file = if cfg!(windows) {
-            absolute_path("C:\\users\\alice\\.codex\\config.toml")
+            absolute_path("C:\\users\\alice\\.lemex\\config.toml")
         } else {
-            absolute_path("/home/alice/.codex/config.toml")
+            absolute_path("/home/alice/.lemex/config.toml")
         };
         let stack = ConfigLayerStack::new(
             vec![ConfigLayerEntry::new(
@@ -1082,9 +1082,9 @@ interrupt_message = false
     #[test]
     fn debug_config_output_filters_sandbox_modes_blocked_by_deny_read_requirements() {
         let requirements_file = if cfg!(windows) {
-            absolute_path("C:\\ProgramData\\OpenAI\\Codex\\requirements.toml")
+            absolute_path("C:\\ProgramData\\OpenAI\\Lemex\\requirements.toml")
         } else {
-            absolute_path("/etc/codex/requirements.toml")
+            absolute_path("/etc/lemex/requirements.toml")
         };
         let denied_path = if cfg!(windows) {
             absolute_path("C:\\Users\\alice\\.gitconfig")

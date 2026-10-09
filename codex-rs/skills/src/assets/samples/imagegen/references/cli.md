@@ -10,14 +10,14 @@ The word `batch` in a user request is not CLI opt-in by itself.
 - `edit`: edit one or more existing images
 - `generate-batch`: run many generation jobs from a JSONL file after the user explicitly chooses CLI/API/model controls
 
-Real API calls require **network access** + `OPENAI_API_KEY`. `--dry-run` does not.
+Real API calls require **network access** + `LEMEX_API_KEY`. `--dry-run` does not.
 
 ## Quick start (works from any repo)
-Set a stable path to the skill CLI (default `CODEX_HOME` is `~/.codex`):
+Set a stable path to the skill CLI (default `LEMEX_HOME` is `~/.lemex`):
 
 ```
-export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-export IMAGE_GEN="$CODEX_HOME/skills/.system/imagegen/scripts/image_gen.py"
+export LEMEX_HOME="${LEMEX_HOME:-$HOME/.lemex}"
+export IMAGE_GEN="$LEMEX_HOME/skills/.system/imagegen/scripts/image_gen.py"
 ```
 
 Install dependencies into that environment with its package manager. In uv-managed environments, `uv pip install ...` remains the preferred path.
@@ -37,7 +37,7 @@ Notes:
 - One-off dry-runs print the API payload and the computed output path(s).
 - Repo-local finals should live under `output/imagegen/`.
 
-Generate (requires `OPENAI_API_KEY` + network):
+Generate (requires `LEMEX_API_KEY` + network):
 
 ```bash
 python "$IMAGE_GEN" generate \

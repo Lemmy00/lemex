@@ -862,7 +862,7 @@ fn configured_owner_keeps_prefixed_builtin_shaped_aliases_scoped() {
                         &original_env[key],
                         &env[key],
                         &original_env,
-                        |source| source == "OPENAI_API_KEY"
+                        |source| source == "LEMEX_API_KEY"
                     ));
                     let mut snapshot_alias = original_env[key].clone();
                     if brokered || token.len() >= super::MIN_EMBEDDED_CREDENTIAL_LENGTH {
@@ -1293,8 +1293,8 @@ fn credential_rotation_preserves_alias_destination_ownership() {
             None,
         ),
         (
-            "OPENAI_API_KEY",
-            "OPENAI_API_KEY",
+            "LEMEX_API_KEY",
+            "LEMEX_API_KEY",
             "OPENAI_BASE_URL",
             "sk-proj-",
             Some("api.openai.com"),
@@ -1321,7 +1321,7 @@ fn credential_rotation_preserves_alias_destination_ownership() {
                 url_prefix_from_env: Some("PROVIDER_URL".to_string()),
                 ..CredentialProviderConfig::default()
             });
-            let suffix_len = if key == "OPENAI_API_KEY" { 64 } else { 36 };
+            let suffix_len = if key == "LEMEX_API_KEY" { 64 } else { 36 };
             let first = format!("{prefix}{}", "a".repeat(suffix_len));
             let second = format!("{prefix}{}", "b".repeat(suffix_len));
             let auxiliary = format!("{prefix}{}", "c".repeat(suffix_len));
@@ -2745,7 +2745,7 @@ fn explicit_invalid_destinations_clear_previous_dynamic_bindings() {
             None,
         ),
         (
-            "OPENAI_API_KEY",
+            "LEMEX_API_KEY",
             "OPENAI_BASE_URL",
             "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789",
             Some("api.openai.com"),

@@ -2091,7 +2091,7 @@ connectors = true
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", Some("test-api-key"))])
+        .with_env_overrides(&[("LEMEX_API_KEY", Some("test-api-key"))])
         .build_initialized_with_timeout(DEFAULT_TIMEOUT)
         .await?;
 

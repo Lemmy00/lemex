@@ -72,7 +72,7 @@ impl ChatWidget {
         }
 
         let normalized = trimmed.trim_end_matches('/');
-        if normalized == DEFAULT_OPENAI_BASE_URL {
+        if normalized == DEFAULT_LEMEX_BASE_URL {
             return None;
         }
 

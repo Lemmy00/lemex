@@ -277,7 +277,7 @@ describe("CodexExec", () => {
 
     try {
       const exec = new CodexExec("codex", {
-        CODEX_HOME: "/tmp/codex-home",
+        LEMEX_HOME: "/tmp/codex-home",
         CUSTOM_ENV: "custom",
       });
 
@@ -298,10 +298,10 @@ describe("CodexExec", () => {
         throw new Error("Spawn args missing");
       }
 
-      expect(spawnEnv.CODEX_HOME).toBe("/tmp/codex-home");
+      expect(spawnEnv.LEMEX_HOME).toBe("/tmp/codex-home");
       expect(spawnEnv.CUSTOM_ENV).toBe("custom");
       expect(spawnEnv.CODEX_ENV_SHOULD_NOT_LEAK).toBeUndefined();
-      expect(spawnEnv.CODEX_API_KEY).toBe("test");
+      expect(spawnEnv.LEMEX_API_KEY).toBe("test");
       expect(spawnEnv.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBeDefined();
       expect(commandArgs).toContain("--config");
       expect(commandArgs).toContain(`openai_base_url=${JSON.stringify("https://example.test")}`);
@@ -312,7 +312,7 @@ describe("CodexExec", () => {
 
   it("resolves the package-layout binary and PATH directory", async () => {
     const { resolveNativePackage } = await import("../src/exec");
-    const vendorRoot = mkdtempSync(path.join(tmpdir(), "codex-sdk-vendor-"));
+    const vendorRoot = mkdtempSync(path.join(tmpdir(), "lemex-sdk-vendor-"));
     const packageRoot = path.join(vendorRoot, "x86_64-unknown-linux-musl");
     const binDir = path.join(packageRoot, "bin");
     const pathDir = path.join(packageRoot, "codex-path");
@@ -329,7 +329,7 @@ describe("CodexExec", () => {
 
   it("falls back to the legacy binary layout", async () => {
     const { resolveNativePackage } = await import("../src/exec");
-    const vendorRoot = mkdtempSync(path.join(tmpdir(), "codex-sdk-vendor-"));
+    const vendorRoot = mkdtempSync(path.join(tmpdir(), "lemex-sdk-vendor-"));
     const packageRoot = path.join(vendorRoot, "x86_64-unknown-linux-musl");
     const binDir = path.join(packageRoot, "codex");
     const pathDir = path.join(packageRoot, "path");

@@ -141,8 +141,8 @@ stream_max_retries = 0
             ENVIRONMENT_ID,
         ])
         .current_dir(codex_home.path())
-        .env("CODEX_HOME", codex_home.path())
-        .env("CODEX_API_KEY", REGISTRY_TOKEN)
+        .env("LEMEX_HOME", codex_home.path())
+        .env("LEMEX_API_KEY", REGISTRY_TOKEN)
         .env(EXECUTOR_MARKER_ENV_VAR, EXPECTED_OUTPUT)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -183,8 +183,8 @@ stream_max_retries = 0
     let mut app_server = Command::new(app_binary)
         .arg("app-server")
         .current_dir(codex_home.path())
-        .env("CODEX_HOME", codex_home.path())
-        .env("CODEX_API_KEY", REGISTRY_TOKEN)
+        .env("LEMEX_HOME", codex_home.path())
+        .env("LEMEX_API_KEY", REGISTRY_TOKEN)
         .env(
             "CODEX_APP_SERVER_MANAGED_CONFIG_PATH",
             codex_home.path().join("managed_config.toml"),

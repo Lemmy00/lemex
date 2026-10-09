@@ -183,7 +183,7 @@ async fn local_mcp_startup_and_refresh_use_configured_http_client() -> Result<()
         .refresh_runtime_config(current_config, refreshed_config)
         .await;
     let result = fixture
-        .codex
+        .lemex
         .call_mcp_tool(
             SERVER_NAME,
             "calendar_create_event",
@@ -390,7 +390,7 @@ async fn skill_mcp_dependency_oauth_uses_configured_http_client() -> Result<()> 
         selected_capability_roots: Vec::new(),
     });
     fixture
-        .codex
+        .lemex
         .start_or_steer_turn(
             TurnInputRequest::user_input(vec![
                 UserInput::Text {

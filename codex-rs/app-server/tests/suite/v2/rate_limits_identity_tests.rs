@@ -82,7 +82,7 @@ async fn identity_is_rechecked_after_backend_response(
     let server = tokio::spawn(async move { axum::serve(listener, router).await });
     let mut app = TestAppServer::builder()
         .with_codex_home(home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(READ_TIMEOUT)
         .await?;
     let initial_login = app

@@ -36,9 +36,9 @@ async fn cloud_list_only_allows_trusted_credential_destinations() -> Result<()> 
         let mut command = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
         command
             .current_dir(codex_home.path())
-            .env("CODEX_HOME", codex_home.path())
-            .env_remove("CODEX_ACCESS_TOKEN")
-            .env_remove("OPENAI_API_KEY")
+            .env("LEMEX_HOME", codex_home.path())
+            .env_remove("LEMEX_ACCESS_TOKEN")
+            .env_remove("LEMEX_API_KEY")
             .env_remove("CODEX_CLOUD_TASKS_MODE")
             .env("NO_PROXY", "127.0.0.1,localhost")
             .env("no_proxy", "127.0.0.1,localhost")
@@ -80,7 +80,7 @@ async fn cloud_list_only_allows_trusted_credential_destinations() -> Result<()> 
             "CODEX_CLOUD_TASKS_BASE_URL",
             "https://chatgpt-staging.com/backend-api",
         )
-        .env("CODEX_ACCESS_TOKEN", "at-synthetic-cloud")
+        .env("LEMEX_ACCESS_TOKEN", "at-synthetic-cloud")
         .env("CODEX_AUTHAPI_BASE_URL", auth_server.uri())
         .args(["cloud", "list", "--limit", "1", "--json"])
         .assert()

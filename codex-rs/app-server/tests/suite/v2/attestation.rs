@@ -72,7 +72,7 @@ async fn attestation_generate_round_trip_adds_header_to_responses_websocket_hand
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build()
         .await?;
     let initialized = timeout(

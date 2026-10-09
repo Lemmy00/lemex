@@ -45,17 +45,17 @@ export type CodexExecArgs = {
   approvalPolicy?: ApprovalMode;
 };
 
-const INTERNAL_ORIGINATOR_ENV = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
-const TYPESCRIPT_SDK_ORIGINATOR = "codex_sdk_ts";
-const CODEX_NPM_NAME = "@openai/codex";
+const INTERNAL_ORIGINATOR_ENV = "LEMEX_INTERNAL_ORIGINATOR_OVERRIDE";
+const TYPESCRIPT_SDK_ORIGINATOR = "lemex_sdk_ts";
+const LEMEX_NPM_NAME = "lemex";
 
 const PLATFORM_PACKAGE_BY_TARGET: Record<string, string> = {
-  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
-  "aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
-  "x86_64-apple-darwin": "@openai/codex-darwin-x64",
-  "aarch64-apple-darwin": "@openai/codex-darwin-arm64",
-  "x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
-  "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
+  "x86_64-unknown-linux-musl": "lemex-linux-x64",
+  "aarch64-unknown-linux-musl": "lemex-linux-arm64",
+  "x86_64-apple-darwin": "lemex-darwin-x64",
+  "aarch64-apple-darwin": "lemex-darwin-arm64",
+  "x86_64-pc-windows-msvc": "lemex-win32-x64",
+  "aarch64-pc-windows-msvc": "lemex-win32-arm64",
 };
 
 const moduleRequire = createRequire(import.meta.url);
@@ -194,7 +194,7 @@ export class CodexExec {
       env[INTERNAL_ORIGINATOR_ENV] = TYPESCRIPT_SDK_ORIGINATOR;
     }
     if (args.apiKey) {
-      env.CODEX_API_KEY = args.apiKey;
+      env.LEMEX_API_KEY = args.apiKey;
     }
     if (this.pathDirs.length > 0) {
       prependPathDirs(env, this.pathDirs);
@@ -410,21 +410,21 @@ function findCodexPath(): CodexPathResolution {
 
   let vendorRoot: string;
   try {
-    const codexPackageJsonPath = moduleRequire.resolve(`${CODEX_NPM_NAME}/package.json`);
-    const codexRequire = createRequire(codexPackageJsonPath);
-    const platformPackageJsonPath = codexRequire.resolve(`${platformPackage}/package.json`);
+    const lemexPackageJsonPath = moduleRequire.resolve(`${LEMEX_NPM_NAME}/package.json`);
+    const lemexRequire = createRequire(lemexPackageJsonPath);
+    const platformPackageJsonPath = lemexRequire.resolve(`${platformPackage}/package.json`);
     vendorRoot = path.join(path.dirname(platformPackageJsonPath), "vendor");
   } catch {
     throw new Error(
-      `Unable to locate Codex CLI binaries. Ensure ${CODEX_NPM_NAME} is installed with optional dependencies.`,
+      `Unable to locate Lemex CLI binaries. Ensure ${LEMEX_NPM_NAME} is installed with optional dependencies.`,
     );
   }
 
-  const codexBinaryName = process.platform === "win32" ? "codex.exe" : "codex";
-  const nativePackage = resolveNativePackage(vendorRoot, targetTriple, codexBinaryName);
+  const lemexBinaryName = process.platform === "win32" ? "lemex.exe" : "lemex";
+  const nativePackage = resolveNativePackage(vendorRoot, targetTriple, lemexBinaryName);
   if (!nativePackage) {
     throw new Error(
-      `Unable to locate Codex CLI binaries for ${targetTriple}. Ensure ${CODEX_NPM_NAME} is installed with optional dependencies.`,
+      `Unable to locate Lemex CLI binaries for ${targetTriple}. Ensure ${LEMEX_NPM_NAME} is installed with optional dependencies.`,
     );
   }
 

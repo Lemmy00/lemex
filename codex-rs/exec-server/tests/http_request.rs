@@ -156,10 +156,10 @@ async fn exec_server_http_request_rejects_protected_environment_headers() -> any
     for (index, env_var) in [
         "CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN",
         "codex_exec_server_noise_auth_token",
-        "OPENAI_API_KEY",
+        "LEMEX_API_KEY",
         "CODEX_GUARDIAN_DECISIONS_API_KEY",
         "codex_guardian_decisions_api_key",
-        "CODEX_ACCESS_TOKEN",
+        "LEMEX_ACCESS_TOKEN",
         "CODEX_CONNECTORS_TOKEN",
         "AWS_SECRET_ACCESS_KEY",
         "AZURE_FEDERATED_TOKEN_FILE",

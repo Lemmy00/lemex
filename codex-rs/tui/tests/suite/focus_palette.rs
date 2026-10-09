@@ -366,8 +366,8 @@ impl PtyCodex {
             .env_remove("STY")
             .env("TERM_PROGRAM", "kitty")
             .env_remove("TERM_PROGRAM_VERSION")
-            .env("OPENAI_API_KEY", "focus-palette-test")
-            .env("CODEX_HOME", codex_home.path())
+            .env("LEMEX_API_KEY", "focus-palette-test")
+            .env("LEMEX_HOME", codex_home.path())
             .stdin(stdin)
             .stdout(stdout)
             .stderr(slave)
@@ -556,7 +556,7 @@ pub(super) fn write_test_config(codex_home: &Path, repo_root: &Path) -> Result<(
         .context("write focus-test Codex configuration")?;
     std::fs::write(
         codex_home.join("auth.json"),
-        r#"{"OPENAI_API_KEY":"focus-palette-test","tokens":null,"last_refresh":null}"#,
+        r#"{"LEMEX_API_KEY":"focus-palette-test","tokens":null,"last_refresh":null}"#,
     )
     .context("write focus-test API-key authentication")
 }

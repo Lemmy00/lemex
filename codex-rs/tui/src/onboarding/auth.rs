@@ -16,7 +16,7 @@ use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::LoginAccountParams;
 use codex_app_server_protocol::LoginAccountResponse;
 use codex_login::AuthConfig;
-use codex_login::read_openai_api_key_from_env;
+use codex_login::read_lemex_api_key_from_env;
 use codex_protocol::auth::AuthMode;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -622,7 +622,7 @@ impl AuthModeWidget {
         let mut docs_line =
             HyperlinkLine::new(Line::from("  Learn about permissions and approvals in the ").dim());
         docs_line.push_span(
-            "Codex docs".underlined(),
+            "Lemex docs".underlined(),
             Some("https://developers.openai.com/codex/security"),
         );
         let mut preferences_line =
@@ -643,7 +643,7 @@ impl AuthModeWidget {
             "  You're in control".into(),
             docs_line,
             "".into(),
-            "  Codex can make mistakes".into(),
+            "  Lemex can make mistakes".into(),
             HyperlinkLine::new(
                 "  Review the code it writes and commands it runs"
                     .dim()
@@ -682,7 +682,7 @@ impl AuthModeWidget {
         let lines = vec![
             "✓ API key configured".fg(Color::Green).into(),
             "".into(),
-            "  Codex will use usage-based billing with your API key.".into(),
+            "  Lemex will use usage-based billing with your API key.".into(),
         ];
 
         Paragraph::new(lines)
@@ -708,7 +708,7 @@ impl AuthModeWidget {
             "".into(),
         ];
         if state.prepopulated_from_env {
-            intro_lines.push("  Detected OPENAI_API_KEY environment variable.".into());
+            intro_lines.push("  Detected LEMEX_API_KEY environment variable.".into());
             intro_lines.push(
                 "  Paste a different key if you prefer to use another account."
                     .dim()
@@ -849,7 +849,7 @@ impl AuthModeWidget {
             return;
         }
         self.set_error(/*message*/ None);
-        let prefill_from_env = read_openai_api_key_from_env();
+        let prefill_from_env = read_lemex_api_key_from_env();
         let mut guard = self.sign_in_state.write().unwrap();
         match &mut *guard {
             SignInState::ApiKeyEntry(state) => {
@@ -1522,7 +1522,7 @@ mod tests {
 
         assert_eq!(
             collect_osc8_chars(&buf, area, "https://developers.openai.com/codex/security"),
-            "Codex docs"
+            "Lemex docs"
         );
         assert_eq!(
             collect_osc8_chars(&buf, area, "https://chatgpt.com/#settings"),
@@ -1563,7 +1563,7 @@ mod tests {
           You're in control
           Learn about permissions and approvals in the Codex docs
 
-          Codex can make mistakes
+          Lemex can make mistakes
           Review the code it writes and commands it runs
 
           Included with your ChatGPT plan

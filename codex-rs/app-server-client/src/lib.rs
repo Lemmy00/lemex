@@ -224,7 +224,7 @@ pub struct InProcessClientStartArgs {
     pub config_warnings: Vec<ConfigWarningNotification>,
     /// Session source recorded in app-server thread metadata.
     pub session_source: SessionSource,
-    /// Whether auth loading should honor the `CODEX_API_KEY` environment variable.
+    /// Whether auth loading should honor the `LEMEX_API_KEY` environment variable.
     pub enable_codex_api_key_env: bool,
     /// Client name reported during initialize.
     pub client_name: String,
@@ -1413,7 +1413,7 @@ mod tests {
             .expect("remote client should connect");
 
         assert_eq!(client.server_version(), Some("9.8.7-test"));
-        assert_eq!(client.codex_home(), Some("/server/.codex"));
+        assert_eq!(client.codex_home(), Some("/server/.lemex"));
         let client = AppServerClient::Remote(client);
         let response: GetAccountResponse = client
             .request_typed(ClientRequest::GetAccount {

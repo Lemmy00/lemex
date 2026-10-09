@@ -21,14 +21,14 @@ use codex_code_mode::ToolDefinition;
 use codex_code_mode::ToolInvocationFuture;
 use codex_code_mode::WaitOutcome;
 use codex_code_mode::WaitRequest;
-#[cfg(unix)]
-use codex_code_mode_host::GrpcCodeModeHost;
 use codex_code_mode_protocol::grpc;
 use codex_code_mode_protocol::grpc::code_mode_host_client::CodeModeHostClient;
 #[cfg(unix)]
 use codex_code_mode_protocol::grpc::code_mode_host_server::CodeModeHostServer;
 use codex_protocol::ToolName;
 use futures::FutureExt;
+#[cfg(unix)]
+use lemex_code_mode_host::GrpcCodeModeHost;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 #[cfg(unix)]

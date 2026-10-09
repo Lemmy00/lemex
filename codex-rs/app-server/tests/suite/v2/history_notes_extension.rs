@@ -142,7 +142,7 @@ async fn app_server_uses_configured_notes_backend_for_context_window_hints(
 
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized()
         .await?;
     let thread = app_server
@@ -364,7 +364,7 @@ async fn history_notes_and_async_message_emit_control_tool_analytics() -> Result
 
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .without_managed_config()
         .build_initialized()
         .await?;

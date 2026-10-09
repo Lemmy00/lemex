@@ -73,8 +73,8 @@ async fn browser_login_bootstraps_through_system_proxy() -> Result<()> {
                     .kill_on_drop(true)
                     .env(TEST_MODE, mode)
                     .env("CODEX_APP_SERVER_LOGIN_ISSUER", BLOCKED_ORIGIN)
-                    .env_remove("OPENAI_API_KEY")
-                    .env_remove("CODEX_API_KEY")
+                    .env_remove("LEMEX_API_KEY")
+                    .env_remove("LEMEX_API_KEY")
                     .output(),
             )
             .await??;
@@ -253,7 +253,7 @@ async fn browser_login_bootstraps_through_system_proxy() -> Result<()> {
     .await??;
     let saved_auth: serde_json::Value =
         serde_json::from_slice(&std::fs::read(codex_home.path().join("auth.json"))?)?;
-    assert_eq!(saved_auth["OPENAI_API_KEY"], "proxy-api-key");
+    assert_eq!(saved_auth["LEMEX_API_KEY"], "proxy-api-key");
 
     let started: ThreadStartResponse = serde_json::from_value(
         client

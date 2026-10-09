@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Release = $env:CODEX_RELEASE
+    [string]$Release = $env:LEMEX_RELEASE
 )
 
 Set-StrictMode -Version Latest
@@ -11,14 +11,14 @@ if ([string]::IsNullOrWhiteSpace($Release)) {
     $Release = "latest"
 }
 
-$NonInteractive = $env:CODEX_NON_INTERACTIVE -match "^(?i:1|true|yes)$"
+$NonInteractive = $env:LEMEX_NON_INTERACTIVE -match "^(?i:1|true|yes)$"
 $DefaultPreferReleasesOpenAICom = $true
-$PreferReleasesOpenAICom = if ([string]::IsNullOrWhiteSpace($env:CODEX_INSTALLER_USE_RELEASES_OPENAI_COM)) {
+$PreferReleasesOpenAICom = if ([string]::IsNullOrWhiteSpace($env:LEMEX_INSTALLER_USE_RELEASES_OPENAI_COM)) {
     $DefaultPreferReleasesOpenAICom
 } else {
-    $env:CODEX_INSTALLER_USE_RELEASES_OPENAI_COM -match "^(?i:1|true|yes)$"
+    $env:LEMEX_INSTALLER_USE_RELEASES_OPENAI_COM -match "^(?i:1|true|yes)$"
 }
-$ReleasesBaseUri = "https://releases.openai.com/codex"
+$ReleasesBaseUri = "https://github.com/Lemmy00/lemex/releases/download"
 $ReleasesMetadataTimeoutSec = 30
 $ReleasesAssetTimeoutSec = 300
 
@@ -81,7 +81,7 @@ function Assert-ValidReleaseVersion {
     )
 
     if ($Version -cne "latest" -and $Version -cnotmatch "^[0-9]+\.[0-9]+\.[0-9]+(?:-alpha(?:\.[0-9]+){0,2}|-beta(?:\.[0-9]+)?)?$") {
-        throw "Invalid Codex release version: $Version. Expected latest or x.y.z[-alpha[.N[.M]]|-beta[.N]]."
+        throw "Invalid Lemex release version: $Version. Expected latest or x.y.z[-alpha[.N[.M]]|-beta[.N]]."
     }
 }
 
@@ -172,9 +172,9 @@ function Resolve-ReleaseAssetSelection {
     $checksumFallbackUrl = $null
     if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
         $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
-        $packageFallbackUrl = "https://github.com/openai/codex/releases/download/rust-v$version/$packageAsset"
+        $packageFallbackUrl = "https://github.com/Lemmy00/lemex/releases/download/rust-v$version/$packageAsset"
         $checksumUrl = "$ReleasesBaseUri/releases/$version/$checksumAsset"
-        $checksumFallbackUrl = "https://github.com/openai/codex/releases/download/rust-v$version/$checksumAsset"
+        $checksumFallbackUrl = "https://github.com/Lemmy00/lemex/releases/download/rust-v$version/$checksumAsset"
     }
 
     $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
@@ -193,7 +193,7 @@ function Resolve-ReleaseAssetSelection {
     $packageFallbackUrl = $null
     if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
         $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
-        $packageFallbackUrl = "https://github.com/openai/codex/releases/download/rust-v$version/$packageAsset"
+        $packageFallbackUrl = "https://github.com/Lemmy00/lemex/releases/download/rust-v$version/$packageAsset"
     }
     $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
     if ($null -eq $packageMetadata) {
@@ -346,11 +346,11 @@ function Resolve-ReleaseFromGitHub {
 
     if ($NormalizedVersion -eq "latest") {
         $requestedRelease = "latest"
-        $metadataUri = "https://api.github.com/repos/openai/codex/releases/latest"
+        $metadataUri = "https://api.github.com/repos/Lemmy00/lemex/releases/latest"
     } else {
         $resolvedVersion = $NormalizedVersion
         $requestedRelease = $resolvedVersion
-        $metadataUri = "https://api.github.com/repos/openai/codex/releases/tags/rust-v$resolvedVersion"
+        $metadataUri = "https://api.github.com/repos/Lemmy00/lemex/releases/tags/rust-v$resolvedVersion"
     }
 
     try {
@@ -738,7 +738,7 @@ function Test-PackageContentsAreComplete {
     $expectedFiles = @(
         "codex-package.json",
         "bin\codex.exe",
-        "bin\codex-code-mode-host.exe",
+        "bin\lemex-code-mode-host.exe",
         "codex-path\rg.exe",
         "codex-resources\codex-command-runner.exe",
         "codex-resources\codex-windows-sandbox-setup.exe"
@@ -807,7 +807,7 @@ function Test-ReleaseIsComplete {
 }
 
 function Get-ExistingCodexCommand {
-    $existing = Get-Command codex -ErrorAction SilentlyContinue
+    $existing = Get-Command lemex -ErrorAction SilentlyContinue
     if ($null -eq $existing) {
         return $null
     }
@@ -872,9 +872,9 @@ function Maybe-HandleConflictingInstall {
     $manager = $Conflict.Manager
 
     $uninstallArgs = if ($manager -eq "bun") {
-        @("remove", "-g", "@openai/codex")
+        @("remove", "-g", "lemex")
     } else {
-        @("uninstall", "-g", "@openai/codex")
+        @("uninstall", "-g", "lemex")
     }
     $uninstallCommand = if ($manager -eq "bun") { "bun" } else { "npm" }
 
@@ -886,7 +886,7 @@ function Maybe-HandleConflictingInstall {
             Write-WarningStep "Failed to uninstall the existing $manager-managed Codex. Continuing with the standalone install."
         }
     } else {
-        Write-WarningStep "Leaving the existing $manager-managed Codex installed. PATH order will determine which codex runs."
+        Write-WarningStep "Leaving the existing $manager-managed Codex installed. PATH order will determine which lemex runs."
     }
 }
 
@@ -895,10 +895,10 @@ function Test-VisibleCodexCommand {
         [string]$VisibleBinDir
     )
 
-    $codexCommand = Join-Path $VisibleBinDir "codex.exe"
-    & $codexCommand --version *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Installed Codex command failed verification: $codexCommand --version"
+    $lemexCommand = Join-Path $VisibleBinDir "lemex.exe"
+    & $lemexCommand --version *> $null
+
+        throw "Installed Lemex command failed verification: $lemexCommand --version"
     }
 }
 
@@ -933,10 +933,10 @@ switch ($architecture) {
     }
 }
 
-$codexHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
-    Join-Path $env:USERPROFILE ".codex"
+$codexHome = if ([string]::IsNullOrWhiteSpace($env:LEMEX_HOME)) {
+    Join-Path $env:USERPROFILE ".lemex"
 } else {
-    $env:CODEX_HOME
+    $env:LEMEX_HOME
 }
 $daemonOnly = $env:CODEX_INSTALL_DAEMON_ONLY -eq "1"
 $standaloneRoot = Join-Path $codexHome $(if ($daemonOnly) { "packages\app-server-daemon" } else { "packages\standalone" })
@@ -951,10 +951,10 @@ $autoUpdateVersion = Join-Path $standaloneRoot "auto-update-version"
 $lockPath = Join-Path $standaloneRoot "install.lock"
 
 $defaultVisibleBinDir = Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin"
-if ([string]::IsNullOrWhiteSpace($env:CODEX_INSTALL_DIR)) {
+if ([string]::IsNullOrWhiteSpace($env:LEMEX_INSTALL_DIR)) {
     $visibleBinDir = $defaultVisibleBinDir
 } else {
-    $visibleBinDir = $env:CODEX_INSTALL_DIR
+    $visibleBinDir = $env:LEMEX_INSTALL_DIR
 }
 
 $currentVersion = Get-CurrentInstalledVersion -StandaloneCurrentDir $currentDir
@@ -1197,12 +1197,12 @@ if ($prioritizeVisibleBin) {
     }
 }
 
-Write-Step "Current PowerShell session: codex"
-Write-Step "Future PowerShell windows: open a new PowerShell window and run: codex"
-Write-Host "Codex CLI $resolvedVersion installed successfully."
+Write-Step "Current PowerShell session: lemex"
+Write-Step "Future PowerShell windows: open a new PowerShell window and run: lemex"
+Write-Host "Lemex CLI $resolvedVersion installed successfully."
 
-$codexCommand = Join-Path $visibleBinDir "codex.exe"
-if (Prompt-YesNo "Start Codex now?") {
-    Write-Step "Launching Codex"
-    & $codexCommand
+$lemexCommand = Join-Path $visibleBinDir "lemex.exe"
+if (Prompt-YesNo "Start Lemex now?") {
+    Write-Step "Launching Lemex"
+    & $lemexCommand
 }

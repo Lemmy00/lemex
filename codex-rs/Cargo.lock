@@ -2522,6 +2522,7 @@ dependencies = [
  "codex-mcp",
  "codex-memories-write",
  "codex-model-provider",
+ "codex-model-provider-info",
  "codex-models-manager",
  "codex-plugin",
  "codex-protocol",
@@ -2724,35 +2725,6 @@ dependencies = [
  "tonic",
  "tower",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "codex-code-mode-host"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "codex-code-mode",
- "codex-code-mode-protocol",
- "codex-code-mode-runtime",
- "codex-http-client",
- "codex-otel",
- "codex-otel-trace-websocket",
- "codex-protocol",
- "codex-utils-cargo-bin",
- "futures",
- "pretty_assertions",
- "prost",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tonic",
- "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -9886,6 +9858,35 @@ name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
+
+[[package]]
+name = "lemex-code-mode-host"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "codex-code-mode",
+ "codex-code-mode-protocol",
+ "codex-code-mode-runtime",
+ "codex-http-client",
+ "codex-otel",
+ "codex-otel-trace-websocket",
+ "codex-protocol",
+ "codex-utils-cargo-bin",
+ "futures",
+ "pretty_assertions",
+ "prost",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "libc"

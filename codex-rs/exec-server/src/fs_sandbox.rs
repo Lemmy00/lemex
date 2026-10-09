@@ -671,7 +671,7 @@ mod tests {
                 ("TMP", "/tmp"),
                 ("TEMP", "/tmp"),
                 ("HOME", "/home/user"),
-                ("OPENAI_API_KEY", "secret"),
+                ("LEMEX_API_KEY", "secret"),
                 ("HTTPS_PROXY", "http://proxy.example"),
             ]
             .map(|(key, value)| (OsString::from(key), OsString::from(value))),
@@ -717,7 +717,7 @@ mod tests {
                 ("LocalAppData", r"C:\Users\test\AppData\Local"),
                 ("SystemDrive", "C:"),
                 ("PATH_INJECTION", "bad"),
-                ("OPENAI_API_KEY", "secret"),
+                ("LEMEX_API_KEY", "secret"),
             ]
             .map(|(key, value)| (OsString::from(key), OsString::from(value))),
         );

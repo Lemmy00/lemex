@@ -1,13 +1,13 @@
-# Codex SDK
+# Lemex SDK
 
-Embed the Codex agent in your workflows and apps.
+Embed the Lemex agent in your workflows and apps.
 
-The TypeScript SDK wraps the `codex` CLI from `@openai/codex`. It spawns the CLI and exchanges JSONL events over stdin/stdout.
+The TypeScript SDK wraps the `lemex` CLI from `lemex`. It spawns the CLI and exchanges JSONL events over stdin/stdout.
 
 ## Installation
 
 ```bash
-npm install @openai/codex-sdk
+npm install lemex-sdk
 ```
 
 Requires Node.js 18+.
@@ -15,7 +15,7 @@ Requires Node.js 18+.
 ## Quickstart
 
 ```typescript
-import { Codex } from "@openai/codex-sdk";
+import { Codex } from "lemex-sdk";
 
 const codex = new Codex();
 const thread = codex.startThread();
@@ -97,7 +97,7 @@ const turn = await thread.run([
 
 ### Resuming an existing thread
 
-Threads are persisted in `~/.codex/sessions`. If you lose the in-memory `Thread` object, reconstruct it with `resumeThread()` and keep going.
+Threads are persisted in `~/.lemex/sessions`. If you lose the in-memory `Thread` object, reconstruct it with `resumeThread()` and keep going.
 
 ```typescript
 const savedThreadId = process.env.CODEX_THREAD_ID!;
@@ -129,7 +129,7 @@ const codex = new Codex({
 });
 ```
 
-The SDK still injects its required variables (such as `CODEX_API_KEY`) on top of the environment you provide. If you set
+The SDK still injects its required variables (such as `LEMEX_API_KEY`) on top of the environment you provide. If you set
 `baseUrl`, the SDK passes it as a `--config openai_base_url=...` override.
 
 ### Passing `--config` overrides
@@ -147,7 +147,7 @@ const codex = new Codex({
 ```
 
 For configuration keys that cannot be expressed as dotted paths, pass raw TOML overrides with `configOverrides`. Each entry
-is forwarded unchanged as a separate `--config` argument, without modifying `CODEX_HOME`:
+is forwarded unchanged as a separate `--config` argument, without modifying `LEMEX_HOME`:
 
 ```typescript
 const codex = new Codex({

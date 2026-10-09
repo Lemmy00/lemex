@@ -6,12 +6,12 @@
 # Launch the proxy, dump request/response pairs to /tmp/proxy
 cd path/to/codex/codex-rs
 cargo build
-echo $OPENAI_API_KEY | ./target/debug/codex-responses-api-proxy \
+echo $LEMEX_API_KEY | ./target/debug/codex-responses-api-proxy \
     --port 60001 \
     --dump-dir /tmp/proxy
 
 
-# Add this to ~/.codex/config.toml:
+# Add this to ~/.lemex/config.toml:
 
 [model_providers.codex-responses-api-proxy]
 name = 'codex-responses-api-proxy'
@@ -28,16 +28,16 @@ codex -p proxy
 
 # Detailed docs
 
-A strict HTTP proxy that only forwards `POST` requests to `/v1/responses` to the OpenAI API (`https://api.openai.com`), injecting the `Authorization: Bearer $OPENAI_API_KEY` header. Everything else is rejected with `403 Forbidden`.
+A strict HTTP proxy that only forwards `POST` requests to `/v1/responses` to the OpenAI API (`https://api.openai.com`), injecting the `Authorization: Bearer $LEMEX_API_KEY` header. Everything else is rejected with `403 Forbidden`.
 
 ## Expected Usage
 
-**IMPORTANT:** `codex-responses-api-proxy` is designed to be run by a privileged user with access to `OPENAI_API_KEY` so that an unprivileged user cannot inspect or tamper with the process. Though if `--http-shutdown` is specified, an unprivileged user _can_ make a `GET` request to `/shutdown` to shutdown the server, as an unprivileged user could not send `SIGTERM` to kill the process.
+**IMPORTANT:** `codex-responses-api-proxy` is designed to be run by a privileged user with access to `LEMEX_API_KEY` so that an unprivileged user cannot inspect or tamper with the process. Though if `--http-shutdown` is specified, an unprivileged user _can_ make a `GET` request to `/shutdown` to shutdown the server, as an unprivileged user could not send `SIGTERM` to kill the process.
 
-A privileged user (i.e., `root` or a user with `sudo`) who has access to `OPENAI_API_KEY` would run the following to start the server, as `codex-responses-api-proxy` reads the auth token from `stdin`:
+A privileged user (i.e., `root` or a user with `sudo`) who has access to `LEMEX_API_KEY` would run the following to start the server, as `codex-responses-api-proxy` reads the auth token from `stdin`:
 
 ```shell
-printenv OPENAI_API_KEY | env -u OPENAI_API_KEY codex-responses-api-proxy --http-shutdown --server-info /tmp/server-info.json
+printenv LEMEX_API_KEY | env -u LEMEX_API_KEY codex-responses-api-proxy --http-shutdown --server-info /tmp/server-info.json
 ```
 
 A non-privileged user would then run Codex as follows, specifying the `model_provider` dynamically:
@@ -58,7 +58,7 @@ curl --fail --silent --show-error "${PROXY_BASE_URL}/shutdown"
 
 ## Behavior
 
-- Reads the API key from `stdin`. All callers should pipe the key in (for example, `printenv OPENAI_API_KEY | codex-responses-api-proxy`).
+- Reads the API key from `stdin`. All callers should pipe the key in (for example, `printenv LEMEX_API_KEY | codex-responses-api-proxy`).
 - Formats the header value as `Bearer <key>` and attempts to `mlock(2)` the memory holding that header so it is not swapped to disk.
 - Listens on the provided port or an ephemeral port if `--port` is not specified.
 - Accepts exactly `POST /v1/responses` (no query string). The request body is forwarded to `https://api.openai.com/v1/responses` with `Authorization: Bearer <key>` set. All original request headers (except any incoming `Authorization`) are forwarded upstream, with `Host` overridden to `api.openai.com`. For other requests, it responds with `403`.
@@ -95,7 +95,7 @@ printenv AZURE_OPENAI_API_KEY | env -u AZURE_OPENAI_API_KEY codex-responses-api-
 
 ## Hardening Details
 
-Care is taken to restrict access/copying to the value of `OPENAI_API_KEY` retained in memory:
+Care is taken to restrict access/copying to the value of `LEMEX_API_KEY` retained in memory:
 
 - We leverage [`codex_process_hardening`](https://github.com/openai/codex/blob/main/codex-rs/process-hardening/README.md) so `codex-responses-api-proxy` is run with standard process-hardening techniques.
 - At startup, we allocate a `1024` byte buffer on the stack and copy `"Bearer "` into the start of the buffer.

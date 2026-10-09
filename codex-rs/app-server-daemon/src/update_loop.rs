@@ -591,7 +591,7 @@ async fn run_installer_script(
     };
     let mut child = command
         .env(
-            "CODEX_HOME",
+            "LEMEX_HOME",
             package_root
                 .parent()
                 .and_then(Path::parent)

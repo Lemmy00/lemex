@@ -2173,7 +2173,7 @@ async fn plugin_read_hides_apps_for_api_key_auth() -> Result<()> {
     write_connectors_config(codex_home.path(), &server_url)?;
     std::fs::write(
         codex_home.path().join("auth.json"),
-        r#"{"OPENAI_API_KEY":"sk-test-key","tokens":null,"last_refresh":null}"#,
+        r#"{"LEMEX_API_KEY":"sk-test-key","tokens":null,"last_refresh":null}"#,
     )?;
 
     let repo_root = TempDir::new()?;
@@ -2195,9 +2195,9 @@ async fn plugin_read_hides_apps_for_api_key_auth() -> Result<()> {
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("CODEX_ACCESS_TOKEN", None),
-            ("CODEX_API_KEY", None),
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_ACCESS_TOKEN", None),
+            ("LEMEX_API_KEY", None),
+            ("LEMEX_API_KEY", None),
         ])
         .build_initialized_with_timeout(DEFAULT_TIMEOUT)
         .await?;

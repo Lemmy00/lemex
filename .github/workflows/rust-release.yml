@@ -96,50 +96,50 @@ jobs:
             target: aarch64-apple-darwin
             bundle: primary
             artifact_name: aarch64-apple-darwin
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy"
             build_dmg: "true"
           - runner: macos-15-xlarge
             target: aarch64-apple-darwin
             bundle: app-server
             artifact_name: aarch64-apple-darwin-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
             build_dmg: "false"
           - runner: macos-15-xlarge
             target: x86_64-apple-darwin
             bundle: primary
             artifact_name: x86_64-apple-darwin
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy"
             build_dmg: "true"
           - runner: macos-15-xlarge
             target: x86_64-apple-darwin
             bundle: app-server
             artifact_name: x86_64-apple-darwin-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
             build_dmg: "false"
           # Release artifacts intentionally ship MUSL-linked Linux binaries.
           - runner: ${{ github.event.repository.name }}-linux-x64-xl
             target: x86_64-unknown-linux-musl
             bundle: primary
             artifact_name: x86_64-unknown-linux-musl
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy bwrap"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy bwrap"
             build_dmg: "false"
           - runner: ${{ github.event.repository.name }}-linux-x64-xl
             target: x86_64-unknown-linux-musl
             bundle: app-server
             artifact_name: x86_64-unknown-linux-musl-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
             build_dmg: "false"
           - runner: ${{ github.event.repository.name }}-linux-arm64
             target: aarch64-unknown-linux-musl
             bundle: primary
             artifact_name: aarch64-unknown-linux-musl
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy bwrap"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy bwrap"
             build_dmg: "false"
           - runner: ${{ github.event.repository.name }}-linux-arm64
             target: aarch64-unknown-linux-musl
             bundle: app-server
             artifact_name: aarch64-unknown-linux-musl-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
             build_dmg: "false"
 
     steps:
@@ -404,7 +404,7 @@ jobs:
           for binary in ${{ matrix.binaries }}; do
             # Both variants package the host, but only the primary bundle publishes
             # standalone binary archives to avoid duplicate release asset names.
-            if [[ "${{ matrix.bundle }}" == "app-server" && "$binary" == "codex-code-mode-host" ]]; then
+            if [[ "${{ matrix.bundle }}" == "app-server" && "$binary" == "lemex-code-mode-host" ]]; then
               continue
             fi
             cp "target/${{ matrix.target }}/release/${binary}" "$dest/${binary}-${{ matrix.target }}"
@@ -657,19 +657,19 @@ jobs:
           - target: aarch64-apple-darwin
             bundle: primary
             artifact_name: aarch64-apple-darwin
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy"
           - target: aarch64-apple-darwin
             bundle: app-server
             artifact_name: aarch64-apple-darwin-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
           - target: x86_64-apple-darwin
             bundle: primary
             artifact_name: x86_64-apple-darwin
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy"
           - target: x86_64-apple-darwin
             bundle: app-server
             artifact_name: x86_64-apple-darwin-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -902,22 +902,22 @@ jobs:
           - target: aarch64-apple-darwin
             bundle: primary
             artifact_name: aarch64-apple-darwin
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy"
             build_dmg: "true"
           - target: aarch64-apple-darwin
             bundle: app-server
             artifact_name: aarch64-apple-darwin-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
             build_dmg: "false"
           - target: x86_64-apple-darwin
             bundle: primary
             artifact_name: x86_64-apple-darwin
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy"
             build_dmg: "true"
           - target: x86_64-apple-darwin
             bundle: app-server
             artifact_name: x86_64-apple-darwin-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
             build_dmg: "false"
 
     steps:
@@ -998,7 +998,7 @@ jobs:
           for binary in ${{ matrix.binaries }}; do
             # Both variants package the host, but only the primary bundle publishes
             # standalone binary archives to avoid duplicate release asset names.
-            if [[ "${{ matrix.bundle }}" == "app-server" && "$binary" == "codex-code-mode-host" ]]; then
+            if [[ "${{ matrix.bundle }}" == "app-server" && "$binary" == "lemex-code-mode-host" ]]; then
               continue
             fi
             cp "target/${{ matrix.target }}/release/${binary}" "$dest/${binary}-${{ matrix.target }}"
@@ -1291,22 +1291,22 @@ jobs:
           - target: aarch64-apple-darwin
             bundle: primary
             artifact_name: aarch64-apple-darwin
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy"
             verify_dmg: "true"
           - target: aarch64-apple-darwin
             bundle: app-server
             artifact_name: aarch64-apple-darwin-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
             verify_dmg: "false"
           - target: x86_64-apple-darwin
             bundle: primary
             artifact_name: x86_64-apple-darwin
-            binaries: "codex codex-code-mode-host codex-responses-api-proxy"
+            binaries: "codex lemex-code-mode-host codex-responses-api-proxy"
             verify_dmg: "true"
           - target: x86_64-apple-darwin
             bundle: app-server
             artifact_name: x86_64-apple-darwin-app-server
-            binaries: "codex-app-server codex-code-mode-host"
+            binaries: "codex-app-server lemex-code-mode-host"
             verify_dmg: "false"
 
     steps:
@@ -1379,7 +1379,7 @@ jobs:
 
             # The app-server package contains the host, but its standalone archives
             # are omitted above to avoid duplicate release asset names.
-            if [[ "${{ matrix.bundle }}" == "app-server" && "$binary" == "codex-code-mode-host" ]]; then
+            if [[ "${{ matrix.bundle }}" == "app-server" && "$binary" == "lemex-code-mode-host" ]]; then
               continue
             fi
 
@@ -1414,7 +1414,7 @@ jobs:
           mkdir -p "$package_dir"
           tar -xzf "${packaged_dir}/${package_stem}-${target}.tar.gz" -C "$package_dir"
           verify_signed_binary "${package_dir}/bin/${package_entrypoint}" "$package_entrypoint"
-          verify_signed_binary "${package_dir}/bin/codex-code-mode-host" "codex-code-mode-host"
+          verify_signed_binary "${package_dir}/bin/lemex-code-mode-host" "lemex-code-mode-host"
 
           for resource in \
             "${package_dir}/codex-path/rg"
@@ -1581,9 +1581,9 @@ jobs:
           ./scripts/stage_npm_packages.py \
             --release-version "$release_version" \
             --artifacts-dir "${GITHUB_WORKSPACE}/dist" \
-            --package codex \
-            --package codex-responses-api-proxy \
-            --package codex-sdk
+            --package lemex \
+            --package lemex-responses-api-proxy \
+            --package lemex-sdk
 
       - name: Upload staged npm packages
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -1877,12 +1877,12 @@ jobs:
           tag="$RELEASE_TAG"
           mkdir -p dist/npm
           patterns=(
-            "codex-npm-${version}.tgz"
-            "codex-npm-linux-*-${version}.tgz"
-            "codex-npm-darwin-*-${version}.tgz"
-            "codex-npm-win32-*-${version}.tgz"
-            "codex-responses-api-proxy-npm-${version}.tgz"
-            "codex-sdk-npm-${version}.tgz"
+            "lemex-npm-${version}.tgz"
+            "lemex-npm-linux-*-${version}.tgz"
+            "lemex-npm-darwin-*-${version}.tgz"
+            "lemex-npm-win32-*-${version}.tgz"
+            "lemex-responses-api-proxy-npm-${version}.tgz"
+            "lemex-sdk-npm-${version}.tgz"
           )
           for pattern in "${patterns[@]}"; do
             gh release download "$tag" \
@@ -1903,19 +1903,19 @@ jobs:
             prefix="${NPM_TAG}-"
           fi
 
-          root_tarball="dist/npm/codex-npm-${VERSION}.tgz"
-          sdk_tarball="dist/npm/codex-sdk-npm-${VERSION}.tgz"
+          root_tarball="dist/npm/lemex-npm-${VERSION}.tgz"
+          sdk_tarball="dist/npm/lemex-sdk-npm-${VERSION}.tgz"
           # Keep this list in sync with CODEX_PLATFORM_PACKAGES in
           # codex-cli/scripts/build_npm_package.py. The root wrapper advances
           # @openai/codex@latest as soon as it publishes, so every platform
           # package it aliases must already exist in the registry first.
           platform_tarballs=(
-            "dist/npm/codex-npm-linux-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-linux-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-arm64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-linux-x64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-linux-arm64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-darwin-x64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-darwin-arm64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-win32-x64-${VERSION}.tgz"
+            "dist/npm/lemex-npm-win32-arm64-${VERSION}.tgz"
           )
 
           for required_tarball in "${platform_tarballs[@]}" "${root_tarball}"; do
@@ -1964,12 +1964,12 @@ jobs:
             tag=""
 
             case "${filename}" in
-              codex-npm-linux-*-"${VERSION}".tgz|codex-npm-darwin-*-"${VERSION}".tgz|codex-npm-win32-*-"${VERSION}".tgz)
-                platform="${filename#codex-npm-}"
+              lemex-npm-linux-*-"${VERSION}".tgz|lemex-npm-darwin-*-"${VERSION}".tgz|lemex-npm-win32-*-"${VERSION}".tgz)
+                platform="${filename#lemex-npm-}"
                 platform="${platform%-${VERSION}.tgz}"
                 tag="${prefix}${platform}"
                 ;;
-              codex-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
+              lemex-npm-"${VERSION}".tgz|lemex-responses-api-proxy-npm-"${VERSION}".tgz|lemex-sdk-npm-"${VERSION}".tgz)
                 tag="${NPM_TAG}"
                 ;;
               *)

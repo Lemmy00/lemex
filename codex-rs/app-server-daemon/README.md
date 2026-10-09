@@ -81,7 +81,7 @@ For a new Linux or macOS machine:
 
 ```sh
 curl -fsSL https://chatgpt.com/codex/install.sh | sh
-$HOME/.codex/packages/standalone/current/codex app-server daemon bootstrap --remote-control
+$HOME/.lemex/packages/standalone/current/codex app-server daemon bootstrap --remote-control
 ```
 
 On Windows, use a non-elevated PowerShell terminal whose host allows breakaway:
@@ -181,13 +181,13 @@ sets it according to `--remote-control` (disabled when omitted).
 `stop` sends a graceful termination request first, then force-terminates the
 process after the configured grace window if it is still alive.
 
-All mutating lifecycle commands are serialized per `CODEX_HOME`, so a concurrent
+All mutating lifecycle commands are serialized per `LEMEX_HOME`, so a concurrent
 `start`, `restart`, `enable-remote-control`, `disable-remote-control`, `stop`,
 or `bootstrap` does not race another in-flight lifecycle operation.
 
 ## State
 
-The daemon stores its local state under `CODEX_HOME/app-server-daemon/`:
+The daemon stores its local state under `LEMEX_HOME/app-server-daemon/`:
 
 - `settings.json` for remote-control launch settings and updater preferences
 - `app-server.pid` for the app-server process record

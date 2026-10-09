@@ -96,7 +96,7 @@ async fn daybreak_access_respects_plugin_provenance(case: AccessCall) -> Result<
     }
     let mut app = TestAppServer::builder()
         .with_codex_home(home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", api_key)])
+        .with_env_overrides(&[("LEMEX_API_KEY", api_key)])
         // Daybreak metadata is local-host-only, even when the test runner provides a remote executor.
         .without_auto_env()
         .build_initialized_with_timeout(std::time::Duration::from_secs(/*secs*/ 30))

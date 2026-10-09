@@ -2298,7 +2298,7 @@ async fn thread_fork_surfaces_cloud_config_bundle_load_errors() -> Result<()> {
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (
                 REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
                 Some(refresh_token_url.as_str()),

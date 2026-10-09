@@ -950,23 +950,18 @@ fn persist_agent_identity_record(
     Ok(())
 }
 
-pub const OPENAI_API_KEY_ENV_VAR: &str = "OPENAI_API_KEY";
-pub const CODEX_API_KEY_ENV_VAR: &str = "CODEX_API_KEY";
-pub const CODEX_ACCESS_TOKEN_ENV_VAR: &str = "CODEX_ACCESS_TOKEN";
+pub const LEMEX_API_KEY_ENV_VAR: &str = "LEMEX_API_KEY";
+pub const LEMEX_ACCESS_TOKEN_ENV_VAR: &str = "LEMEX_ACCESS_TOKEN";
 
-pub fn read_openai_api_key_from_env() -> Option<String> {
-    env::var(OPENAI_API_KEY_ENV_VAR)
+pub fn read_lemex_api_key_from_env() -> Option<String> {
+    env::var(LEMEX_API_KEY_ENV_VAR)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
-pub fn read_codex_api_key_from_env() -> Option<String> {
-    read_non_empty_env_var(CODEX_API_KEY_ENV_VAR)
-}
-
-pub fn read_codex_access_token_from_env() -> Option<String> {
-    read_non_empty_env_var(CODEX_ACCESS_TOKEN_ENV_VAR)
+pub fn read_lemex_access_token_from_env() -> Option<String> {
+    read_non_empty_env_var(LEMEX_ACCESS_TOKEN_ENV_VAR)
 }
 
 fn read_non_empty_env_var(key: &str) -> Option<String> {
@@ -1500,7 +1495,7 @@ async fn load_auth(
     // API key via env var takes precedence over any other auth method.
     if enable_codex_api_key_env
         && auth_mode_is_allowed(allowed_login_methods, AuthMode::ApiKey)
-        && let Some(api_key) = read_codex_api_key_from_env()
+        && let Some(api_key) = read_lemex_api_key_from_env()
     {
         return Ok(Some(CodexAuth::from_api_key(api_key.as_str())));
     }
@@ -1535,7 +1530,7 @@ async fn load_auth(
     }
 
     if auth_mode_is_allowed(allowed_login_methods, AuthMode::AgentIdentity)
-        && let Some(access_token) = read_codex_access_token_from_env()
+        && let Some(access_token) = read_lemex_access_token_from_env()
     {
         return match classify_codex_access_token(&access_token) {
             CodexAccessToken::PersonalAccessToken(access_token) => {

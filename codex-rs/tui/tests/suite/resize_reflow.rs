@@ -55,8 +55,8 @@ async fn tmux_split_preserves_fresh_session_composer_row_after_resize_reflow() -
             .arg(&session_name)
             .arg("--")
             .arg("env")
-            .arg(format!("CODEX_HOME={}", codex_home.path().display()))
-            .arg("OPENAI_API_KEY=dummy")
+            .arg(format!("LEMEX_HOME={}", codex_home.path().display()))
+            .arg("LEMEX_API_KEY=dummy")
             .arg(codex)
             .arg("-c")
             .arg("analytics.enabled=false")
@@ -219,8 +219,8 @@ async fn tmux_width_resize_restore_keeps_visible_content_anchored() -> Result<()
             .arg(&session_name)
             .arg("--")
             .arg("env")
-            .arg(format!("CODEX_HOME={}", codex_home.path().display()))
-            .arg("OPENAI_API_KEY=dummy")
+            .arg(format!("LEMEX_HOME={}", codex_home.path().display()))
+            .arg("LEMEX_API_KEY=dummy")
             .arg(codex)
             .arg("-c")
             .arg("analytics.enabled=false")
@@ -345,8 +345,8 @@ async fn tmux_scrolled_composer_resize_preserves_visible_draft_text() -> Result<
             .arg(&session_name)
             .arg("--")
             .arg("env")
-            .arg(format!("CODEX_HOME={}", codex_home.path().display()))
-            .arg("OPENAI_API_KEY=dummy")
+            .arg(format!("LEMEX_HOME={}", codex_home.path().display()))
+            .arg("LEMEX_API_KEY=dummy")
             .arg(codex)
             .arg("--model")
             .arg("gpt-5.6-terra")
@@ -470,8 +470,8 @@ async fn run_repeated_resize_smoke() -> Result<()> {
             .arg(&session_name)
             .arg("--")
             .arg("env")
-            .arg(format!("CODEX_HOME={}", codex_home.path().display()))
-            .arg("OPENAI_API_KEY=dummy")
+            .arg(format!("LEMEX_HOME={}", codex_home.path().display()))
+            .arg("LEMEX_API_KEY=dummy")
             .arg(codex)
             .arg("-c")
             .arg("analytics.enabled=false")
@@ -616,7 +616,7 @@ trust_level = "trusted"
 fn write_auth(codex_home: &Path) -> Result<()> {
     std::fs::write(
         codex_home.join("auth.json"),
-        r#"{"OPENAI_API_KEY":"dummy","tokens":null,"last_refresh":null}"#,
+        r#"{"LEMEX_API_KEY":"dummy","tokens":null,"last_refresh":null}"#,
     )?;
     Ok(())
 }

@@ -356,7 +356,7 @@ async fn assert_thread_resume_rejects_writer_owned_by_another_process(
     let mut secondary = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .with_env_overrides(&[(
-            "CODEX_SQLITE_HOME",
+            "LEMEX_SQLITE_HOME",
             Some(secondary_sqlite_home_path.as_ref()),
         )])
         .build_initialized()
@@ -2277,7 +2277,7 @@ async fn goal_first_live_thread_appears_in_state_db_thread_list() -> Result<()> 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(&codex_home_path)
         .without_managed_config()
-        .with_env_overrides(&[("CODEX_SQLITE_HOME", Some(sqlite_home))])
+        .with_env_overrides(&[("LEMEX_SQLITE_HOME", Some(sqlite_home))])
         .build_initialized()
         .await?;
 
@@ -5977,7 +5977,7 @@ async fn thread_resume_surfaces_cloud_config_bundle_load_errors() -> Result<()> 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (
                 REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
                 Some(refresh_token_url.as_str()),

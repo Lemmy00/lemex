@@ -73,7 +73,7 @@ async fn elevated_local_tui_uses_embedded_without_starting_daemon() -> Result<()
     let home = tempfile::tempdir()?;
     for operation in ["start", "restart"] {
         let output = Command::new(&codex)
-            .env("CODEX_HOME", home.path())
+            .env("LEMEX_HOME", home.path())
             .args(["app-server", "daemon", operation])
             .output()?;
         ensure!(
@@ -144,7 +144,7 @@ async fn daemon_startup(command: &str) -> Result<()> {
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     anyhow::ensure!(
         Command::new(&codex)
-            .env("CODEX_HOME", home.path())
+            .env("LEMEX_HOME", home.path())
             .arg("--version")
             .output()?
             .status
@@ -172,23 +172,23 @@ async fn daemon_startup(command: &str) -> Result<()> {
     if !bedrock_onboarding {
         fs::write(
             home.path().join("auth.json"),
-            r#"{"OPENAI_API_KEY":"daemon-startup-test","tokens":null,"last_refresh":null}"#,
+            r#"{"LEMEX_API_KEY":"daemon-startup-test","tokens":null,"last_refresh":null}"#,
         )?;
     }
     let mut env = std::env::vars().collect::<std::collections::HashMap<_, _>>();
     for key in [
         "CODEX_EXEC_SERVER_URL",
-        "CODEX_ACCESS_TOKEN",
-        "CODEX_API_KEY",
+        "LEMEX_ACCESS_TOKEN",
+        "LEMEX_API_KEY",
         "CODEX_CLOUD_TASKS_MODE",
-        "OPENAI_API_KEY",
+        "LEMEX_API_KEY",
         "OPENAI_FEDERATION_RULE_ID",
         "OPENAI_IDENTITY_TOKEN_FILE",
         "OPENAI_WORKLOAD_IDENTITY_CONTEXT",
     ] {
         env.remove(key);
     }
-    env.insert("CODEX_HOME".into(), home.path().display().to_string());
+    env.insert("LEMEX_HOME".into(), home.path().display().to_string());
     env.insert(
         "CODEX_SQLITE_HOME".into(),
         home.path().display().to_string(),

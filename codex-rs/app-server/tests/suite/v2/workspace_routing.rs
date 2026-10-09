@@ -54,7 +54,7 @@ async fn config(home: &TempDir, backend: &MockServer) -> Result<()> {
 async fn start(home: &TempDir) -> Result<TestAppServer> {
     TestAppServer::builder()
         .with_codex_home(home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(READ_TIMEOUT)
         .await
 }
@@ -130,7 +130,7 @@ async fn saved_workspace_is_discovered_once_and_not_the_default_account(
             .plan_type(plan_type),
         AuthCredentialsStoreMode::File,
     )?;
-    let mut env_overrides = vec![("OPENAI_API_KEY", None), ("CODEX_API_KEY", None)];
+    let mut env_overrides = vec![("LEMEX_API_KEY", None), ("LEMEX_API_KEY", None)];
     env_overrides.extend(
         codex_network_proxy::PROXY_ENV_KEYS
             .iter()
@@ -203,7 +203,7 @@ async fn stable_clients_do_not_treat_failed_workspace_discovery_as_unrestricted(
     )?;
     let mut server = TestAppServer::builder()
         .with_codex_home(home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build()
         .await?;
     timeout(

@@ -249,7 +249,7 @@ fn recognizes_windows_executor_plugin_cache_root() {
     };
     let relative_path = "skills/presentations/container_tools/mark_artifact_operation_started.mjs";
     let script = PathUri::parse(
-        "file:///C:/Users/user/.codex/plugins/cache/openai-primary-runtime/presentations/0.1.29/skills/presentations/container_tools/mark_artifact_operation_started.mjs",
+        "file:///C:/Users/user/.lemex/plugins/cache/openai-primary-runtime/presentations/0.1.29/skills/presentations/container_tools/mark_artifact_operation_started.mjs",
     )
     .expect("Windows script URI");
 
@@ -643,7 +643,7 @@ fn only_emits_safe_normalized_relative_script_paths() {
     );
     assert_eq!(
         normalized_relative_script_path(Path::new(
-            "/home/user/.codex/plugins/cache/openai-curated/sample/scripts/run.py"
+            "/home/user/.lemex/plugins/cache/openai-curated/sample/scripts/run.py"
         )),
         None
     );

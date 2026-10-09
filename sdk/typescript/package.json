@@ -1,14 +1,14 @@
 {
-  "name": "@openai/codex-sdk",
+  "name": "lemex-sdk",
   "version": "0.0.0-dev",
-  "description": "TypeScript SDK for Codex APIs.",
+  "description": "TypeScript SDK for Lemex APIs.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openai/codex.git",
+    "url": "git+https://github.com/Lemmy00/lemex.git",
     "directory": "sdk/typescript"
   },
   "keywords": [
-    "openai",
+    "lemex",
     "codex",
     "sdk",
     "typescript",

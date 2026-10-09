@@ -56,14 +56,14 @@ fn virtualize_child_env_replaces_supported_credentials() {
         ("GH_TOKEN", github_token),
         ("HOMEBREW_GITHUB_API_TOKEN", github_token),
         ("AUTH_HEADER", authorization.as_str()),
-        ("OPENAI_API_KEY", openai_api_key),
+        ("LEMEX_API_KEY", openai_api_key),
         ("GH_ENTERPRISE_TOKEN", github_token),
     ]);
 
     broker.virtualize_child_env(&mut env);
 
     let github_dummy = env.get("GH_TOKEN").expect("dummy GitHub token");
-    let openai_dummy = env.get("OPENAI_API_KEY").expect("dummy OpenAI API key");
+    let openai_dummy = env.get("LEMEX_API_KEY").expect("dummy OpenAI API key");
     assert_credential_shape(github_token, github_dummy, "github_pat_");
     assert_credential_shape(openai_api_key, openai_dummy, "sk-proj-");
     assert_eq!(env.get("HOMEBREW_GITHUB_API_TOKEN"), Some(github_dummy));
@@ -79,7 +79,7 @@ fn virtualize_child_env_replaces_supported_credentials() {
         format!("{github_dummy}\n{openai_dummy}")
     );
     let mut filtered_env = env.clone();
-    filtered_env.remove("OPENAI_API_KEY");
+    filtered_env.remove("LEMEX_API_KEY");
     let mut excluded_credentials = format!("{github_token}\n{openai_api_key}");
     assert!(!broker.virtualize_text(&mut excluded_credentials, &filtered_env));
     assert_eq!(excluded_credentials, format!("{github_dummy}\n"));
@@ -119,9 +119,9 @@ fn virtualize_child_env_replaces_supported_credentials() {
         "c".repeat(20)
     );
     let legacy_broker = CredentialBroker::new(/*enabled*/ true);
-    let mut legacy_env = env_map([("OPENAI_API_KEY", qualified_legacy.as_str())]);
+    let mut legacy_env = env_map([("LEMEX_API_KEY", qualified_legacy.as_str())]);
     legacy_broker.virtualize_child_env(&mut legacy_env);
-    assert_credential_shape(&qualified_legacy, &legacy_env["OPENAI_API_KEY"], "sk-");
+    assert_credential_shape(&qualified_legacy, &legacy_env["LEMEX_API_KEY"], "sk-");
     let unmarked_legacy = format!("sk-{}-{}", "a".repeat(15), "b".repeat(35));
     let mut unmarked_legacy_alias = format!("Bearer {unmarked_legacy}");
     assert!(!broker.virtualize_text(&mut unmarked_legacy_alias, &env));
@@ -176,7 +176,7 @@ fn virtualize_child_env_replaces_supported_credentials() {
         &mixed_providers,
         &virtualized_providers,
         &HashMap::new(),
-        |source| source != "OPENAI_API_KEY",
+        |source| source != "LEMEX_API_KEY",
     ));
     let mixed_credentials =
         format!("{unknown_github_token}_{unknown_legacy_openai_key}_{unrelated}");
@@ -186,7 +186,7 @@ fn virtualize_child_env_replaces_supported_credentials() {
         &mixed_credentials,
         &virtualized_credentials,
         &HashMap::new(),
-        |source| source != "OPENAI_API_KEY",
+        |source| source != "LEMEX_API_KEY",
     ));
     let equivalent_sources = env_map([
         ("GH_TOKEN", unknown_github_token),
@@ -320,9 +320,9 @@ fn virtualize_child_env_replaces_supported_credentials() {
     }
     let registered_hex_credential = format!("sk-{hash}");
     let registered_broker = CredentialBroker::new(/*enabled*/ true);
-    let mut registered_env = env_map([("OPENAI_API_KEY", registered_hex_credential.as_str())]);
+    let mut registered_env = env_map([("LEMEX_API_KEY", registered_hex_credential.as_str())]);
     registered_broker.virtualize_child_env(&mut registered_env);
-    let registered_dummy = &registered_env["OPENAI_API_KEY"];
+    let registered_dummy = &registered_env["LEMEX_API_KEY"];
     let mut credential_path = format!("/workspace/multita{registered_hex_credential}/bin");
     assert!(registered_broker.virtualize_text(&mut credential_path, &registered_env));
     assert_eq!(
@@ -331,7 +331,7 @@ fn virtualize_child_env_replaces_supported_credentials() {
     );
     for (key, placeholder, credential) in [
         ("GH_TOKEN", "ghp_", unknown_github_token),
-        ("OPENAI_API_KEY", "sk-", unknown_legacy_openai_key.as_str()),
+        ("LEMEX_API_KEY", "sk-", unknown_legacy_openai_key.as_str()),
     ] {
         let broker = CredentialBroker::new(/*enabled*/ true);
         let mut env = env_map([(key, placeholder)]);
@@ -346,7 +346,7 @@ fn virtualize_child_env_replaces_supported_credentials() {
     ];
     let github_dummy = github_dummy.clone();
     let openai_dummy = openai_dummy.clone();
-    env.insert("OPENAI_API_KEY".to_string(), "sk-user-override".to_string());
+    env.insert("LEMEX_API_KEY".to_string(), "sk-user-override".to_string());
     env.insert(
         "GIT_CONFIG_VALUE_0".to_string(),
         format!("Authorization: Bearer {github_dummy}"),
@@ -368,7 +368,7 @@ fn virtualize_child_env_replaces_supported_credentials() {
     );
     assert_eq!(env.get("AUTH_HEADER"), Some(&authorization));
     assert_eq!(
-        env.get("OPENAI_API_KEY").map(String::as_str),
+        env.get("LEMEX_API_KEY").map(String::as_str),
         Some("sk-user-override")
     );
     assert_eq!(
@@ -384,10 +384,10 @@ fn virtualize_child_env_replaces_supported_credentials() {
     );
 
     env.insert("GH_TOKEN".to_string(), openai_dummy.clone());
-    env.insert("OPENAI_API_KEY".to_string(), github_dummy.clone());
+    env.insert("LEMEX_API_KEY".to_string(), github_dummy.clone());
     broker.restore_child_env(&mut env, &mut []);
     assert_eq!(env.get("GH_TOKEN"), Some(&openai_dummy));
-    assert_eq!(env.get("OPENAI_API_KEY"), Some(&github_dummy));
+    assert_eq!(env.get("LEMEX_API_KEY"), Some(&github_dummy));
 }
 
 #[test]
@@ -574,12 +574,12 @@ fn virtualize_child_env_replaces_aliases_of_filtered_parent_credentials() {
     let mixed_bundle = format!("GitHub {github_token}\nOpenAI {openai_token}");
     let mut mixed_env = env_map([
         ("GH_TOKEN", github_token),
-        ("OPENAI_API_KEY", openai_token),
+        ("LEMEX_API_KEY", openai_token),
         ("AUTH_BUNDLE", mixed_bundle.as_str()),
     ]);
     broker.virtualize_child_env(&mut mixed_env);
     let mut mixed_alias = mixed_env["AUTH_BUNDLE"].clone();
-    let excluded_dummy = mixed_env.remove("OPENAI_API_KEY").expect("OpenAI dummy");
+    let excluded_dummy = mixed_env.remove("LEMEX_API_KEY").expect("OpenAI dummy");
     assert!(!broker.virtualize_text(&mut mixed_alias, &mixed_env));
     assert!(!mixed_alias.contains(&excluded_dummy));
 }
@@ -628,7 +628,7 @@ fn virtualize_child_env_discovers_credentials_without_canonical_variables() {
         ),
         (
             "sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-            "OPENAI_API_KEY",
+            "LEMEX_API_KEY",
             "api.openai.com",
         ),
     ] {
@@ -771,7 +771,7 @@ fn virtualize_child_env_binds_filtered_enterprise_credentials_to_child_host() {
 fn brokered_credential_env_keys_only_include_registered_credentials() {
     let broker = CredentialBroker::new(/*enabled*/ true);
     let mut env = env_map([
-        ("OPENAI_API_KEY", "sk-real"),
+        ("LEMEX_API_KEY", "sk-real"),
         ("GH_TOKEN", ""),
         ("GH_HOST", "github.example.com"),
     ]);
@@ -784,7 +784,7 @@ fn brokered_credential_env_keys_only_include_registered_credentials() {
 
     assert_eq!(
         brokered_credential_env_keys(&env).collect::<Vec<_>>(),
-        vec!["OPENAI_API_KEY"]
+        vec!["LEMEX_API_KEY"]
     );
 }
 
@@ -793,7 +793,7 @@ fn brokered_credential_value_env_keys_include_dummy_aliases() {
     let broker = CredentialBroker::new(/*enabled*/ true);
     let real = "sk-proj-abcdefghijklmnopqrstuvwxyz";
     let alias = format!("Bearer {real}");
-    let mut env = env_map([("OPENAI_API_KEY", real), ("AUTH_HEADER", alias.as_str())]);
+    let mut env = env_map([("LEMEX_API_KEY", real), ("AUTH_HEADER", alias.as_str())]);
 
     broker.virtualize_child_env(&mut env);
 
@@ -804,19 +804,19 @@ fn brokered_credential_value_env_keys_include_dummy_aliases() {
         vec![
             (
                 "@alias:AUTH_HEADER".to_string(),
-                env["OPENAI_API_KEY"].clone()
+                env["LEMEX_API_KEY"].clone()
             ),
             (
                 "@alias:OPENAI_API_KEY".to_string(),
-                env["OPENAI_API_KEY"].clone()
+                env["LEMEX_API_KEY"].clone()
             ),
-            ("OPENAI_API_KEY".to_string(), env["OPENAI_API_KEY"].clone()),
+            ("LEMEX_API_KEY".to_string(), env["LEMEX_API_KEY"].clone()),
         ]
     );
 
     assert_eq!(
         brokered_credential_value_env_keys(&env),
-        vec!["AUTH_HEADER".to_string(), "OPENAI_API_KEY".to_string()]
+        vec!["AUTH_HEADER".to_string(), "LEMEX_API_KEY".to_string()]
     );
 
     let mut absent_alias_env = env.clone();
@@ -824,15 +824,15 @@ fn brokered_credential_value_env_keys_include_dummy_aliases() {
     broker.virtualize_child_env(&mut absent_alias_env);
     assert_eq!(
         brokered_credential_marker_env_keys(&absent_alias_env),
-        vec!["AUTH_HEADER".to_string(), "OPENAI_API_KEY".to_string()]
+        vec!["AUTH_HEADER".to_string(), "LEMEX_API_KEY".to_string()]
     );
 
-    env.remove("OPENAI_API_KEY");
+    env.remove("LEMEX_API_KEY");
     broker.virtualize_child_env(&mut env);
     assert!(brokered_credential_dummy_env_keys(&env).is_empty());
     assert_eq!(
         brokered_credential_marker_env_keys(&env),
-        vec!["AUTH_HEADER".to_string(), "OPENAI_API_KEY".to_string()]
+        vec!["AUTH_HEADER".to_string(), "LEMEX_API_KEY".to_string()]
     );
     assert_eq!(
         brokered_credential_value_env_keys(&env),
@@ -842,19 +842,19 @@ fn brokered_credential_value_env_keys_include_dummy_aliases() {
 
 #[test]
 fn virtualize_child_env_uses_fresh_dummy_capabilities() {
-    let mut first_env = env_map([("OPENAI_API_KEY", "sk-proj-abcdefghijklmnopqrstuvwxyz")]);
+    let mut first_env = env_map([("LEMEX_API_KEY", "sk-proj-abcdefghijklmnopqrstuvwxyz")]);
     let mut second_env = first_env.clone();
 
     CredentialBroker::new(/*enabled*/ true).virtualize_child_env(&mut first_env);
     CredentialBroker::new(/*enabled*/ true).virtualize_child_env(&mut second_env);
 
-    assert_ne!(first_env["OPENAI_API_KEY"], second_env["OPENAI_API_KEY"]);
+    assert_ne!(first_env["LEMEX_API_KEY"], second_env["LEMEX_API_KEY"]);
 }
 
 #[test]
 fn child_without_dummy_cannot_use_previous_child_credential() {
     let broker = CredentialBroker::new(/*enabled*/ true);
-    let mut first_env = env_map([("OPENAI_API_KEY", "sk-real")]);
+    let mut first_env = env_map([("LEMEX_API_KEY", "sk-real")]);
     let mut second_env = HashMap::new();
 
     broker.virtualize_child_env(&mut first_env);
@@ -1008,9 +1008,9 @@ fn request_translation_preserves_provider_scheme_and_host_binding() {
 #[test]
 fn inject_request_headers_requires_dummy_and_preserves_explicit_authorization() {
     let broker = CredentialBroker::new(/*enabled*/ true);
-    let mut env = env_map([("OPENAI_API_KEY", "sk-real")]);
+    let mut env = env_map([("LEMEX_API_KEY", "sk-real")]);
     broker.virtualize_child_env(&mut env);
-    let openai_api_key = env.get("OPENAI_API_KEY").expect("dummy OpenAI API key");
+    let openai_api_key = env.get("LEMEX_API_KEY").expect("dummy OpenAI API key");
     let mut headers = HeaderMap::new();
 
     broker.inject_request_headers("api.openai.com", &mut headers);
@@ -1035,7 +1035,7 @@ fn concurrent_commands_preserve_discovered_credential_destinations() {
             "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
         ),
         (
-            "OPENAI_API_KEY",
+            "LEMEX_API_KEY",
             "OPENAI_BASE_URL",
             "sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
         ),
@@ -1157,7 +1157,7 @@ fn builtin_credentials_use_private_destination_context() {
             "github.enterprise.example",
         ),
         (
-            "OPENAI_API_KEY",
+            "LEMEX_API_KEY",
             "OPENAI_BASE_URL",
             "sk-real",
             "gateway.example",
@@ -1220,7 +1220,7 @@ fn builtin_credentials_use_private_destination_context() {
 fn private_destination_updates_reconcile_registered_fallbacks() {
     for ((key, context_key, token), previously_used_fallback) in [
         ("GH_ENTERPRISE_TOKEN", "GH_HOST", "ghp-real"),
-        ("OPENAI_API_KEY", "OPENAI_BASE_URL", "sk-real"),
+        ("LEMEX_API_KEY", "OPENAI_BASE_URL", "sk-real"),
         (
             "VENDOR_TOKEN",
             "VENDOR_HOST",
@@ -1419,14 +1419,14 @@ fn openai_credentials_bind_only_to_default_and_configured_trusted_hosts() {
     broker.configure(&config);
 
     let mut env = env_map([
-        ("OPENAI_API_KEY", "sk-real"),
-        ("OPENAI_BASE_URL", "https://sdk.example.com./v1"),
+        ("LEMEX_API_KEY", "sk-real"),
+        ("LEMEX_BASE_URL", "https://sdk.example.com./v1"),
         ("GH_TOKEN", "ghp-real"),
     ]);
     broker.virtualize_child_env(&mut env);
-    assert!(brokered_credential_env_keys(&env).any(|key| key == "OPENAI_BASE_URL"));
-    assert!(brokered_credential_binding_env_keys(&env).any(|key| key == "OPENAI_BASE_URL"));
-    let dummy = &env["OPENAI_API_KEY"];
+    assert!(brokered_credential_env_keys(&env).any(|key| key == "LEMEX_BASE_URL"));
+    assert!(brokered_credential_binding_env_keys(&env).any(|key| key == "LEMEX_BASE_URL"));
+    let dummy = &env["LEMEX_API_KEY"];
 
     for (host, expected_credential) in [
         ("api.openai.com", "sk-real"),

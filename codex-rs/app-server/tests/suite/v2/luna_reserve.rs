@@ -92,9 +92,9 @@ async fn luna_reserve_usage_capability(
         .with_codex_home(home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (
-                "CODEX_ACCESS_TOKEN",
+                "LEMEX_ACCESS_TOKEN",
                 (auth_kind == AuthKind::Pat).then_some("at-test-token"),
             ),
             ("CODEX_AUTHAPI_BASE_URL", Some(backend_url.as_str())),

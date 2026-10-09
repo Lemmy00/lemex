@@ -1216,7 +1216,7 @@ pub fn run_elevated_provisioning_setup_with_retained_handles(
         return Err(failure(
             SetupErrorCode::OrchestratorSandboxDirCreateFailed,
             format!(
-                "sandbox provisioning CODEX_HOME must be an absolute local disk path: {}",
+                "sandbox provisioning LEMEX_HOME must be an absolute local disk path: {}",
                 codex_home.display()
             ),
         ));
@@ -1452,8 +1452,8 @@ fn user_profile_child_name(path: &Path, user_profile: &Path) -> Option<String> {
 }
 
 fn filter_sensitive_write_roots(mut roots: Vec<PathBuf>, codex_home: &Path) -> Vec<PathBuf> {
-    // Never grant capability write access to CODEX_HOME or anything under CODEX_HOME/.sandbox,
-    // CODEX_HOME/.sandbox-bin, or CODEX_HOME/.sandbox-secrets. These locations contain sandbox
+    // Never grant capability write access to LEMEX_HOME or anything under LEMEX_HOME/.sandbox,
+    // LEMEX_HOME/.sandbox-bin, or LEMEX_HOME/.sandbox-secrets. These locations contain sandbox
     // control/state and helper binaries and must remain tamper-resistant.
     let codex_home_key = canonical_path_key(codex_home);
     let sbx_dir_key = canonical_path_key(&sandbox_dir(codex_home));
@@ -2680,10 +2680,10 @@ mod tests {
         let command_cwd = tmp.path().join("workspace");
         let extra_write_root = tmp.path().join("extra-write-root");
         let command_git = command_cwd.join(".git");
-        let extra_codex = extra_write_root.join(".codex");
+        let extra_codex = extra_write_root.join(".lemex");
         let explicit_deny = tmp.path().join("explicit-deny");
         fs::create_dir_all(&command_git).expect("create command .git");
-        fs::create_dir_all(&extra_codex).expect("create extra .codex");
+        fs::create_dir_all(&extra_codex).expect("create extra .lemex");
         let writable_roots = vec![
             AbsolutePathBuf::from_absolute_path(&extra_write_root).expect("absolute writable root"),
         ];
@@ -2708,7 +2708,7 @@ mod tests {
         assert_eq!(
             [
                 dunce::canonicalize(&command_git).expect("canonical command .git"),
-                dunce::canonicalize(&extra_codex).expect("canonical extra .codex"),
+                dunce::canonicalize(&extra_codex).expect("canonical extra .lemex"),
                 explicit_deny,
             ]
             .into_iter()

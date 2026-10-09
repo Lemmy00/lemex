@@ -136,7 +136,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--code-mode-host-bin",
         type=Path,
         help=(
-            "Optional prebuilt codex-code-mode-host executable. If omitted, "
+            "Optional prebuilt lemex-code-mode-host executable. If omitted, "
             "the host is built with Cargo."
         ),
     )

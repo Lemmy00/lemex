@@ -1035,7 +1035,7 @@ fn plugin_remote_section_error_next_step(label: &str, err: &str) -> &'static str
         || err.contains("not logged in")
     {
         "Sign in to ChatGPT, then try loading this section again"
-    } else if err.contains("codex plugins are disabled")
+    } else if err.contains("lemex plugins are disabled")
         || err.contains("plugin sharing is disabled")
         || err.contains("plugin sharing is not enabled")
         || err.contains("feature disabled")

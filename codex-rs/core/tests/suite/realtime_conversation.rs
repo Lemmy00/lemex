@@ -15,7 +15,7 @@ use codex_history::InitialHistory;
 use codex_history::ResponseItemEnvelope;
 use codex_history::RolloutItem;
 use codex_login::CodexAuth;
-use codex_login::OPENAI_API_KEY_ENV_VAR;
+use codex_login::LEMEX_API_KEY_ENV_VAR;
 use codex_protocol::ThreadId;
 use codex_protocol::mcp::ClientMcpExtensions;
 use codex_protocol::models::ContentItem;
@@ -221,10 +221,10 @@ fn run_realtime_conversation_test_in_subprocess(
     }
     match openai_api_key {
         Some(openai_api_key) => {
-            command.env(OPENAI_API_KEY_ENV_VAR, openai_api_key);
+            command.env(LEMEX_API_KEY_ENV_VAR, openai_api_key);
         }
         None => {
-            command.env_remove(OPENAI_API_KEY_ENV_VAR);
+            command.env_remove(LEMEX_API_KEY_ENV_VAR);
         }
     }
     let output = command.output()?;

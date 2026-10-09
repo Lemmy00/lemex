@@ -3029,7 +3029,7 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
         overlay.set_highlight_cell(Some(0));
         let partial = render_overlay(overlay);
         assert!(partial.contains("Earlier messages available."));
-        assert!(!partial.contains("OpenAI Codex"));
+        assert!(!partial.contains("Lemex"));
         assert!(!partial.contains("This is a test announcement"));
         assert!(!partial.contains('%'));
 
@@ -3039,7 +3039,7 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
         )?;
         let loading = render_overlay(overlay);
         assert!(loading.contains("Loading earlier messages…"));
-        assert!(!loading.contains("OpenAI Codex"));
+        assert!(!loading.contains("Lemex"));
         assert!(!loading.contains('%'));
     } else {
         panic!("expected transcript overlay");
@@ -4122,17 +4122,17 @@ async fn changing_directory_preserves_project_trust_permissions_history_and_hook
         names.map(|name| codex_home.path().join(name));
     fs::create_dir_all(&current)?;
     for directory in [&trusted, &unknown, &untrusted, &mismatch, &failed] {
-        fs::create_dir_all(directory.join(".codex"))?;
-        fs::write(directory.join(".codex/config.toml"), "")?;
+        fs::create_dir_all(directory.join(".lemex"))?;
+        fs::write(directory.join(".lemex/config.toml"), "")?;
     }
     let contents = "developer_instructions = \"destination policy\"\nmodel_reasoning_effort = \"high\"\napproval_policy = \"on-request\"\n[tui]\ntheme = \"dracula\"\n[tui.keymap.global]\nopen_transcript = \"f12\"";
-    fs::write(trusted.join(".codex/config.toml"), contents)?;
+    fs::write(trusted.join(".lemex/config.toml"), contents)?;
     let agents = trusted.join("AGENTS.md");
     fs::write(&agents, "Follow destination project instructions.")?;
     let hooks = r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}}"#;
-    fs::write(trusted.join(".codex/hooks.json"), hooks)?;
+    fs::write(trusted.join(".lemex/hooks.json"), hooks)?;
     let contents = "default_permissions = \"dev\"\n[permissions.dev.filesystem]\n\":root\" = \"write\"\n[tui.keymap.global]\nopen_transcript = \"ctrl-l\"";
-    fs::write(mismatch.join(".codex/config.toml"), contents)?;
+    fs::write(mismatch.join(".lemex/config.toml"), contents)?;
     let requirements = codex_home.path().join("requirements.toml");
     let rules = "allowed_approval_policies=[\"untrusted\"]\nallowed_sandbox_modes=[\"read-only\"]";
     fs::write(&requirements, rules)?;

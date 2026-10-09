@@ -79,7 +79,7 @@ pub(super) fn render_human_report(report: &DoctorReport, options: HumanOutputOpt
     let _ = writeln!(
         out,
         "{} {}",
-        bold("Codex Doctor", options),
+        bold("Lemex Doctor", options),
         dim(&header_suffix(report), options)
     );
     out.push('\n');
@@ -464,7 +464,7 @@ fn write_footer(out: &mut String, options: HumanOutputOptions) {
             out,
             "{}",
             dim(
-                "Run codex doctor without --summary for detailed diagnostics.",
+                "Run lemex doctor without --summary for detailed diagnostics.",
                 options
             )
         );
@@ -1307,8 +1307,8 @@ mod tests {
                 CheckStatus::Fail,
                 "token expired",
             )
-            .detail("OPENAI_API_KEY: present")
-            .remediation("Run `codex login`."),
+            .detail("LEMEX_API_KEY: present")
+            .remediation("Run `lemex login`."),
             DoctorCheck::new(
                 "updates.status",
                 "updates",
@@ -1354,11 +1354,11 @@ mod tests {
         let rendered = render_human_report(&sample_report(), detailed_no_color_unicode_options());
         let expected = format!(
             "\
-Codex Doctor v0.0.0
+Lemex Doctor v0.0.0
 
 Notes
    ⚠ terminal     narrow terminal
-   ✗ auth         token expired - Run `codex login`.
+   ✗ auth         token expired - Run `lemex login`.
 ─────────────────────────────────────────────────────────────
 
 Environment
@@ -1387,8 +1387,8 @@ Environment
   ✓ state        state paths inspectable
 
 Configuration
-  ✗ auth         token expired — Run `codex login`.
-      OPENAI_API_KEY           present
+  ✗ auth         token expired — Run `lemex login`.
+      LEMEX_API_KEY            present
 
 Updates
   ✓ updates      update configuration is locally consistent
@@ -1444,7 +1444,7 @@ Background Server
             .iter_mut()
             .find(|detail| detail.starts_with("exclusion targets: "))
             .expect("endpoint security check should include exclusion targets");
-        *targets = "exclusion targets: verified Codex app and required helpers".into();
+        *targets = "exclusion targets: verified Lemex app and required helpers".into();
         report.checks.push(security);
         report.checks.extend([
             DoctorCheck::new(
@@ -1489,11 +1489,11 @@ Background Server
         let rendered = render_human_report(&sample_report(), summary_no_color_unicode_options());
         let expected = format!(
             "\
-Codex Doctor v0.0.0
+Lemex Doctor v0.0.0
 
 Notes
    ⚠ terminal     narrow terminal
-   ✗ auth         token expired - Run `codex login`.
+   ✗ auth         token expired - Run `lemex login`.
 ─────────────────────────────────────────────────────────────
 
 Environment
@@ -1507,7 +1507,7 @@ Environment
   ✓ state        state paths inspectable
 
 Configuration
-  ✗ auth         token expired — Run `codex login`.
+  ✗ auth         token expired — Run `lemex login`.
 
 Updates
   ✓ updates      update configuration is locally consistent
@@ -1523,7 +1523,7 @@ Background Server
 {}
 12 ok · 2 notes · 1 warn · 1 fail failed
 
-Run codex doctor without --summary for detailed diagnostics.
+Run lemex doctor without --summary for detailed diagnostics.
 --all expand truncated lists       --json redacted report
 ",
             "─".repeat(SEPARATOR_WIDTH)
@@ -1597,11 +1597,11 @@ Run codex doctor without --summary for detailed diagnostics.
         );
         let expected = format!(
             "\
-Codex Doctor v0.0.0
+Lemex Doctor v0.0.0
 
 Notes
    [!!] terminal     narrow terminal
-   [XX] auth         token expired - Run `codex login`.
+   [XX] auth         token expired - Run `lemex login`.
 -------------------------------------------------------------
 
 Environment
@@ -1615,7 +1615,7 @@ Environment
   [ok] state        state paths inspectable
 
 Configuration
-  [XX] auth         token expired - Run `codex login`.
+  [XX] auth         token expired - Run `lemex login`.
 
 Updates
   [ok] updates      update configuration is locally consistent
@@ -1631,7 +1631,7 @@ Background Server
 {}
 12 ok | 2 notes | 1 warn | 1 fail failed
 
-Run codex doctor without --summary for detailed diagnostics.
+Run lemex doctor without --summary for detailed diagnostics.
 --all expand truncated lists       --json redacted report
 ",
             "-".repeat(SEPARATOR_WIDTH)
@@ -1650,7 +1650,7 @@ Run codex doctor without --summary for detailed diagnostics.
                 color_enabled: false,
             },
         );
-        assert!(rendered.contains("      OPENAI_API_KEY           present"));
+        assert!(rendered.contains("      LEMEX_API_KEY            present"));
     }
 
     #[test]
@@ -1871,8 +1871,8 @@ Run codex doctor without --summary for detailed diagnostics.
     #[test]
     fn redact_detail_preserves_env_var_names() {
         assert_eq!(
-            redact_detail("auth env vars present: OPENAI_API_KEY, CODEX_API_KEY"),
-            "auth env vars present: OPENAI_API_KEY, CODEX_API_KEY"
+            redact_detail("auth env vars present: LEMEX_API_KEY, LEMEX_API_KEY"),
+            "auth env vars present: LEMEX_API_KEY, LEMEX_API_KEY"
         );
     }
 

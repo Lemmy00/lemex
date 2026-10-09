@@ -252,7 +252,7 @@ async fn consume_timeout_releases_account_auth_queue() -> Result<()> {
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[
-            ("OPENAI_API_KEY", None),
+            ("LEMEX_API_KEY", None),
             (RATE_LIMIT_RESET_REQUEST_TIMEOUT_ENV_VAR, Some("100")),
         ])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
@@ -301,7 +301,7 @@ async fn initialized_app_server(codex_home: &Path) -> Result<TestAppServer> {
     TestAppServer::builder()
         .with_codex_home(codex_home)
         .without_auto_env()
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
         .await
 }

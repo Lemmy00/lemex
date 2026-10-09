@@ -155,7 +155,7 @@ async fn experimental_feature_list_resolves_thread_project_config() -> Result<()
         .write(codex_home.path())?;
     #[cfg(unix)]
     let config_toml = std::fs::read(codex_home.path().join("config.toml"))?;
-    let project_config_dir = workspace.path().join(".codex");
+    let project_config_dir = workspace.path().join(".lemex");
     std::fs::create_dir_all(&project_config_dir)?;
     std::fs::write(
         project_config_dir.join("config.toml"),

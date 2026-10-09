@@ -22,7 +22,7 @@ struct Cli {
     #[arg(
         long,
         value_name = "URL",
-        default_value = codex_code_mode_host::DEFAULT_LISTEN_URL
+        default_value = lemex_code_mode_host::DEFAULT_LISTEN_URL
     )]
     listen: String,
 
@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .in_scope(|| {});
 
-    let main_transport = codex_code_mode_host::run_main(&cli.listen);
+    let main_transport = lemex_code_mode_host::run_main(&cli.listen);
     let result = match trace_transport.as_mut() {
         Some(trace_transport) => tokio::select! {
             result = main_transport => result,

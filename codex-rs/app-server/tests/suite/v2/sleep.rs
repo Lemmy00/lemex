@@ -77,7 +77,7 @@ async fn clock_tools_emit_control_tool_analytics() -> Result<()> {
     mount_analytics_capture(&server, codex_home.path()).await?;
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
-        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .with_env_overrides(&[("LEMEX_API_KEY", None)])
         .without_managed_config()
         .build_initialized()
         .await?;

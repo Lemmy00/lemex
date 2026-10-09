@@ -339,7 +339,7 @@ async fn missing_process_host_falls_back_to_direct_tools_and_warns_once() -> Res
     let server = responses::start_mock_server().await;
     let mut builder = test_codex()
         .with_model("test-gpt-5.1-codex")
-        .with_code_mode_host_program("codex-code-mode-host-does-not-exist".into())
+        .with_code_mode_host_program("lemex-code-mode-host-does-not-exist".into())
         .with_config(|config| {
             config
                 .features
@@ -358,7 +358,7 @@ async fn missing_process_host_falls_back_to_direct_tools_and_warns_once() -> Res
     assert!(
         first_warnings.iter().any(|warning| {
             warning.contains("Code Mode is unavailable")
-                && warning.contains("codex-code-mode-host-does-not-exist")
+                && warning.contains("lemex-code-mode-host-does-not-exist")
         }),
         "missing host should produce an actionable warning: {first_warnings:?}"
     );
@@ -381,7 +381,7 @@ async fn missing_process_host_keeps_code_mode_only_and_fails_closed() -> Result<
     let server = responses::start_mock_server().await;
     let builder = test_codex()
         .with_model("test-gpt-5.1-codex")
-        .with_code_mode_host_program("codex-code-mode-host-does-not-exist".into())
+        .with_code_mode_host_program("lemex-code-mode-host-does-not-exist".into())
         .with_config(|config| {
             config
                 .features
@@ -409,7 +409,7 @@ async fn missing_process_host_keeps_code_mode_only_and_fails_closed() -> Result<
     );
     let (output, _) = custom_tool_output_body_and_success(&request, "call-1");
     assert!(
-        output.contains("codex-code-mode-host-does-not-exist"),
+        output.contains("lemex-code-mode-host-does-not-exist"),
         "code-mode-only must report the host failure: {output}"
     );
 
@@ -423,7 +423,7 @@ async fn missing_process_host_fails_closed_when_direct_fallback_is_disabled() ->
     let server = responses::start_mock_server().await;
     let builder = test_codex()
         .with_model("test-gpt-5.1-codex")
-        .with_code_mode_host_program("codex-code-mode-host-does-not-exist".into())
+        .with_code_mode_host_program("lemex-code-mode-host-does-not-exist".into())
         .with_config(|config| {
             config
                 .features
@@ -446,7 +446,7 @@ async fn missing_process_host_fails_closed_when_direct_fallback_is_disabled() ->
     );
     let (output, _) = custom_tool_output_body_and_success(&request, "call-1");
     assert!(
-        output.contains("codex-code-mode-host-does-not-exist"),
+        output.contains("lemex-code-mode-host-does-not-exist"),
         "disabled fallback must report the host failure: {output}"
     );
 
@@ -7008,7 +7008,7 @@ async fn code_mode_node_repl_screenshots_can_be_captured_without_guardian_transc
     let test = builder.build_with_auto_env(&server).await?;
     core_test_support::wait_for_mcp_server(&test.codex, repl_server).await?;
     let evidence = test
-        .codex
+        .lemex
         .thread_extension_data()
         .get_or_init(NodeReplReviewEvidence::default);
     evidence.enable_image_capture();

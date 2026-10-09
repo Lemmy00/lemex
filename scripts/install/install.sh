@@ -2,24 +2,24 @@
 
 set -eu
 
-RELEASE="${CODEX_RELEASE:-latest}"
-NON_INTERACTIVE="${CODEX_NON_INTERACTIVE:-false}"
+RELEASE="${LEMEX_RELEASE:-latest}"
+NON_INTERACTIVE="${LEMEX_NON_INTERACTIVE:-false}"
 DAEMON_ONLY="${CODEX_INSTALL_DAEMON_ONLY:-0}"
-DEFAULT_PREFER_RELEASES_OPENAI_COM="true"
-PREFER_RELEASES_OPENAI_COM="${CODEX_INSTALLER_USE_RELEASES_OPENAI_COM:-$DEFAULT_PREFER_RELEASES_OPENAI_COM}"
-RELEASES_BASE_URL="https://releases.openai.com/codex"
+DEFAULT_PREFER_RELEASES_OPENAI_COM="false"
+PREFER_RELEASES_OPENAI_COM="${LEMEX_INSTALLER_USE_RELEASES_OPENAI_COM:-$DEFAULT_PREFER_RELEASES_OPENAI_COM}"
+RELEASES_BASE_URL="${LEMEX_RELEASES_BASE_URL:-https://github.com/Lemmy00/lemex/releases/download}"
 RELEASES_CONNECT_TIMEOUT=10
 RELEASES_METADATA_TIMEOUT=30
 RELEASES_ASSET_TIMEOUT=300
 release_source="github"
 
-BIN_DIR="${CODEX_INSTALL_DIR:-$HOME/.local/bin}"
-BIN_PATH="$BIN_DIR/codex"
-CODE_MODE_HOST_BIN_PATH="$BIN_DIR/codex-code-mode-host"
-CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
-STANDALONE_ROOT="$CODEX_HOME_DIR/packages/standalone"
+BIN_DIR="${LEMEX_INSTALL_DIR:-$HOME/.local/bin}"
+BIN_PATH="$BIN_DIR/lemex"
+CODE_MODE_HOST_BIN_PATH="$BIN_DIR/lemex-code-mode-host"
+LEMEX_HOME_DIR="${LEMEX_HOME:-$HOME/.lemex}"
+STANDALONE_ROOT="$LEMEX_HOME_DIR/packages/standalone"
 if [ "$DAEMON_ONLY" = "1" ]; then
-  STANDALONE_ROOT="$CODEX_HOME_DIR/packages/app-server-daemon"
+  STANDALONE_ROOT="$LEMEX_HOME_DIR/packages/app-server-daemon"
 fi
 RELEASES_DIR="$STANDALONE_ROOT/releases"
 CURRENT_LINK="$STANDALONE_ROOT/current"
@@ -75,7 +75,7 @@ validate_version() {
   fi
 
   if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-alpha(\.[0-9]+){0,2}|-beta(\.[0-9]+)?)?$'; then
-    echo "Invalid Codex release version: $version. Expected latest or x.y.z[-alpha[.N[.M]]|-beta[.N]]." >&2
+    echo "Invalid Lemex release version: $version. Expected latest or x.y.z[-alpha[.N[.M]]|-beta[.N]]." >&2
     return 1
   fi
 }
@@ -96,9 +96,9 @@ parse_args() {
 Usage: install.sh [--release VERSION]
 
 Environment:
-  CODEX_RELEASE          Version to install; overridden by --release.
-  CODEX_NON_INTERACTIVE  Set to 1, true, or yes to skip prompts.
-  CODEX_INSTALLER_USE_RELEASES_OPENAI_COM
+  LEMEX_RELEASE          Version to install; overridden by --release.
+  LEMEX_NON_INTERACTIVE  Set to 1, true, or yes to skip prompts.
+  LEMEX_INSTALLER_USE_RELEASES_OPENAI_COM
                          Set to 0, false, or no to use GitHub Releases.
 EOF
         exit 0
@@ -319,7 +319,7 @@ release_url_for_asset() {
   asset="$1"
   resolved_version="$2"
 
-  printf 'https://github.com/openai/codex/releases/download/rust-v%s/%s\n' "$resolved_version" "$asset"
+  printf 'https://github.com/Lemmy00/lemex/releases/download/rust-v%s/%s\n' "$resolved_version" "$asset"
 }
 
 releases_url_for_asset() {
@@ -332,7 +332,7 @@ releases_url_for_asset() {
 release_metadata_url() {
   resolved_version="$1"
 
-  printf 'https://api.github.com/repos/openai/codex/releases/tags/rust-v%s\n' "$resolved_version"
+  printf 'https://api.github.com/repos/Lemmy00/lemex/releases/tags/rust-v%s\n' "$resolved_version"
 }
 
 parse_downloaded_release_metadata() {
@@ -361,7 +361,7 @@ resolve_release_from_github() {
   normalized_version="$1"
   if [ "$normalized_version" = "latest" ]; then
     requested_release="latest"
-    metadata_url="https://api.github.com/repos/openai/codex/releases/latest"
+    metadata_url="https://api.github.com/repos/Lemmy00/lemex/releases/latest"
   else
     resolved_version="$normalized_version"
     requested_release="$resolved_version"
@@ -754,7 +754,7 @@ cleanup_stale_install_artifacts() {
   find "$STANDALONE_ROOT" -mindepth 1 -maxdepth 1 -name '.current.*' -exec rm -f {} +
 
   if [ "$DAEMON_ONLY" != "1" ] && [ -d "$BIN_DIR" ]; then
-    find "$BIN_DIR" -mindepth 1 -maxdepth 1 -name '.codex.*' -exec rm -f {} +
+    find "$BIN_DIR" -mindepth 1 -maxdepth 1 -name '.lemex.*' -exec rm -f {} +
   fi
 }
 
@@ -789,13 +789,13 @@ version_from_binary() {
 }
 
 current_installed_version() {
-  version="$(version_from_binary "$CURRENT_LINK/bin/codex" || true)"
+  version="$(version_from_binary "$CURRENT_LINK/bin/lemex" || true)"
   if [ -n "$version" ]; then
     printf '%s\n' "$version"
     return 0
   fi
 
-  version="$(version_from_binary "$CURRENT_LINK/codex" || true)"
+  version="$(version_from_binary "$CURRENT_LINK/lemex" || true)"
   if [ -n "$version" ]; then
     printf '%s\n' "$version"
     return 0
@@ -804,11 +804,11 @@ current_installed_version() {
   return 0
 }
 
-resolve_existing_codex() {
-  command -v codex 2>/dev/null || true
+resolve_existing_lemex() {
+  command -v lemex 2>/dev/null || true
 }
 
-classify_existing_codex() {
+classify_existing_lemex() {
   existing_path="$1"
 
   if [ -z "$existing_path" ] || [ "$existing_path" = "$BIN_PATH" ]; then
@@ -876,27 +876,27 @@ print_launch_instructions() {
   case "$path_action" in
     added)
       step "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && codex"
-      step "Future terminals: open a new terminal and run: codex"
+      step "Future terminals: open a new terminal and run: lemex"
       step "PATH was added to $path_profile"
       ;;
     updated)
       step "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && codex"
-      step "Future terminals: open a new terminal and run: codex"
+      step "Future terminals: open a new terminal and run: lemex"
       step "PATH was updated in $path_profile"
       ;;
     configured)
       step "Current terminal: export PATH=\"$BIN_DIR:\$PATH\" && codex"
-      step "Future terminals: open a new terminal and run: codex"
+      step "Future terminals: open a new terminal and run: lemex"
       step "PATH is already configured in $path_profile"
       ;;
     *)
       step "Current terminal: codex"
-      step "Future terminals: open a new terminal and run: codex"
+      step "Future terminals: open a new terminal and run: lemex"
       ;;
   esac
 }
 
-maybe_launch_codex_now() {
+maybe_launch_lemex_now() {
   if prompt_yes_no "Start Codex now?"; then
     step "Launching Codex"
     "$BIN_PATH"
@@ -904,8 +904,8 @@ maybe_launch_codex_now() {
 }
 
 detect_conflicting_install() {
-  existing_path="$(resolve_existing_codex)"
-  manager="$(classify_existing_codex "$existing_path" || true)"
+  existing_path="$(resolve_existing_lemex)"
+  manager="$(classify_existing_lemex "$existing_path" || true)"
 
   if [ -z "$manager" ]; then
     return
@@ -924,13 +924,13 @@ handle_conflicting_install() {
 
   case "$conflict_manager" in
     brew)
-      uninstall_cmd="brew uninstall --cask codex"
+      uninstall_cmd="brew uninstall --cask lemex"
       ;;
     bun)
-      uninstall_cmd="bun remove -g @openai/codex"
+      uninstall_cmd="bun remove -g lemex"
       ;;
     *)
-      uninstall_cmd="npm uninstall -g @openai/codex"
+      uninstall_cmd="npm uninstall -g lemex"
       ;;
   esac
 
@@ -954,13 +954,13 @@ install_package_release() {
   mkdir -p "$stage_release"
   tar -xzf "$archive_path" -C "$stage_release"
   chmod 0755 \
-    "$stage_release/bin/codex" \
-    "$stage_release/bin/codex-code-mode-host" \
+    "$stage_release/bin/lemex" \
+    "$stage_release/bin/lemex-code-mode-host" \
     "$stage_release/codex-path/rg"
   if [ -f "$stage_release/codex-resources/bwrap" ]; then
     chmod 0755 "$stage_release/codex-resources/bwrap"
   fi
-  ln -sf "bin/codex" "$stage_release/codex"
+  ln -sf "bin/lemex" "$stage_release/lemex"
 
   if [ -e "$release_dir" ] || [ -L "$release_dir" ]; then
     rm -rf "$release_dir"
@@ -981,9 +981,9 @@ install_legacy_platform_npm_release() {
   mkdir -p "$stage_release/codex-resources" "$extract_dir"
   tar -xzf "$archive_path" -C "$extract_dir"
 
-  cp "$vendor_root/codex/codex" "$stage_release/codex"
+  cp "$vendor_root/lemex/lemex" "$stage_release/lemex"
   cp "$vendor_root/path/rg" "$stage_release/codex-resources/rg"
-  chmod 0755 "$stage_release/codex" "$stage_release/codex-resources/rg"
+  chmod 0755 "$stage_release/lemex" "$stage_release/codex-resources/rg"
   if [ -f "$vendor_root/codex-resources/bwrap" ]; then
     cp "$vendor_root/codex-resources/bwrap" "$stage_release/codex-resources/bwrap"
     chmod 0755 "$stage_release/codex-resources/bwrap"
@@ -1008,14 +1008,14 @@ release_dir_is_complete() {
   case "$layout" in
     package)
       [ -f "$release_dir/codex-package.json" ] &&
-        [ -x "$release_dir/bin/codex" ] &&
-        [ -x "$release_dir/bin/codex-code-mode-host" ] &&
-        [ -x "$release_dir/codex" ] &&
+        [ -x "$release_dir/bin/lemex" ] &&
+        [ -x "$release_dir/bin/lemex-code-mode-host" ] &&
+        [ -x "$release_dir/lemex" ] &&
         [ -x "$release_dir/codex-path/rg" ] ||
         return 1
       ;;
     legacy-platform-npm)
-      [ -x "$release_dir/codex" ] &&
+      [ -x "$release_dir/lemex" ] &&
         [ -x "$release_dir/codex-resources/rg" ] ||
         return 1
       ;;
@@ -1030,7 +1030,7 @@ release_dir_is_complete() {
       ;;
   esac
 
-  installed_version="$(version_from_binary "$release_dir/bin/codex" || version_from_binary "$release_dir/codex" || true)"
+  installed_version="$(version_from_binary "$release_dir/bin/lemex" || version_from_binary "$release_dir/lemex" || true)"
   [ "$installed_version" = "$expected_version" ]
 }
 
@@ -1044,28 +1044,28 @@ update_current_link() {
 release_codex_relative_path() {
   release_dir="$1"
 
-  if [ -x "$release_dir/bin/codex" ]; then
-    printf 'bin/codex\n'
+  if [ -x "$release_dir/bin/lemex" ]; then
+    printf 'bin/lemex\n'
   else
-    printf 'codex\n'
+    printf 'lemex\n'
   fi
 }
 
 update_visible_command() {
   release_dir="$1"
   mkdir -p "$BIN_DIR"
-  tmp_link="$BIN_DIR/.codex.$$"
+  tmp_link="$BIN_DIR/.lemex.$$"
   codex_relative_path="$(release_codex_relative_path "$release_dir")"
 
   replace_path_with_symlink "$BIN_PATH" "$CURRENT_LINK/$codex_relative_path" "$tmp_link"
 
-  if [ "$os" = "darwin" ] && [ -x "$release_dir/bin/codex-code-mode-host" ]; then
+  if [ "$os" = "darwin" ] && [ -x "$release_dir/bin/lemex-code-mode-host" ]; then
     replace_path_with_symlink \
       "$CODE_MODE_HOST_BIN_PATH" \
-      "$CURRENT_LINK/bin/codex-code-mode-host" \
+      "$CURRENT_LINK/bin/lemex-code-mode-host" \
       "$tmp_link"
   elif [ "$(readlink "$CODE_MODE_HOST_BIN_PATH" 2>/dev/null || true)" = \
-    "$CURRENT_LINK/bin/codex-code-mode-host" ]; then
+    "$CURRENT_LINK/bin/lemex-code-mode-host" ]; then
     rm -f "$CODE_MODE_HOST_BIN_PATH"
   fi
 }
@@ -1172,9 +1172,9 @@ if [ "${CODEX_INSTALL_DEFER_SELECTION:-0}" = "1" ] &&
   echo "A dedicated daemon is already selected; retry the update." >&2
   exit 1
 fi
-updater_record="$CODEX_HOME_DIR/app-server-daemon/app-server-updater.pid"
+updater_record="$LEMEX_HOME_DIR/app-server-daemon/app-server-updater.pid"
 if [ "$DAEMON_ONLY" = "1" ]; then
-  updater_record="$CODEX_HOME_DIR/app-server-daemon/daemon-updater.pid"
+  updater_record="$LEMEX_HOME_DIR/app-server-daemon/daemon-updater.pid"
 fi
 old_updater_parent="false"
 if [ "${CODEX_INSTALL_IF_LATEST:-}" != "1" ] && [ "${CODEX_INSTALL_IF_CURRENT:-}" != "1" ] && [ -f "$updater_record" ]; then
@@ -1259,9 +1259,9 @@ if ! release_dir_is_complete "$release_dir" "$resolved_version" "$vendor_target"
   exit 1
 fi
 if [ "$DAEMON_ONLY" = "1" ] && [ "${CODEX_INSTALL_DEFER_SELECTION:-0}" != "1" ]; then
-  installed_codex="$release_dir/codex"
+  installed_codex="$release_dir/lemex"
   if [ "$install_layout" = "package" ]; then
-    installed_codex="$release_dir/bin/codex"
+    installed_codex="$release_dir/bin/lemex"
   fi
   if ! "$installed_codex" app-server daemon pid-update-loop --check-package-ownership >/dev/null 2>&1; then
     echo "The production release does not support daemon-owned packages; the current selection was left unchanged." >&2
@@ -1302,4 +1302,4 @@ case "$path_action" in
 esac
 
 printf 'Codex CLI %s installed successfully.\n' "$resolved_version"
-maybe_launch_codex_now
+maybe_launch_lemex_now

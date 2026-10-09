@@ -941,7 +941,7 @@ async fn shell_snapshot_v2_preserves_legacy_snapshots_for_user_shell() -> Result
     let harness = TestCodexHarness::with_auto_env_builder(builder).await?;
     let snapshot_path = wait_for_snapshot(harness.test().home.path()).await?;
     assert_posix_snapshot_sections(&fs::read_to_string(snapshot_path).await?);
-    let codex = &harness.test().codex;
+    let codex = &harness.test().lemex;
     codex
         .submit(Op::RunUserShellCommand {
             command: "printf legacy".to_string(),
@@ -1144,7 +1144,7 @@ async fn shell_snapshot_deleted_after_shutdown_with_skills() -> Result<()> {
     let harness = TestCodexHarness::with_builder(builder).await?;
     let home = harness.test().home.clone();
     let codex_home = home.path().to_path_buf();
-    let codex = harness.test().codex.clone();
+    let codex = harness.test().lemex.clone();
 
     let snapshot_path = wait_for_snapshot(&codex_home).await?;
     assert!(snapshot_path.exists());

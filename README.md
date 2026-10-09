@@ -1,81 +1,105 @@
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
-<p align="center">
-  <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-</p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you want the desktop app experience, run <code>codex app</code> or visit <a href="https://chatgpt.com/codex?app-landing-page=true">the Codex App page</a>.
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
+# Lemex CLI
 
----
+Lemex CLI is a fork of the OpenAI Codex coding agent that runs locally on your computer. It is intentionally separated from the official `codex` CLI so you can run both side-by-side without sharing configuration, API keys, or login state.
 
 ## Quickstart
 
-### Installing and running Codex CLI
+### Installing and running Lemex CLI
 
-Run the following on Mac or Linux to install Codex CLI:
-
-```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
-```
-
-Run the following on Windows to install Codex CLI:
+#### Option 1: Install from npm (once published)
 
 ```shell
-powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+npm install -g lemex
 ```
 
-The standalone installers download from `https://releases.openai.com/codex` by default and fall back to GitHub Releases if a metadata or asset download is unavailable. To force GitHub Releases, set `CODEX_INSTALLER_USE_RELEASES_OPENAI_COM` to `false` (`0` and `no` are also accepted):
+> **Note:** `lemex` is not yet published to npm. Until the first release is published, install from source using Option 2 below.
+
+#### Option 2: Install from source using the convenience script
 
 ```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false sh
+git clone https://github.com/Lemmy00/lemex.git
+cd lemex
+./scripts/install/install_from_source.sh
 ```
 
-```powershell
-$env:CODEX_INSTALLER_USE_RELEASES_OPENAI_COM='false'; irm https://chatgpt.com/codex/install.ps1 | iex
+The script checks for Node.js/npm, installs the Rust toolchain if necessary, builds the CLI, installs the `lemex` command globally via npm, and copies a default RCP config (`config/config.toml` and `config/models.json`) into `~/.lemex` if none exists.
+
+To also copy an existing Lemex config from another machine (overriding the default):
+
+```bash
+LEMEX_COPY_CONFIG_FROM=otherhost:/home/you/.lemex ./scripts/install/install_from_source.sh
 ```
 
-Codex CLI can also be installed via the following package managers:
+On Ubuntu, source builds need Python 3, `build-essential`, `pkg-config`, and
+`libssl-dev`, in addition to Node.js/npm and Rust. The installer downloads
+checksum-verified V8 binaries instead of compiling V8 from source.
+
+Then run `lemex` from anywhere.
+
+### Configuration
+
+Lemex reads its own environment variables and config directory, so it will not interfere with an existing Codex installation:
+
+- `LEMEX_API_KEY` — API key for the model provider.
+- `LEMEX_BASE_URL` — Base URL for the model provider (defaults to `https://inference.rcp.epfl.ch/v1`).
+- `LEMEX_ACCESS_TOKEN` — ChatGPT-plan access token, if used.
+- `LEMEX_HOME` — Lemex config/state directory (defaults to `~/.lemex`).
+
+Add the exports to your shell profile (e.g. `~/.zshrc`) so they persist:
 
 ```shell
-# Install using npm
-npm install -g @openai/codex
+export LEMEX_API_KEY="sk-..."
+export LEMEX_BASE_URL="https://inference.rcp.epfl.ch/v1"
 ```
+
+Then reload your profile:
 
 ```shell
-# Install using Homebrew
-brew install --cask codex
+source ~/.zshrc
 ```
 
-Then simply run `codex` to get started.
+When `LEMEX_API_KEY` is set and no `model_provider` is configured, Lemex defaults to the built-in `rcp` provider. Otherwise it falls back to the `openai` provider.
 
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
+### RCP model catalog
 
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
+To use models available from the RCP inference endpoint, put a `models.json` catalog in `~/.lemex` and reference it from `~/.lemex/config.toml`:
 
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
+```toml
+model_provider = "rcp"
+model = "moonshotai/Kimi-K2.7-Code"
+model_catalog_json = "models.json"
 
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
+[model_providers.rcp]
+name = "RCP"
+base_url = "https://inference.rcp.epfl.ch/v1"
+env_key = "LEMEX_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+```
 
-</details>
+Use `lemex exec -m <model-id> ...` to select a different model from the catalog for a single run.
 
-### Using Codex with your ChatGPT plan
+For DeepSeek V4.1 Flash on RCP:
 
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Business, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
+```shell
+lemex -m deepseek-ai/DeepSeek-V4.1-Flash
+```
 
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
+The source installer builds only Lemex and its code-mode helper, strips release
+symbols, and removes its temporary build directory on exit. Set `LEMEX_KEEP_BUILD=1`
+to retain that directory, or set `CARGO_TARGET_DIR` to reuse a build cache that the
+installer will leave in place.
+
+### Health check
+
+```shell
+lemex doctor
+lemex --version
+```
 
 ## Docs
 
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
 - [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
+- [**Contributing**](./docs/contributing.md)
 
 This repository is licensed under the [Apache-2.0 License](LICENSE).

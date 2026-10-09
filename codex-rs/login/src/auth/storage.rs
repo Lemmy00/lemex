@@ -44,13 +44,13 @@ use codex_secrets::SecretsBackendKind;
 use codex_secrets::SecretsManager;
 use once_cell::sync::Lazy;
 
-/// Expected structure for $CODEX_HOME/auth.json.
+/// Expected structure for $LEMEX_HOME/auth.json.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct AuthDotJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<AuthMode>,
 
-    #[serde(rename = "OPENAI_API_KEY")]
+    #[serde(rename = "LEMEX_API_KEY")]
     pub openai_api_key: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -188,7 +188,7 @@ impl FileAuthStorage {
         Self { codex_home }
     }
 
-    /// Attempt to read and parse the `auth.json` file in the given `CODEX_HOME` directory.
+    /// Attempt to read and parse the `auth.json` file in the given `LEMEX_HOME` directory.
     /// Returns the full AuthDotJson structure.
     pub(super) fn try_read_auth_json(&self, auth_file: &Path) -> std::io::Result<AuthDotJson> {
         let mut file = File::open(auth_file)?;
@@ -240,7 +240,7 @@ static CODEX_AUTH_SECRET_NAME: Lazy<SecretName> =
         Ok(name) => name,
         Err(err) => unreachable!("CODEX_AUTH should be a valid secret name: {err}"),
     });
-const KEYRING_SERVICE: &str = "Codex Auth";
+const KEYRING_SERVICE: &str = "Lemex Auth";
 
 // turns codex_home path into a stable, short key string
 fn compute_store_key(codex_home: &Path) -> std::io::Result<String> {

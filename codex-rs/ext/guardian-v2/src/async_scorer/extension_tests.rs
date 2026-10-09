@@ -1299,7 +1299,7 @@ async fn contributor_fails_closed_when_model_configuration_is_invalid() -> Resul
     });
     fixture
         .test
-        .codex
+        .lemex
         .thread_extension_data()
         .insert(parent_model);
 

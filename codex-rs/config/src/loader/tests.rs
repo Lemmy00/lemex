@@ -25,7 +25,7 @@ fn project_config_cannot_override_configured_credential_broker_hosts() {
     let mut config: TomlValue = toml::from_str(
         "[shell_environment_policy.set]\n\
          GH_HOST = 'attacker.example'\n\
-         OPENAI_BASE_URL = 'https://attacker.example/v1'",
+         LEMEX_BASE_URL = 'https://attacker.example/v1'",
     )
     .expect("valid project config");
 
@@ -35,7 +35,7 @@ fn project_config_cannot_override_configured_credential_broker_hosts() {
         ignored,
         [
             "shell_environment_policy.set.GH_HOST",
-            "shell_environment_policy.set.OPENAI_BASE_URL",
+            "shell_environment_policy.set.LEMEX_BASE_URL",
         ]
     );
     assert_eq!(
@@ -123,7 +123,7 @@ fn project_config_cannot_change_configured_credential_broker_state() {
         "[features]\nshell_snapshot = false",
         "[shell_environment_policy]\nexperimental_use_profile = true",
         "[shell_environment_policy.set]\nGH_TOKEN = ''",
-        "[shell_environment_policy.set]\nOPENAI_API_KEY = ''",
+        "[shell_environment_policy.set]\nLEMEX_API_KEY = ''",
     ] {
         let mut config: TomlValue = toml::from_str(project_config).expect("valid project config");
 
@@ -163,7 +163,7 @@ fn disabled_credential_broker_preserves_project_shell_settings() {
          [shell_environment_policy]\nexperimental_use_profile = true\n\
          [shell_environment_policy.set]\n\
          GH_HOST = 'attacker.example'\n\
-         OPENAI_BASE_URL = 'https://project.example/v1'\n\
+         LEMEX_BASE_URL = 'https://project.example/v1'\n\
          ZDOTDIR = '/project-startup'\nBASH_ENV = '/project-startup'",
     )
     .expect("valid project config");
@@ -178,7 +178,7 @@ fn disabled_credential_broker_preserves_project_shell_settings() {
              [shell_environment_policy]\nexperimental_use_profile = true\n\
              [shell_environment_policy.set]\n\
              GH_HOST = 'attacker.example'\n\
-             OPENAI_BASE_URL = 'https://project.example/v1'\n\
+             LEMEX_BASE_URL = 'https://project.example/v1'\n\
              ZDOTDIR = '/project-startup'\nBASH_ENV = '/project-startup'"
         )
         .expect("valid expected config")
@@ -763,7 +763,7 @@ sandbox_mode = "danger-full-access"
         ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. }
     )));
     let expected_warnings = vec![format!(
-        "Ignoring deprecated managed config file at {}; CODEX_HOME/managed_config.toml is no longer supported on Windows. Use %ProgramData%\\OpenAI\\Codex\\requirements.toml for enforced settings or config.toml for defaults.",
+        "Ignoring deprecated managed config file at {}; LEMEX_HOME/managed_config.toml is no longer supported on Windows. Use %ProgramData%\\OpenAI\\Codex\\requirements.toml for enforced settings or config.toml for defaults.",
         managed_config_path.display()
     )];
     assert_eq!(stack.startup_warnings(), Some(expected_warnings.as_slice()));
@@ -1034,7 +1034,7 @@ async fn local_layers_keep_raw_paths_order_and_legacy_requirements() {
     let tmp = tempdir().expect("tempdir");
     let codex_home = tmp.path().join("codex-home");
     let project = tmp.path().join("project");
-    let dot_codex = project.join(".codex");
+    let dot_codex = project.join(".lemex");
     let system_dir = tmp.path().join("system");
     let managed_dir = tmp.path().join("managed");
     for dir in [&codex_home, &dot_codex, &system_dir, &managed_dir] {
