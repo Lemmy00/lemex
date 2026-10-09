@@ -125,8 +125,12 @@ if env:
 PY
     )" || error "Failed to fetch the verified V8 build artifacts."
     if [ -n "$v8_paths" ]; then
-        local v8_artifacts
-        mapfile -t v8_artifacts <<< "$v8_paths"
+        # macOS ships Bash 3.2, which has no mapfile builtin.
+        local v8_artifacts=()
+        local v8_artifact
+        while IFS= read -r v8_artifact; do
+            v8_artifacts+=("$v8_artifact")
+        done <<< "$v8_paths"
         export RUSTY_V8_ARCHIVE="${v8_artifacts[0]}"
         export RUSTY_V8_SRC_BINDING_PATH="${v8_artifacts[1]}"
     fi
@@ -167,12 +171,25 @@ install_npm_package() {
     step "Installing lemex npm package globally"
     cd "$CODEX_CLI_DIR"
 
-    NPM_ARGS=(-g .)
+    # Installing a directory globally makes a symlink to the checkout. Pack it
+    # first so the installed runtime survives moving or deleting that checkout.
+    local package_dir
+    package_dir="$(mktemp -d "${TMPDIR:-/tmp}/lemex-package.XXXXXX")"
+    npm pack --pack-destination "$package_dir" >/dev/null || {
+        rm -rf -- "$package_dir"
+        error "Failed to pack the Lemex runtime."
+    }
+    local packages=("$package_dir"/*.tgz)
+    NPM_ARGS=(-g "${packages[0]}")
     if [ -n "${LEMEX_INSTALL_PREFIX:-}" ]; then
         NPM_ARGS+=(--prefix "$LEMEX_INSTALL_PREFIX")
     fi
 
-    npm install "${NPM_ARGS[@]}"
+    npm install "${NPM_ARGS[@]}" || {
+        rm -rf -- "$package_dir"
+        error "Failed to install the Lemex runtime."
+    }
+    rm -rf -- "$package_dir"
 }
 
 install_default_config() {
@@ -212,12 +229,22 @@ copy_remote_config() {
     # Expected format: host:/path/to/.lemex
     remote_path="${LEMEX_COPY_CONFIG_FROM#*:}"
 
-    scp "$LEMEX_COPY_CONFIG_FROM/config.toml" "$LEMEX_HOME_DIR/config.toml.remote" || error "Failed to copy config.toml"
-    scp "$LEMEX_COPY_CONFIG_FROM/models.json" "$LEMEX_HOME_DIR/models.json" || error "Failed to copy models.json"
-
-    # Rewrite any hard-coded remote home path to the local home path.
-    sed "s|$remote_path|$HOME|g" "$LEMEX_HOME_DIR/config.toml.remote" > "$LEMEX_HOME_DIR/config.toml"
-    rm "$LEMEX_HOME_DIR/config.toml.remote"
+    local import_dir
+    import_dir="$(mktemp -d "$LEMEX_HOME_DIR/import.XXXXXX")"
+    scp "$LEMEX_COPY_CONFIG_FROM/config.toml" "$import_dir/config.toml" || {
+        rm -rf -- "$import_dir"
+        error "Failed to copy config.toml"
+    }
+    scp "$LEMEX_COPY_CONFIG_FROM/models.json" "$import_dir/models.json" || {
+        rm -rf -- "$import_dir"
+        error "Failed to copy models.json"
+    }
+    python3 "$REPO_ROOT/scripts/install/import_remote_config.py" \
+        "$import_dir" "$remote_path" "$LEMEX_HOME_DIR" "$HOME" || {
+        rm -rf -- "$import_dir"
+        error "Failed to validate or import the remote config."
+    }
+    rm -rf -- "$import_dir"
 
     printf "Copied config to %s\n" "$LEMEX_HOME_DIR"
 }
@@ -267,4 +294,6 @@ main() {
     print_next_steps
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

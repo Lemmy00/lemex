@@ -19,24 +19,24 @@ def prepare_package(package: Path, target: str, rg: Path) -> None:
     if "linux" in target and not (package / "codex-resources/bwrap").is_file():
         raise RuntimeError("Missing Linux sandbox helper: codex-resources/bwrap")
 
-    # Keep the public Lemex names while satisfying upstream's internal package
-    # names. Relative links stay inside the package and consume no binary copy.
+    # npm excludes symbolic links and does not reliably extract hard links.
+    # Regular copies retain upstream's internal binary names in npm installs.
     for alias, original in (
         ("codex", "lemex"),
         ("codex-code-mode-host", "lemex-code-mode-host"),
     ):
         destination = binaries / f"{alias}{suffix}"
         source = binaries / f"{original}{suffix}"
-        if destination.is_symlink() and destination.readlink() == Path(source.name):
-            continue
-        if destination.exists() or destination.is_symlink():
-            raise RuntimeError(
-                f"Unexpected existing compatibility entry: {destination}"
-            )
-        if windows:
-            shutil.copy2(source, destination)
-        else:
-            destination.symlink_to(source.name)
+        if destination.is_symlink():
+            if destination.readlink() != Path(source.name):
+                raise RuntimeError(
+                    f"Unexpected existing compatibility entry: {destination}"
+                )
+            destination.unlink()
+        elif destination.exists() and destination.samefile(source):
+            destination.unlink()
+        # Overwrite earlier generated copies when installing an updated build.
+        shutil.copy2(source, destination)
 
     path_dir = package / "codex-path"
     path_dir.mkdir(exist_ok=True)
