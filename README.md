@@ -22,13 +22,30 @@ cd lemex
 ./scripts/install/install_from_source.sh
 ```
 
-The script checks for Node.js/npm, installs the Rust toolchain if necessary, builds the CLI, installs the `lemex` command globally via npm, and copies a default RCP config (`config/config.toml` and `config/models.json`) into `~/.lemex` if none exists.
+The script checks for Node.js/npm, installs the Rust toolchain if necessary, builds the CLI, installs the `lemex` command globally via npm, and copies a default RCP config (`config/config.toml` and `config/models.json`) into `~/.lemex` if none exists. The installed runtime is copied from a package archive, so moving or deleting the source checkout does not break the command.
 
 To also copy an existing Lemex config from another machine (overriding the default):
 
 ```bash
 LEMEX_COPY_CONFIG_FROM=otherhost:/home/you/.lemex ./scripts/install/install_from_source.sh
 ```
+
+For the setup on `larapc2`:
+
+```bash
+LEMEX_COPY_CONFIG_FROM=larapc2:/home/milikic/.lemex ./scripts/install/install_from_source.sh
+```
+
+The import preserves the server's model catalog, relocates absolute config and
+home paths to this machine, and backs up existing settings as `*.bak` (with a
+numeric suffix when needed). It imports configuration and the catalog only;
+configure the API-key environment variable separately. Both downloads and
+catalog validation must succeed before existing settings are replaced.
+
+If an older installation reports `command not found` or `no such file or directory`,
+check `ls -l "$(npm root -g)/lemex"`. A link to a missing checkout, especially
+one under `/tmp` or a macOS temporary directory, requires reinstalling with the
+updated source installer above.
 
 On Ubuntu, source builds need Python 3, `ripgrep`, `build-essential`, `pkg-config`, and
 `libssl-dev`, and on Linux `libcap-dev`, in addition to Node.js/npm and Rust. The installer downloads

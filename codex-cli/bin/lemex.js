@@ -131,7 +131,7 @@ function isPnpmOwnedLemexInstall(nodeModulesDir) {
   try {
     return (
       realpathSync(path.join(nodeModulesDir, "lemex")) ===
-      codexPackageRoot
+      lemexPackageRoot
     );
   } catch {
     return false;
@@ -165,7 +165,7 @@ function isVitePlusOwnedCodexInstall(packagesDir) {
       const packageRoot = path.join(nodeModulesDir, "lemex");
       if (
         existsSync(packageRoot) &&
-        realpathSync(packageRoot) === codexPackageRoot
+        realpathSync(packageRoot) === lemexPackageRoot
       ) {
         return true;
       }
