@@ -1,117 +1,71 @@
-## Installing & building
+# Installation
 
-### System requirements
+## Requirements
 
-| Requirement                 | Details                                                         |
-| --------------------------- | --------------------------------------------------------------- |
-| Operating systems           | macOS 12+, Ubuntu 20.04+/Debian 10+, or Windows 11 **via WSL2** |
-| Git (optional, recommended) | 2.23+ for built-in PR helpers                                   |
-| RAM                         | 4-GB minimum (8-GB recommended)                                 |
+Use macOS, Linux, or Windows through WSL2. Source installation needs:
 
-### From npm
+- Git, curl, Node.js/npm, Python 3.11+, and ripgrep (`rg`).
+- A C/C++ compiler and platform build dependencies.
+- Rust; the installer installs it through rustup if it is missing.
 
-Once `lemex` is published to npm, install it with:
+On macOS, install the Xcode Command Line Tools (`xcode-select --install`). On Debian/Ubuntu, install the build dependencies with:
 
-```bash
-npm install -g lemex
+```sh
+sudo apt install build-essential pkg-config libssl-dev libcap-dev
 ```
 
-> **Note:** `lemex` is not yet published to npm. Build and install from source until the first release is available.
+## Install from source
 
-### DotSlash
-
-Published GitHub Releases contain a [DotSlash](https://dotslash-cli.com/) file for the Lemex CLI named `lemex`. Using a DotSlash file makes it possible to make a lightweight commit to source control to ensure all contributors use the same version of an executable, regardless of what platform they use for development.
-
-### Build from source (convenience script)
-
-Use the provided script to install from source:
-
-```bash
+```sh
 git clone https://github.com/Lemmy00/lemex.git
 cd lemex
 ./scripts/install/install_from_source.sh
 ```
 
-The script checks for Node.js/npm and ripgrep, installs Rust if needed, builds the release runtime and its helpers, installs `lemex` globally via npm, and copies the bundled default RCP config (`config/config.toml` and `config/models.json`) into `~/.lemex` if none exists. The installed npm package contains its own runtime files and survives moving or deleting the checkout.
+The installer builds the CLI and its helpers, downloads verified V8 artifacts, and installs the runtime globally through npm. The installed command keeps working if you move or remove the checkout. Ensure npm's global binary directory is on your `PATH`.
 
-An initial source build still compiles the Rust dependencies and downloads the pinned V8 artifacts. Local release installs disable LTO and use 16 codegen units to reduce build and link time while keeping release optimization. They also omit debug symbols and incremental compilation. These settings can produce larger binaries than the distribution release profile; set `CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=4` to use that profile's link settings instead. Caller-provided Cargo profile settings are preserved. Build concurrency defaults to four jobs; set `CARGO_BUILD_JOBS` to suit the memory and CPU capacity of your machine.
+Missing `config.toml` and `models.json` files are copied from `config/` into `${LEMEX_HOME:-$HOME/.lemex}`. Existing files are left in place. Set `LEMEX_API_KEY` before starting Lemex; see [Configuration](config.md).
 
-By default the script creates a temporary Cargo directory under `${XDG_CACHE_HOME:-$HOME/.cache}/lemex-build.*`, prints its location, and removes it when the installer exits, including after a failed build. This also removes the V8 artifacts downloaded into that directory. Only the packaged runtime remains; Rust's shared registry and toolchain caches are left alone.
+To update a source installation, pull the latest changes and run the installer again.
 
-For repeated installs, choose a reusable build directory to avoid compiling dependencies again:
+## Build options
 
-```bash
-CARGO_TARGET_DIR="$HOME/.cache/lemex-source-build" ./scripts/install/install_from_source.sh
+No build environment variables are required. Common overrides are:
+
+| Variable                  | Purpose                                                                       |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| `LEMEX_BUILD`             | `release` (default) or `debug`.                                               |
+| `LEMEX_INSTALL_PREFIX`    | Override npm's global installation prefix; add its `bin` directory to `PATH`. |
+| `CARGO_BUILD_JOBS`        | Build concurrency; defaults to `4`. Lower it if memory is limited.            |
+| `CARGO_TARGET_DIR`        | Reuse a build directory between installs.                                     |
+| `LEMEX_KEEP_BUILD`        | Set to `1` to retain the generated temporary build directory.                 |
+| `LEMEX_SKIP_RUST_INSTALL` | Set to `1` to require an existing Rust installation.                          |
+
+By default, the temporary build directory is removed when installation finishes or fails. An explicitly supplied `CARGO_TARGET_DIR` is always retained:
+
+```sh
+CARGO_TARGET_DIR="$HOME/.cache/lemex-build" ./scripts/install/install_from_source.sh
 ```
 
-An explicitly supplied `CARGO_TARGET_DIR` is always retained, even on failure. Alternatively, set `LEMEX_KEEP_BUILD=1` to retain the generated temporary directory; the installer prints the path to reuse on your next install. Reusing a build directory saves time at the cost of retaining its build files. Once you no longer need it, that directory can be removed without affecting the installed `lemex` command.
+## Import existing configuration
 
-To copy an existing Lemex config from another machine during install (overriding the default):
+To copy configuration and the model catalog from another machine over SSH:
 
-```bash
-LEMEX_COPY_CONFIG_FROM=otherhost:/home/you/.lemex ./scripts/install/install_from_source.sh
+```sh
+LEMEX_COPY_CONFIG_FROM=host:/home/user/.lemex ./scripts/install/install_from_source.sh
 ```
 
-### Build from source (manual)
+The import validates the catalog, adapts absolute home and configuration paths, and backs up replaced files as `*.bak` (with a numeric suffix if needed). Set the provider's API-key environment variable separately.
 
-```bash
-# Clone the repository and navigate to the root of the Cargo workspace.
-git clone https://github.com/Lemmy00/lemex.git
-cd lemex/codex-rs
+## Verify
 
-# Install the Rust toolchain, if necessary.
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-rustup component add rustfmt
-rustup component add clippy
-# Install helper tools used by the workspace justfile:
-cargo install --locked just
-# DotSlash fetches pinned development tools such as buildifier on first use.
-cargo install --locked dotslash
-# Install nextest for the `just test` helper.
-cargo install --locked cargo-nextest
-
-# Build the Lemex CLI binary. Use `-p codex-cli` to avoid compiling crates
-# (such as the V8 proof-of-concept) that are not required by the CLI.
-cargo build --release -p codex-cli
-
-# Install the CLI globally via npm (optional). This places the `lemex`
-# command on your PATH.
-cp target/release/lemex ../codex-cli/vendor/$(rustc -vV | sed -n 's|host: ||p')/bin/lemex
-cd ../codex-cli
-npm install -g .
-
-# Copy the bundled default RCP config if you do not have one yet.
-mkdir -p "$HOME/.lemex"
-[ -f "$HOME/.lemex/config.toml" ] || cp ../config/config.toml "$HOME/.lemex/config.toml"
-[ -f "$HOME/.lemex/models.json" ] || cp ../config/models.json "$HOME/.lemex/models.json"
-
-# Launch the TUI with a sample prompt.
-cargo run --bin lemex -- "explain this codebase to me"
-
-# After making changes, use the root justfile helpers (they default to codex-rs):
-just fmt
-just fix -p <crate-you-touched>
-
-# Run the relevant tests (project-specific is fastest), for example:
-just test -p codex-tui
-# `just test` runs the test suite via nextest:
-just test
-# Avoid `--all-features` for routine local runs because it increases build
-# time and `target/` disk usage by compiling additional feature combinations.
+```sh
+lemex --version
+lemex doctor
 ```
 
-## Tracing / verbose logging
+To check that your provider responds:
 
-Lemex is written in Rust, so it honors the `RUST_LOG` environment variable to configure its logging behavior.
-
-The TUI records diagnostics in bounded local stores by default. Set `log_dir` explicitly to enable a plaintext TUI log for a run:
-
-```bash
-lemex -c log_dir=./.lemex-log
-tail -F ./.lemex-log/lemex-tui.log
+```sh
+lemex exec --ephemeral "Reply exactly OK"
 ```
-
-The non-interactive mode (`lemex exec`) defaults to `RUST_LOG=error`, but messages are printed inline, so there is no need to monitor a separate file.
-
-See the Rust documentation on [`RUST_LOG`](https://docs.rs/env_logger/latest/env_logger/#enabling-logging) for more information on the configuration options.

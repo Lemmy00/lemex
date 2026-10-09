@@ -1,4 +1,5 @@
 model_provider = "rcp"
+# RCP reads LEMEX_API_KEY; set LEMEX_BASE_URL to use another endpoint.
 model = "moonshotai/Kimi-K2.7-Code"
 model_catalog_json = "models.json"
 # Use a 200k context window and compact at 90% to leave headroom.
@@ -16,15 +17,6 @@ use advanced search for domain or date filters. Cite source URLs in the answer.
 If the web tools fail, report the failure and distinguish unverified knowledge
 from retrieved evidence.
 """
-
-[model_providers.rcp]
-name = "RCP"
-base_url = "https://inference.rcp.epfl.ch/v1"
-env_key = "LEMEX_API_KEY"
-wire_api = "responses"
-requires_openai_auth = false
-supports_websockets = false
-supports_standalone_web_search = false
 
 [mcp_servers.exa]
 url = "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa,web_search_advanced_exa"

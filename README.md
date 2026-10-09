@@ -1,233 +1,49 @@
 # Lemex CLI
 
-Lemex CLI is a fork of the OpenAI Codex coding agent that runs locally on your computer. It is intentionally separated from the official `codex` CLI so you can run both side-by-side without sharing configuration, API keys, or login state.
+Lemex is a local coding agent based on OpenAI Codex. It runs as `lemex` and keeps its configuration and login state in `~/.lemex`, so you can use it alongside Codex.
 
-## Quickstart
+## Install
 
-### Installing and running Lemex CLI
+On macOS, Linux, or Windows through WSL2, install Git, Node.js/npm, Python 3.11+, ripgrep, and the [platform build dependencies](docs/install.md#requirements). Then run:
 
-#### Option 1: Install from npm (once published)
-
-```shell
-npm install -g lemex
-```
-
-> **Note:** `lemex` is not yet published to npm. Until the first release is published, install from source using Option 2 below.
-
-#### Option 2: Install from source using the convenience script
-
-```shell
+```sh
 git clone https://github.com/Lemmy00/lemex.git
 cd lemex
 ./scripts/install/install_from_source.sh
 ```
 
-The script checks for Node.js/npm, installs the Rust toolchain if necessary, builds the CLI, installs the `lemex` command globally via npm, and copies a default RCP config (`config/config.toml` and `config/models.json`) into `~/.lemex` if none exists. The installed runtime is copied from a package archive, so moving or deleting the source checkout does not break the command.
+The installer builds and installs `lemex` globally, installs Rust if needed, and copies the bundled configuration and model catalog into `~/.lemex`. Existing configuration files are preserved.
 
-To also copy an existing Lemex config from another machine (overriding the default):
+## Run
 
-```bash
-LEMEX_COPY_CONFIG_FROM=otherhost:/home/you/.lemex ./scripts/install/install_from_source.sh
+The default configuration uses the RCP inference endpoint. Set its API key:
+
+```sh
+export LEMEX_API_KEY="your-api-key"
+lemex
 ```
 
-For the setup on `larapc2`:
+Add the export to your shell profile (`~/.zshrc` or `~/.bashrc`) to keep it across sessions, then reload the profile or open a new terminal. This is the only environment variable required by the default configuration.
 
-```bash
-LEMEX_COPY_CONFIG_FROM=larapc2:/home/milikic/.lemex ./scripts/install/install_from_source.sh
+For a single task:
+
+```sh
+lemex exec "Explain this codebase"
 ```
 
-The import preserves the server's model catalog, relocates absolute config and
-home paths to this machine, and backs up existing settings as `*.bak` (with a
-numeric suffix when needed). It imports configuration and the catalog only;
-configure the API-key environment variable separately. Both downloads and
-catalog validation must succeed before existing settings are replaced.
+## Customize
 
-The catalog reported on `larapc2` on October 9, 2026 contains:
+Edit `~/.lemex/config.toml` to change the default model, provider, context limits, reasoning display, or MCP servers. The installed `models.json` contains the model catalog; use `/model` in Lemex to choose a model, or `lemex -m "<model-id>"` for one launch.
 
-| Model | Model ID |
-| --- | --- |
-| Kimi K2.7 Code | `moonshotai/Kimi-K2.7-Code` |
-| Qwen 3.5 397B A17B | `Qwen/Qwen3.5-397B-A17B` |
-| GLM 5.3 Flash | `zai-org/GLM-5.3-Flash` |
-| DeepSeek V4.1 Flash | `deepseek-ai/DeepSeek-V4.1-Flash` |
-| Qwen 3.8 Flash Next | `Qwen/Qwen3.8-Flash-Next` |
-| Qwen 3.8 27B | `Qwen/Qwen3.8-27B` |
+Optional environment variables:
 
-Import the server's full catalog to retain its per-model capabilities and
-reasoning settings. These reported IDs identify configured models; verify
-inference after installation with `lemex exec --ephemeral 'Reply exactly OK'`.
+| Variable         | Purpose                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `LEMEX_HOME`     | Configuration and state directory; defaults to `~/.lemex`. Set it before installation to use a different directory. |
+| `LEMEX_BASE_URL` | Override the default RCP endpoint (`https://inference.rcp.epfl.ch/v1`).                                             |
 
-If an older installation reports `command not found` or `no such file or directory`,
-check `ls -l "$(npm root -g)/lemex"`. A link to a missing checkout, especially
-one under `/tmp` or a macOS temporary directory, requires reinstalling with the
-updated source installer above.
+See [Configuration](docs/config.md) for provider setup and catalog customization, and [Installation](docs/install.md) for build options and config import.
 
-On Ubuntu, source builds need Python 3, `ripgrep`, `build-essential`, `pkg-config`, and
-`libssl-dev`, and on Linux `libcap-dev`, in addition to Node.js/npm and Rust. The installer downloads
-checksum-verified V8 binaries instead of compiling V8 from source.
+To check your setup, run `lemex doctor`.
 
-Then run `lemex` from anywhere.
-
-### Configuration
-
-Lemex reads its own environment variables and config directory, so it will not interfere with an existing Codex installation:
-
-- `LEMEX_API_KEY` — API key for the model provider.
-- `LEMEX_BASE_URL` — Base URL for the model provider (defaults to `https://inference.rcp.epfl.ch/v1`).
-- `LEMEX_ACCESS_TOKEN` — ChatGPT-plan access token, if used.
-- `LEMEX_HOME` — Lemex config/state directory (defaults to `~/.lemex`).
-
-Add the exports to your shell profile (e.g. `~/.zshrc`) so they persist:
-
-```shell
-export LEMEX_API_KEY="sk-..."
-export LEMEX_BASE_URL="https://inference.rcp.epfl.ch/v1"
-```
-
-Then reload your profile:
-
-```shell
-source ~/.zshrc
-```
-
-When `LEMEX_API_KEY` is set and no `model_provider` is configured, Lemex defaults to the built-in `rcp` provider. Otherwise it falls back to the `openai` provider.
-
-### RCP model catalog
-
-To use models available from the RCP inference endpoint, put a `models.json` catalog in `~/.lemex` and reference it from `~/.lemex/config.toml`:
-
-```toml
-model_provider = "rcp"
-model = "moonshotai/Kimi-K2.7-Code"
-model_catalog_json = "models.json"
-model_context_window = 200000
-model_auto_compact_token_limit = 180000
-
-[model_providers.rcp]
-name = "RCP"
-base_url = "https://inference.rcp.epfl.ch/v1"
-env_key = "LEMEX_API_KEY"
-wire_api = "responses"
-requires_openai_auth = false
-```
-
-Use `lemex exec -m <model-id> ...` to select a different model from the catalog for a single run.
-
-The bundled RCP catalog and default configuration use a 200,000-token context
-window, with automatic compaction at 180,000 tokens to leave headroom. These are
-client settings; the selected RCP deployment must also support that window.
-For an existing installation, update both `context_window` and
-`max_context_window` in `~/.lemex/models.json` as well as the settings above:
-Lemex clamps `model_context_window` to the catalog's `max_context_window`.
-Restart Lemex after changing the settings.
-
-The RCP catalog includes Kimi K2.7 Code, Qwen 3.5 397B A17B, GLM 5.3 Flash,
-DeepSeek V4.1 Flash, Qwen 3.8 Flash Next, and Qwen 3.8 27B. Leave
-`model_reasoning_effort` unset in your config to use each model's catalog default.
-DeepSeek V4.1 defaults to `high` and accepts `low`, `high`, `xhigh`, and `max`;
-RCP rejects `medium` for that model.
-
-For DeepSeek V4.1 Flash on RCP:
-
-```shell
-lemex -m deepseek-ai/DeepSeek-V4.1-Flash
-```
-
-The catalog also includes Qwen 3.8 Flash Next and Qwen 3.8 27B:
-
-```shell
-lemex -m Qwen/Qwen3.8-Flash-Next -c 'model_reasoning_effort="xhigh"'
-lemex -m Qwen/Qwen3.8-27B -c 'model_reasoning_effort="xhigh"'
-```
-
-These Qwen models default to `medium` and accept `low`, `medium`, and `xhigh` reasoning on RCP;
-`high` is rejected. The explicit override also works when your saved default
-reasoning effort is `high` for a different model.
-
-The source installer builds only Lemex and its required helpers, strips release
-symbols, and removes its temporary build directory on exit. Set `LEMEX_KEEP_BUILD=1`
-to retain that directory, or set `CARGO_TARGET_DIR` to reuse a build cache that the
-installer will leave in place.
-The runtime package also includes ripgrep, package metadata, and compatibility
-names required by the upstream background server, so plain `lemex` can start it.
-
-### Thinking traces
-
-The default RCP config enables full thinking traces returned by the provider:
-
-```toml
-show_raw_agent_reasoning = true
-```
-
-Press **Ctrl+T** to open the expanded transcript and see completed thinking
-blocks. Press **Ctrl+T** again or **q** to return to the compact view.
-While a block is still being generated, the status line shows its latest
-reasoning activity; the full block appears in the transcript when it completes.
-
-To disable raw thinking text, set `show_raw_agent_reasoning = false` in
-`~/.lemex/config.toml`, or override it for one launch:
-
-```shell
-lemex -c show_raw_agent_reasoning=false
-```
-
-### Web search with RCP models
-
-RCP provides model inference but does not provide OpenAI's hosted web-search
-service. Lemex's default RCP config uses the hosted [Exa MCP server](https://exa.ai/docs/get-started/exa-mcp)
-for web search, page fetching, and searches with domain or date filters. This
-works independently of the inference provider and needs no additional API key
-to get started. Keyless use is free and rate limited.
-
-For an existing installation, add the server:
-
-```shell
-lemex mcp add exa --url 'https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa,web_search_advanced_exa'
-```
-
-Add these **top-level** settings in `~/.lemex/config.toml`, before any `[table]`:
-
-```toml
-# Disable the unsupported hosted service. MCP web tools remain available.
-web_search = "disabled"
-developer_instructions = """
-Use the Exa MCP web tools when information may have changed, when a fact is uncertain,
-or when the user asks to search or verify. Search first, then fetch relevant source
-pages before answering. Prefer official documentation for technical questions and
-use advanced search for domain or date filters. Cite source URLs in the answer.
-If the web tools fail, report the failure and distinguish unverified knowledge
-from retrieved evidence.
-"""
-```
-
-If you already have `developer_instructions`, append the web guidance to it.
-Keep `supports_standalone_web_search = false` for RCP: that setting describes
-the provider's search endpoint, not MCP support. If you switch to an OpenAI
-provider, you can enable its native search with `web_search = "live"`.
-
-Start a new Lemex session and use `/mcp` to check that `exa` exposes
-`web_search_exa`, `web_fetch_exa`, and `web_search_advanced_exa`. A configured
-server is not enough to prove retrieval works; verify both search and fetch:
-
-```shell
-lemex exec --ephemeral --json 'Use Exa to search for the official Python tomllib documentation, fetch that page, and report which Python version introduced tomllib. Cite the fetched source. Do not use shell commands or answer from memory.'
-```
-
-Look for completed `mcp_tool_call` events for search and fetch with no error,
-and a final answer grounded in the returned page. If keyless usage hits a rate
-limit, configure your own Exa key or another search MCP server; access to the
-internet alone does not supply a search backend.
-
-### Health check
-
-```shell
-lemex doctor
-lemex --version
-```
-
-## Docs
-
-- [**Installing & building**](./docs/install.md)
-- [**Contributing**](./docs/contributing.md)
-
-This repository is licensed under the [Apache-2.0 License](LICENSE).
+Licensed under [Apache-2.0](LICENSE).

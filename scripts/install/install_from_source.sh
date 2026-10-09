@@ -232,7 +232,7 @@ install_default_config() {
     fi
 
     if [ "$copied_something" = true ]; then
-        printf "Default config uses the RCP provider with moonshotai/Kimi-K2.7-Code.\n"
+        printf "Installed bundled provider settings and model catalog.\n"
     fi
 }
 
@@ -269,36 +269,18 @@ copy_remote_config() {
 
 print_next_steps() {
     step "Next steps"
+    printf 'Configuration: %s/config.toml\nModel catalog: %s/models.json\n' \
+        "$LEMEX_HOME_DIR" "$LEMEX_HOME_DIR"
     cat <<'EOF'
-Lemex is installed and a default RCP config was placed in ~/.lemex.
 
-Before using it, configure your environment:
+With the bundled configuration, set your provider API key and start Lemex:
 
-  export LEMEX_API_KEY="sk-..."
-  export LEMEX_BASE_URL="https://inference.rcp.epfl.ch/v1"  # optional; this is the default
-
-Add the exports to your shell profile (e.g. ~/.zshrc) to make them persistent:
-
-  cat >> ~/.zshrc <<'VARS'
-  export LEMEX_API_KEY="sk-..."
-  export LEMEX_BASE_URL="https://inference.rcp.epfl.ch/v1"
-  VARS
-  source ~/.zshrc
-
-If you already have a Lemex config on another machine, copy it over:
-
-  scp otherhost:/home/you/.lemex/config.toml ~/.lemex/config.toml
-  scp otherhost:/home/you/.lemex/models.json ~/.lemex/models.json
-  sed -i.bak "s|/home/you|$HOME|g" ~/.lemex/config.toml
-
-Run a quick health check:
-
-  lemex doctor
-  lemex --version
-
-Start the TUI:
-
+  export LEMEX_API_KEY="your-api-key"
   lemex
+
+Save the export in your shell profile to keep it across sessions.
+If you kept or imported another configuration, set the key named by its env_key.
+Run 'lemex doctor' to check your setup.
 EOF
 }
 
