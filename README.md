@@ -42,6 +42,21 @@ numeric suffix when needed). It imports configuration and the catalog only;
 configure the API-key environment variable separately. Both downloads and
 catalog validation must succeed before existing settings are replaced.
 
+The catalog reported on `larapc2` on October 9, 2026 contains:
+
+| Model | Model ID |
+| --- | --- |
+| Kimi K2.7 Code | `moonshotai/Kimi-K2.7-Code` |
+| Qwen 3.5 397B A17B | `Qwen/Qwen3.5-397B-A17B` |
+| GLM 5.3 Flash | `zai-org/GLM-5.3-Flash` |
+| DeepSeek V4.1 Flash | `deepseek-ai/DeepSeek-V4.1-Flash` |
+| Qwen 3.8 Flash Next | `Qwen/Qwen3.8-Flash-Next` |
+| Qwen 3.8 27B | `Qwen/Qwen3.8-27B` |
+
+Import the server's full catalog to retain its per-model capabilities and
+reasoning settings. These reported IDs identify configured models; verify
+inference after installation with `lemex exec --ephemeral 'Reply exactly OK'`.
+
 If an older installation reports `command not found` or `no such file or directory`,
 check `ls -l "$(npm root -g)/lemex"`. A link to a missing checkout, especially
 one under `/tmp` or a macOS temporary directory, requires reinstalling with the
