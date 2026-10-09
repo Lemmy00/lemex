@@ -14,6 +14,51 @@ use crate::PINNED_THREAD_SECTION_NAME;
 
 const CUSTOM_THREAD_SECTION_ID: &str = "01984de2-8f74-7c91-a3b2-5c5e937cf317";
 
+#[test]
+fn state_migration_versions_are_unique() {
+    let mut versions = std::collections::HashSet::new();
+    for migration in STATE_MIGRATOR.iter() {
+        assert!(
+            versions.insert(migration.version),
+            "duplicate state migration version: {}",
+            migration.version
+        );
+    }
+}
+
+#[tokio::test]
+async fn thread_read_state_migration_upgrades_guardian_feedback_database() {
+    let mut connection = sqlx::SqliteConnection::connect("sqlite::memory:")
+        .await
+        .expect("connect to SQLite");
+    migrator_through(60)
+        .run(&mut connection)
+        .await
+        .expect("guardian feedback migrations should apply");
+    let before: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('guardian_review_feedback', 'thread_read_receipts') ORDER BY name",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .expect("read existing tables");
+    assert_eq!(before, vec!["guardian_review_feedback"]);
+
+    STATE_MIGRATOR
+        .run(&mut connection)
+        .await
+        .expect("thread read migration should apply after guardian feedback");
+    let after: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('guardian_review_feedback', 'thread_read_receipts') ORDER BY name",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .expect("read upgraded tables");
+    assert_eq!(
+        after,
+        vec!["guardian_review_feedback", "thread_read_receipts"]
+    );
+}
+
 fn migrator_through(version: i64) -> Migrator {
     Migrator {
         migrations: Cow::Owned(
