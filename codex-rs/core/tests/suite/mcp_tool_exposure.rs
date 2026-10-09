@@ -524,7 +524,7 @@ async fn root_reconciliation_reuses_pending_apps_startup() -> Result<()> {
     .expect("initial Apps startup should begin before root reconciliation");
 
     let selection = test
-        .lemex
+        .codex
         .environment_selections()
         .await
         .into_iter()
@@ -911,7 +911,7 @@ startup_timeout_sec = 0.1
     test.codex.submit(Op::RefreshMcpServers).await?;
 
     let _ = test
-        .lemex
+        .codex
         .read_mcp_resource(
             "refreshed",
             ReadResourceRequestParams::new("test://resource"),
@@ -1603,7 +1603,7 @@ async fn later_follow_up_uses_background_recovered_apps_after_mid_thread_startup
         let mut apps_ready = false;
         while !turn_complete || !apps_ready {
             let event = test
-                .lemex
+                .codex
                 .next_event()
                 .await
                 .expect("event stream should stay open");

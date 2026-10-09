@@ -557,7 +557,7 @@ async fn start_turn_if_idle_keeps_automatic_plan_rejections_atomic(
         ..Default::default()
     };
     let submission = test
-        .lemex
+        .codex
         .start_turn_if_idle(
             TurnInputRequest::new(TurnInput::ResponseItem(responses::user_message_item(
                 "rejected automatic input",
@@ -617,7 +617,7 @@ async fn recover_turn_if_idle_preserves_id_and_resumes_plan_mode() {
     let turn_id = "durable-recovered-turn";
 
     let submission = test
-        .lemex
+        .codex
         .recover_turn_if_idle(RecoverTurnRequest {
             turn_id: turn_id.to_string(),
             thread_settings: ThreadSettingsOverrides {

@@ -424,7 +424,7 @@ async fn windows_elevated_temp_only_core_and_direct_spawn_enforce_carveouts() ->
 {
     let _account_guard = WindowsSandboxAccountTestGuard::acquire()?;
     let codex_home = codex_home_for_windows_sandbox_test("windows-temp-only-child-codex-home")?;
-    let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", codex_home.path().as_os_str());
+    let _codex_home_guard = EnvVarGuard::set("LEMEX_HOME", codex_home.path().as_os_str());
     stage_windows_sandbox_helpers()?;
     let fixture = TempDir::new()?;
     let root = dunce::canonicalize(fixture.path())?;

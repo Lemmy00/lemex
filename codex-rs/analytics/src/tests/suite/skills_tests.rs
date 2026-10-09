@@ -26,7 +26,7 @@ fn expected_absolute_path(path: &PathBuf) -> String {
 #[test]
 fn normalize_path_for_skill_id_repo_scoped_uses_relative_path() {
     let repo_root = std::env::temp_dir().join("repo/root");
-    let skill_path = repo_root.join(".codex/skills/doc/SKILL.md");
+    let skill_path = repo_root.join(".lemex/skills/doc/SKILL.md");
 
     let path = normalize_path_for_skill_id(
         Some("https://example.com/repo.git"),
@@ -34,7 +34,7 @@ fn normalize_path_for_skill_id_repo_scoped_uses_relative_path() {
         &PathUri::from_host_native_path(&skill_path).expect("native skill path"),
     );
 
-    assert_eq!(path, ".codex/skills/doc/SKILL.md");
+    assert_eq!(path, ".lemex/skills/doc/SKILL.md");
 }
 
 #[test]

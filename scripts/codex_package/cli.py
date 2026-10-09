@@ -238,7 +238,7 @@ def assemble_package(args: argparse.Namespace) -> Path:
     build_package_dir(package_dir, args.package_version, variant, spec, inputs)
     for filename, prebuilt in (
         (variant.entrypoint_name(spec), args.entrypoint_bin),
-        (f"codex-code-mode-host{spec.exe_suffix}", args.code_mode_host_bin),
+        (f"lemex-code-mode-host{spec.exe_suffix}", args.code_mode_host_bin),
     ):
         if args.strip == "all" or (
             args.strip == "auto"

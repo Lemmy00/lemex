@@ -1050,7 +1050,7 @@ async fn agent_plugin_skills_use_shared_catalog_and_direct_child_discovery() -> 
     let test_codex = builder.build_with_auto_env(&server).await?;
 
     test_codex
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Skill {
             name: "acme.tools:review".into(),
             path: skill_path,
@@ -1208,7 +1208,7 @@ async fn legacy_plugin_skill_prompt_remains_complete() -> Result<()> {
     let test_codex = builder.build_with_auto_env(&server).await?;
 
     test_codex
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Skill {
             name: "sample:sample-search".into(),
             path: skill_path,
@@ -1441,7 +1441,7 @@ async fn agent_plugin_root_mcp_stdio_tool_round_trip_expands_reserved_paths_and_
     );
 
     test_codex
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
             text: "call the Agent Plugin echo tool".into(),
             text_elements: Vec::new(),

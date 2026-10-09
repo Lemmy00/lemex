@@ -6,6 +6,12 @@ codex_rust_crate(
     crate_name = "lemex_code_mode_host",
 )
 
+alias(
+    name = "codex-code-mode-host",
+    actual = ":lemex-code-mode-host",
+    visibility = ["//visibility:public"],
+)
+
 release_binary(
     binary = ":codex-code-mode-host",
 )

@@ -571,7 +571,7 @@ async fn resume_replays_permissions_messages() -> Result<()> {
     let initial = builder.build(&server).await?;
 
     initial
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
             text: "hello 1".into(),
             text_elements: Vec::new(),
@@ -589,7 +589,7 @@ async fn resume_replays_permissions_messages() -> Result<()> {
     .await?;
 
     initial
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
             text: "hello 2".into(),
             text_elements: Vec::new(),
@@ -599,7 +599,7 @@ async fn resume_replays_permissions_messages() -> Result<()> {
 
     let resumed = builder.restart(&server, &initial).await?;
     resumed
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
             text: "after resume".into(),
             text_elements: Vec::new(),
@@ -652,7 +652,7 @@ async fn resume_and_fork_append_permissions_messages() -> Result<()> {
         .expect("rollout path");
 
     initial
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
             text: "hello 1".into(),
             text_elements: Vec::new(),
@@ -670,7 +670,7 @@ async fn resume_and_fork_append_permissions_messages() -> Result<()> {
     .await?;
 
     initial
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
             text: "hello 2".into(),
             text_elements: Vec::new(),
@@ -686,7 +686,7 @@ async fn resume_and_fork_append_permissions_messages() -> Result<()> {
     });
     let resumed = builder.restart(&server, &initial).await?;
     resumed
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
             text: "after resume".into(),
             text_elements: Vec::new(),

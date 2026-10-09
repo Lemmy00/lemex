@@ -945,7 +945,7 @@ async fn manual_compact_uses_custom_prompt() {
         .build(&server)
         .await
         .expect("create conversation")
-        .lemex;
+        .codex;
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
@@ -1262,7 +1262,7 @@ async fn manual_compact_emits_context_compaction_items() {
         config.model_provider = model_provider;
         set_test_compact_prompt(config);
     });
-    let codex = builder.build(&server).await.unwrap().lemex;
+    let codex = builder.build(&server).await.unwrap().codex;
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
@@ -1881,7 +1881,7 @@ async fn auto_compact_runs_after_token_limit_hit() {
         set_test_compact_prompt(config);
         config.model_auto_compact_token_limit = Some(200_000);
     });
-    let codex = builder.build(&server).await.unwrap().lemex;
+    let codex = builder.build(&server).await.unwrap().codex;
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
@@ -2053,7 +2053,7 @@ async fn auto_compact_emits_context_compaction_items() {
         set_test_compact_prompt(config);
         config.model_auto_compact_token_limit = Some(200_000);
     });
-    let codex = builder.build(&server).await.unwrap().lemex;
+    let codex = builder.build(&server).await.unwrap().codex;
 
     let mut started_item = None;
     let mut completed_item = None;
@@ -2133,7 +2133,7 @@ async fn auto_compact_starts_after_turn_started() {
         set_test_compact_prompt(config);
         config.model_auto_compact_token_limit = Some(200_000);
     });
-    let codex = builder.build(&server).await.unwrap().lemex;
+    let codex = builder.build(&server).await.unwrap().codex;
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
@@ -2237,7 +2237,7 @@ async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
     let response_mock = mount_sse_sequence(&server, vec![compact_turn, sse_follow_up]).await;
 
     resumed
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             follow_up_user,
             resumed.cwd.path().to_path_buf(),
@@ -2622,7 +2622,7 @@ async fn pre_sampling_compact_falls_back_from_retired_previous_model_after_renam
         .expect("rollout path");
 
     initial
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "before switch",
             initial.cwd.path().to_path_buf(),
@@ -2636,7 +2636,7 @@ async fn pre_sampling_compact_falls_back_from_retired_previous_model_after_renam
     .await;
 
     initial
-        .lemex
+        .codex
         .submit(Op::Shutdown)
         .await
         .expect("shutdown initial session");
@@ -2659,7 +2659,7 @@ async fn pre_sampling_compact_falls_back_from_retired_previous_model_after_renam
         .expect("resume codex");
 
     resumed
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "after switch",
             resumed.cwd.path().to_path_buf(),
@@ -2761,7 +2761,7 @@ async fn pre_sampling_compact_falls_back_when_previous_model_is_not_found() {
         .expect("rollout path");
 
     initial
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "before switch",
             initial.cwd.path().to_path_buf(),
@@ -2775,7 +2775,7 @@ async fn pre_sampling_compact_falls_back_when_previous_model_is_not_found() {
     .await;
 
     initial
-        .lemex
+        .codex
         .submit(Op::Shutdown)
         .await
         .expect("shutdown initial session");
@@ -2799,7 +2799,7 @@ async fn pre_sampling_compact_falls_back_when_previous_model_is_not_found() {
         .expect("resume codex");
 
     resumed
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "after switch",
             resumed.cwd.path().to_path_buf(),
@@ -3597,7 +3597,7 @@ async fn pre_sampling_compact_runs_after_resume_and_switch_to_smaller_model() {
         .expect("rollout path");
 
     initial
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "before resume",
             initial.cwd.path().to_path_buf(),
@@ -3611,7 +3611,7 @@ async fn pre_sampling_compact_runs_after_resume_and_switch_to_smaller_model() {
     .await;
 
     initial
-        .lemex
+        .codex
         .submit(Op::Shutdown)
         .await
         .expect("shutdown initial session");
@@ -3634,7 +3634,7 @@ async fn pre_sampling_compact_runs_after_resume_and_switch_to_smaller_model() {
         .expect("resume codex");
 
     resumed
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "after resume",
             resumed.cwd.path().to_path_buf(),
@@ -3718,7 +3718,7 @@ async fn pre_sampling_compact_recovers_comp_hash_after_resume() {
         .expect("rollout path");
 
     initial
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "before resume",
             initial.cwd.path().to_path_buf(),
@@ -3732,7 +3732,7 @@ async fn pre_sampling_compact_recovers_comp_hash_after_resume() {
     .await;
 
     initial
-        .lemex
+        .codex
         .submit(Op::Shutdown)
         .await
         .expect("shutdown initial session");
@@ -3765,7 +3765,7 @@ async fn pre_sampling_compact_recovers_comp_hash_after_resume() {
         .expect("resume codex");
 
     resumed
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "after resume",
             resumed.cwd.path().to_path_buf(),
@@ -3845,7 +3845,7 @@ async fn pre_sampling_compact_skips_missing_comp_hash_after_resume() {
         .expect("rollout path");
 
     initial
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "before resume",
             initial.cwd.path().to_path_buf(),
@@ -3859,7 +3859,7 @@ async fn pre_sampling_compact_skips_missing_comp_hash_after_resume() {
     .await;
 
     initial
-        .lemex
+        .codex
         .submit(Op::Shutdown)
         .await
         .expect("shutdown initial session");
@@ -3890,7 +3890,7 @@ async fn pre_sampling_compact_skips_missing_comp_hash_after_resume() {
         .expect("resume codex");
 
     resumed
-        .lemex
+        .codex
         .start_or_steer_turn(disabled_permission_user_turn(
             "after resume",
             resumed.cwd.path().to_path_buf(),
@@ -4091,7 +4091,7 @@ async fn manual_compact_retries_after_context_window_error() {
         set_test_compact_prompt(config);
         config.model_auto_compact_token_limit = Some(200_000);
     });
-    let codex = builder.build(&server).await.unwrap().lemex;
+    let codex = builder.build(&server).await.unwrap().codex;
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
@@ -4190,7 +4190,7 @@ async fn manual_compact_non_context_failure_retries_then_emits_task_error() {
         .build(&server)
         .await
         .expect("build codex")
-        .lemex;
+        .codex;
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
@@ -4280,7 +4280,7 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
         config.model_provider = model_provider;
         set_test_compact_prompt(config);
     });
-    let codex = builder.build(&server).await.unwrap().lemex;
+    let codex = builder.build(&server).await.unwrap().codex;
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
@@ -4496,7 +4496,7 @@ async fn auto_compact_allows_multiple_attempts_when_interleaved_with_other_turn_
         // Leave enough headroom for per-item request metadata before the second compaction.
         config.model_auto_compact_token_limit = Some(300);
     });
-    let codex = builder.build(&server).await.unwrap().lemex;
+    let codex = builder.build(&server).await.unwrap().codex;
 
     let mut auto_compact_lifecycle_events = Vec::new();
     for user in [MULTI_AUTO_MSG, follow_up_user, final_user] {
@@ -5193,7 +5193,7 @@ async fn auto_compact_accounts_for_encrypted_reasoning(first_response_includes_r
         .build(&server)
         .await
         .expect("build codex")
-        .lemex;
+        .codex;
 
     for (idx, user) in [first_user, second_user, third_user]
         .into_iter()
@@ -5276,7 +5276,7 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
         .build(&server)
         .await
         .expect("build codex")
-        .lemex;
+        .codex;
 
     for user in ["USER_ONE", "USER_TWO"] {
         codex
@@ -5495,7 +5495,7 @@ async fn snapshot_request_shape_pre_turn_compaction_context_window_exceeded() {
         .build(&server)
         .await
         .expect("build codex")
-        .lemex;
+        .codex;
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
@@ -5569,7 +5569,7 @@ async fn snapshot_request_shape_manual_compact_without_previous_user_messages() 
         .build(&server)
         .await
         .expect("build codex")
-        .lemex;
+        .codex;
 
     codex.submit(Op::Compact).await.expect("run /compact");
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;

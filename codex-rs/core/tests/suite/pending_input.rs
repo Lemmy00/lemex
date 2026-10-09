@@ -93,7 +93,7 @@ async fn idle_response_items_include_pending_mailbox_in_first_request() -> anyho
 
     submit_queue_only_agent_mail(test.codex.as_ref(), "pending mailbox input").await;
     let submission = test
-        .lemex
+        .codex
         .start_turn_if_idle(TurnInputRequest::new(TurnInput::ResponseItem(
             responses::user_message_item("automatic response item"),
         )))
@@ -150,7 +150,7 @@ async fn standalone_tool_output_starts_instruction_turn() -> anyhow::Result<()> 
     let output = serde_json::from_value(expected_output.clone())?;
 
     let submission = test
-        .lemex
+        .codex
         .start_or_steer_turn(TurnInputRequest::new(TurnInput::ResponseItem(output)))
         .await?;
     let TurnInputSubmission::Started { turn_id, .. } = submission else {
@@ -206,7 +206,7 @@ async fn assert_idle_user_input_reaches_the_first_model_request(
         text_elements: Vec::new(),
     }];
     let submission = test
-        .lemex
+        .codex
         .start_turn_if_idle(TurnInputRequest::new(TurnInput::UserInput {
             content: expected_input.clone(),
             client_id: Some("queued-user-message".to_string()),
@@ -334,7 +334,7 @@ async fn build_codex(server: &StreamingSseServer) -> Arc<CodexThread> {
         .build_with_streaming_server(server)
         .await
         .expect("build streaming Codex test session")
-        .lemex
+        .codex
 }
 
 async fn submit_user_input(codex: &CodexThread, text: &str) {
@@ -727,7 +727,7 @@ async fn steer_interrupts_wait_agent_and_is_sent_in_follow_up_request() {
         .build_with_streaming_server(&server)
         .await
         .expect("build Codex test session")
-        .lemex;
+        .codex;
 
     submit_user_input(&codex, INITIAL_PROMPT).await;
     wait_for_event(&codex, |event| {
@@ -943,7 +943,7 @@ async fn injected_user_input_triggers_follow_up_request_with_deltas() {
         .build_with_streaming_server(&server)
         .await
         .unwrap()
-        .lemex;
+        .codex;
 
     codex
         .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
@@ -2407,7 +2407,7 @@ async fn steered_user_input_waits_for_model_continuation_after_mid_turn_compact(
         .build_with_streaming_server(&server)
         .await
         .expect("build streaming Codex test session")
-        .lemex;
+        .codex;
 
     submit_user_input(&codex, "first prompt").await;
     submit_user_input(&codex, "second prompt").await;
@@ -2493,7 +2493,7 @@ async fn steered_user_input_follows_compact_when_only_the_steer_needs_follow_up(
         .build_with_streaming_server(&server)
         .await
         .expect("build streaming Codex test session")
-        .lemex;
+        .codex;
 
     submit_user_input(&codex, "first prompt").await;
     wait_for_agent_message(&codex, "first answer").await;

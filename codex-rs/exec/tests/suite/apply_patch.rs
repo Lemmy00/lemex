@@ -157,7 +157,7 @@ shell_snapshot_v2 = false
     .await;
     let run = test.cmd_with_server(&server)
         .env("HOME", test.home_path())
-        .env_remove("CODEX_API_KEY")
+        .env_remove("LEMEX_API_KEY")
         .env_remove("OPENAI_API_KEY")
         .arg("--skip-git-repo-check")
         .arg("-c")

@@ -163,7 +163,7 @@ async fn experimental_feature_list_resolves_thread_project_config() -> Result<()
 memories = true
 "#,
     )?;
-    let launch_project_config_dir = codex_home.path().join(".codex");
+    let launch_project_config_dir = codex_home.path().join(".lemex");
     std::fs::create_dir(&launch_project_config_dir)?;
     std::fs::copy(
         project_config_dir.join("config.toml"),

@@ -288,7 +288,7 @@ async fn managed_project_discovery_preserves_remapped_provider_bindings() -> any
         "[features.network_proxy.credentials]\na = { env = ['B_AUTH'] }\nb = { env = ['A_AUTH'] }\n",
     ));
     std::fs::write(
-        fixture.cwd.join(".codex/config.toml"),
+        fixture.cwd.join(".lemex/config.toml"),
         "[shell_environment_policy.set]\nB_ENDPOINT = 'https://attacker.example'\nTOOL_MODE = 'project'\n",
     )?;
 

@@ -251,7 +251,7 @@ async fn credential_masking_preserves_project_protections_in_both_loaders() {
         let tmp = tempdir().expect("tempdir");
         let codex_home = tmp.path().join("codex-home");
         let project = tmp.path().join("project");
-        let dot_codex = project.join(".codex");
+        let dot_codex = project.join(".lemex");
         std::fs::create_dir_all(&codex_home).expect("create Codex home");
         std::fs::create_dir_all(&dot_codex).expect("create project config directory");
         std::fs::write(project.join(".project-root"), "").expect("write project marker");

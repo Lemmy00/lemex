@@ -54,7 +54,7 @@ use wiremock::matchers::method;
 use wiremock::matchers::path;
 
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
-    let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+    let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?);
     cmd.env("LEMEX_HOME", codex_home);
     Ok(cmd)
 }
@@ -103,8 +103,8 @@ async fn local_exec_server_projects_global_mxc_preference() -> Result<()> {
     let home = TempDir::new()?;
     let cwd = url::Url::from_directory_path(home.path())
         .map_err(|()| anyhow::anyhow!("could not convert home to file URL"))?;
-    let mut child = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
-        .env("CODEX_HOME", home.path())
+    let mut child = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?)
+        .env("LEMEX_HOME", home.path())
         .args([
             "-c",
             "features.prefer_mxc=true",
@@ -255,7 +255,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{collector_url}/v1/metrics", pr
     let bin_dir = package.path().join("bin");
     std::fs::create_dir(&bin_dir)?;
     let executable = bin_dir.join(format!("codex{}", std::env::consts::EXE_SUFFIX));
-    copy_executable(&codex_utils_cargo_bin::cargo_bin("codex")?, &executable)?;
+    copy_executable(&codex_utils_cargo_bin::cargo_bin("lemex")?, &executable)?;
     let codex_path_dir = package.path().join("codex-path");
     std::fs::create_dir(&codex_path_dir)?;
     let manifest = package.path().join("codex-package.json");
@@ -505,7 +505,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{base_url}/v1/metrics", protoco
     let argv = vec!["ping.exe", "-n", "61", "127.0.0.1"];
     #[cfg(not(windows))]
     let argv = vec!["/bin/sleep", "60"];
-    let codex_bin = codex_utils_cargo_bin::cargo_bin("codex")?;
+    let codex_bin = codex_utils_cargo_bin::cargo_bin("lemex")?;
     let codex_home = codex_home.path().to_path_buf();
     let subprocess = async move {
         let mut command = tokio::process::Command::new(codex_bin);
@@ -639,7 +639,7 @@ async fn send_json_line(
 #[test]
 fn local_exec_server_exits_successfully_on_sigterm() -> Result<()> {
     let codex_home = TempDir::new()?;
-    let mut child = std::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+    let mut child = std::process::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?)
         .env("LEMEX_HOME", codex_home.path())
         .args(["exec-server", "--listen", "ws://127.0.0.1:0"])
         .stdout(Stdio::piped())
