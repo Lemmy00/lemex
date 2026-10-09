@@ -34,8 +34,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text",
         "image"
@@ -91,8 +91,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text",
         "image"
@@ -148,8 +148,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text",
         "image"
@@ -205,8 +205,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": true,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text",
         "image"
@@ -262,8 +262,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text",
         "image"
@@ -319,8 +319,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text",
         "image"
@@ -380,8 +380,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text"
       ],
@@ -436,8 +436,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text"
       ],
@@ -492,8 +492,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text"
       ],
@@ -548,8 +548,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 128000,
-      "max_context_window": 128000,
+      "context_window": 200000,
+      "max_context_window": 200000,
       "input_modalities": [
         "text"
       ],

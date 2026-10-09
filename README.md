@@ -100,6 +100,8 @@ To use models available from the RCP inference endpoint, put a `models.json` cat
 model_provider = "rcp"
 model = "moonshotai/Kimi-K2.7-Code"
 model_catalog_json = "models.json"
+model_context_window = 200000
+model_auto_compact_token_limit = 180000
 
 [model_providers.rcp]
 name = "RCP"
@@ -110,6 +112,14 @@ requires_openai_auth = false
 ```
 
 Use `lemex exec -m <model-id> ...` to select a different model from the catalog for a single run.
+
+The bundled RCP catalog and default configuration use a 200,000-token context
+window, with automatic compaction at 180,000 tokens to leave headroom. These are
+client settings; the selected RCP deployment must also support that window.
+For an existing installation, update both `context_window` and
+`max_context_window` in `~/.lemex/models.json` as well as the settings above:
+Lemex clamps `model_context_window` to the catalog's `max_context_window`.
+Restart Lemex after changing the settings.
 
 The RCP catalog includes Kimi K2.7 Code, Qwen 3.5 397B A17B, GLM 5.3 Flash,
 DeepSeek V4.1 Flash, Qwen 3.8 Flash Next, and Qwen 3.8 27B. Leave
