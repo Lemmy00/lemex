@@ -15,6 +15,8 @@
 #   LEMEX_KEEP_BUILD          Set to 1 to retain the temporary Cargo build directory.
 #   CARGO_TARGET_DIR          Reuse an existing build directory; it is never deleted.
 #   CARGO_BUILD_JOBS          Parallel build jobs (default: 4).
+#   CARGO_PROFILE_RELEASE_LTO Source-install LTO override (default: off).
+#   CARGO_PROFILE_RELEASE_CODEGEN_UNITS Codegen parallelism (default: 16).
 
 set -euo pipefail
 
@@ -28,7 +30,14 @@ LEMEX_HOME_DIR="${LEMEX_HOME:-$HOME/.lemex}"
 LEMEX_TEMP_BUILD_DIR=""
 
 cleanup() {
-    if [ -n "$LEMEX_TEMP_BUILD_DIR" ] && [ "${LEMEX_KEEP_BUILD:-0}" != "1" ]; then
+    if [ -z "$LEMEX_TEMP_BUILD_DIR" ]; then
+        return
+    fi
+    if [ "${LEMEX_KEEP_BUILD:-0}" = "1" ]; then
+        printf '\nKept Cargo build cache: %s\n' "$LEMEX_TEMP_BUILD_DIR"
+        printf 'Reuse it on the next install with CARGO_TARGET_DIR set to that path.\n'
+    else
+        printf '\nRemoving temporary Cargo build cache: %s\n' "$LEMEX_TEMP_BUILD_DIR"
         rm -rf -- "$LEMEX_TEMP_BUILD_DIR"
     fi
 }
@@ -87,6 +96,10 @@ install_rust() {
 }
 
 build_binary() {
+    case "$LEMEX_BUILD" in
+        release|debug) ;;
+        *) error "Unknown LEMEX_BUILD value: $LEMEX_BUILD. Use 'release' or 'debug'." ;;
+    esac
     step "Building Lemex CLI ($LEMEX_BUILD)"
     cd "$CODEX_RS_DIR"
 
@@ -97,6 +110,10 @@ build_binary() {
         export CARGO_TARGET_DIR="$LEMEX_TEMP_BUILD_DIR"
     elif [[ "$CARGO_TARGET_DIR" != /* ]]; then
         export CARGO_TARGET_DIR="$CODEX_RS_DIR/$CARGO_TARGET_DIR"
+    fi
+    printf 'Cargo build cache: %s\n' "$CARGO_TARGET_DIR"
+    if [ -z "$LEMEX_TEMP_BUILD_DIR" ]; then
+        printf 'Caller-supplied CARGO_TARGET_DIR will be retained.\n'
     fi
     export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
     export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
@@ -139,15 +156,16 @@ PY
         release)
             export CARGO_PROFILE_RELEASE_DEBUG="${CARGO_PROFILE_RELEASE_DEBUG:-0}"
             export CARGO_PROFILE_RELEASE_STRIP="${CARGO_PROFILE_RELEASE_STRIP:-symbols}"
+            # Keep optimization, but avoid release-distribution link settings
+            # that make a one-off local installation much slower.
+            export CARGO_PROFILE_RELEASE_LTO="${CARGO_PROFILE_RELEASE_LTO:-off}"
+            export CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-16}"
             cargo build --locked --release "${build_binaries[@]}"
             BUILD_OUTPUT_DIR="$CARGO_TARGET_DIR/release"
             ;;
         debug)
             cargo build --locked --profile dev-small "${build_binaries[@]}"
             BUILD_OUTPUT_DIR="$CARGO_TARGET_DIR/dev-small"
-            ;;
-        *)
-            error "Unknown LEMEX_BUILD value: $LEMEX_BUILD. Use 'release' or 'debug'."
             ;;
     esac
 

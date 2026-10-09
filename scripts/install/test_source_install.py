@@ -65,12 +65,22 @@ class SourceInstallTests(unittest.TestCase):
         self.assertEqual((destination / "config.toml.bak.1").read_text(), "original")
 
     def package(self, package):
-        shutil.copytree(ROOT / "codex-cli", package)
+        # Local source installs leave generated runtimes in vendor/. Build an
+        # isolated fixture instead of copying large binaries or old aliases.
+        shutil.copytree(ROOT / "codex-cli", package, ignore=shutil.ignore_patterns("vendor"))
         node_platform = subprocess.check_output(["node", "-p", 'process.platform + ":" + process.arch'], text=True).strip()
         target = {"darwin:arm64": "aarch64-apple-darwin", "darwin:x64": "x86_64-apple-darwin", "linux:x64": "x86_64-unknown-linux-gnu", "linux:arm64": "aarch64-unknown-linux-gnu"}[node_platform]
         binary = package / "vendor" / target / "bin" / "lemex"
         binary.parent.mkdir(parents=True)
-        binary.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo "lemex 0.0.0"; else printf "runtime:%s\\n" "${LEMEX_MANAGED_BY_PNPM:-npm}"; fi\n')
+        binary.write_text('''#!/bin/sh
+case "$1" in
+    --version) echo "lemex 0.0.0" ;;
+    --provenance)
+        printf '%s\\n%s\\n' "${LEMEX_MANAGED_PACKAGE_ROOT:-}" "${CODEX_MANAGED_PACKAGE_ROOT:-}"
+        ;;
+    *) printf 'runtime:%s\\n' "${LEMEX_MANAGED_BY_PNPM:-npm}" ;;
+esac
+''')
         binary.chmod(0o755)
         helper = binary.with_name("lemex-code-mode-host")
         shutil.copy2(binary, helper)
@@ -103,6 +113,11 @@ class SourceInstallTests(unittest.TestCase):
         shutil.rmtree(checkout)
         result = subprocess.check_output([str(prefix / "bin/lemex"), "--probe"], env=env, text=True)
         self.assertEqual(result.strip(), "runtime:npm")
+        provenance = subprocess.check_output(
+            [str(prefix / "bin/lemex"), "--provenance"], env=env, text=True,
+        ).splitlines()
+        expected_package_root = str((prefix / "lib/node_modules/lemex").resolve())
+        self.assertEqual(provenance, [expected_package_root, expected_package_root])
         installed = prefix / "lib/node_modules/lemex/vendor"
         manifest = next(installed.glob("*/codex-package.json"))
         metadata = json.loads(manifest.read_text())
@@ -128,6 +143,131 @@ class SourceInstallTests(unittest.TestCase):
         snippet = script[start:end]
         output = subprocess.check_output(["/bin/bash", "-c", 'parse() { local v8_paths; v8_paths=$(printf "/cache/archive\\n/cache/bindings\\n");\n' + snippet + '\nprintf "%s\\n" "${v8_artifacts[@]}"; }; parse'], text=True)
         self.assertEqual(output.splitlines(), ["/cache/archive", "/cache/bindings"])
+
+    def run_build(self, overrides=None, *, fail=False):
+        """Exercise the real build/cleanup flow with offline compiler fixtures."""
+        fixture = Path(tempfile.mkdtemp(dir=self.root))
+        (fixture / "codex-rs").mkdir()
+        env = dict(os.environ)
+        for name in (
+            "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL",
+            "CARGO_PROFILE_RELEASE_DEBUG", "CARGO_PROFILE_RELEASE_STRIP",
+            "CARGO_PROFILE_RELEASE_LTO", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS",
+            "LEMEX_KEEP_BUILD", "RUSTY_V8_ARCHIVE", "RUSTY_V8_SRC_BINDING_PATH",
+        ):
+            env.pop(name, None)
+        env.update(LEMEX_BUILD="release", XDG_CACHE_HOME=str(fixture / "cache"))
+        env.update(overrides or {})
+        script = r'''
+source "$1"
+fixture="$2"
+CODEX_RS_DIR="$fixture/codex-rs"
+CODEX_CLI_DIR="$fixture/cli"
+rustc() { printf 'host: x86_64-unknown-linux-gnu\n'; }
+git() { printf 'fixture-commit\n'; }
+python3() {
+    if [ "$1" = "-" ]; then
+        printf 'fetched\n' > "$fixture/fetch"
+        printf '/fixture/archive\n/fixture/bindings\n'
+    fi
+}
+cargo() {
+    printf 'target=%s\nlto=%s\ncodegen=%s\ndebug=%s\nstrip=%s\nincremental=%s\njobs=%s\nargs=%s\n' \
+        "$CARGO_TARGET_DIR" "${CARGO_PROFILE_RELEASE_LTO:-}" \
+        "${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-}" "${CARGO_PROFILE_RELEASE_DEBUG:-}" \
+        "${CARGO_PROFILE_RELEASE_STRIP:-}" "$CARGO_INCREMENTAL" "$CARGO_BUILD_JOBS" "$*" \
+        > "$fixture/build"
+    mkdir -p "$CARGO_TARGET_DIR"
+    printf 'cached\n' > "$CARGO_TARGET_DIR/caller-marker"
+    if [ "$3" = "--release" ]; then profile=release; else profile=dev-small; fi
+    if [ "$fail_build" = 1 ]; then return 1; fi
+    mkdir -p "$CARGO_TARGET_DIR/$profile"
+    for binary in lemex lemex-code-mode-host bwrap; do
+        printf '#!/bin/sh\necho "lemex 0.0.0"\n' > "$CARGO_TARGET_DIR/$profile/$binary"
+        chmod +x "$CARGO_TARGET_DIR/$profile/$binary"
+    done
+}
+fail_build="$3"
+build_binary
+'''
+        result = subprocess.run(
+            ["/bin/bash", "-c", script, "test",
+             str(ROOT / "scripts/install/install_from_source.sh"), str(fixture),
+             "1" if fail else "0"],
+            env=env, capture_output=True, text=True,
+        )
+        observed = {}
+        if (fixture / "build").exists():
+            observed = dict(line.split("=", 1) for line in (fixture / "build").read_text().splitlines())
+        return result, fixture, observed
+
+    def test_release_install_removes_build_cache_and_copies_runtime(self):
+        result, fixture, observed = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(observed["lto"], "off")
+        self.assertEqual(observed["codegen"], "16")
+        self.assertEqual(observed["debug"], "0")
+        self.assertEqual(observed["strip"], "symbols")
+        self.assertEqual(observed["incremental"], "0")
+        self.assertIn("--locked --release", observed["args"])
+        self.assertIn("--bin lemex --bin lemex-code-mode-host --bin bwrap", observed["args"])
+        self.assertFalse(Path(observed["target"]).exists())
+        self.assertIn("Removing temporary Cargo build cache:", result.stdout)
+        self.assertTrue((fixture / "cli/vendor/x86_64-unknown-linux-gnu/bin/lemex").is_file())
+        self.assertTrue((fixture / "cli/vendor/x86_64-unknown-linux-gnu/codex-resources/bwrap").is_file())
+
+    def test_failed_build_removes_temporary_cache(self):
+        result, fixture, observed = self.run_build(fail=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(Path(observed["target"]).exists())
+        self.assertFalse((fixture / "cli").exists())
+
+    def test_debug_install_uses_small_profile_and_removes_cache(self):
+        result, _, observed = self.run_build({"LEMEX_BUILD": "debug"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--locked --profile dev-small", observed["args"])
+        self.assertEqual(observed["lto"], "")
+        self.assertEqual(observed["codegen"], "")
+        self.assertFalse(Path(observed["target"]).exists())
+
+    def test_keep_build_retains_cache_on_success_and_failure(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                result, _, observed = self.run_build({"LEMEX_KEEP_BUILD": "1"}, fail=fail)
+                self.assertEqual(result.returncode == 0, not fail)
+                self.assertTrue((Path(observed["target"]) / "caller-marker").is_file())
+                self.assertIn("Kept Cargo build cache:", result.stdout)
+
+    def test_caller_build_settings_and_directory_are_preserved(self):
+        for target in ("reusable", str(self.root / "absolute-target")):
+            with self.subTest(target=target):
+                result, fixture, observed = self.run_build({
+                    "CARGO_TARGET_DIR": target,
+                    "CARGO_PROFILE_RELEASE_LTO": "thin",
+                    "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "4",
+                    "CARGO_PROFILE_RELEASE_DEBUG": "1",
+                    "CARGO_PROFILE_RELEASE_STRIP": "none",
+                    "CARGO_INCREMENTAL": "1",
+                    "CARGO_BUILD_JOBS": "2",
+                })
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = Path(target) if Path(target).is_absolute() else fixture / "codex-rs" / target
+                self.assertEqual(Path(observed["target"]), expected)
+                self.assertTrue((expected / "caller-marker").is_file())
+                self.assertEqual(observed["lto"], "thin")
+                self.assertEqual(observed["codegen"], "4")
+                self.assertEqual(observed["debug"], "1")
+                self.assertEqual(observed["strip"], "none")
+                self.assertEqual(observed["incremental"], "1")
+                self.assertEqual(observed["jobs"], "2")
+
+    def test_invalid_build_mode_does_not_fetch_or_build(self):
+        result, fixture, observed = self.run_build({"LEMEX_BUILD": "invalid"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unknown LEMEX_BUILD value", result.stderr)
+        self.assertEqual(observed, {})
+        self.assertFalse((fixture / "fetch").exists())
+        self.assertFalse((fixture / "cache").exists())
 
 
 if __name__ == "__main__":

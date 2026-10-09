@@ -237,6 +237,8 @@ const packageManagerEnvVar =
 const env = {
   ...process.env,
   LEMEX_MANAGED_PACKAGE_ROOT: lemexPackageRoot,
+  // The native doctor's upstream provenance check still uses this name.
+  CODEX_MANAGED_PACKAGE_ROOT: lemexPackageRoot,
 };
 delete env.LEMEX_MANAGED_BY_NPM;
 delete env.LEMEX_MANAGED_BY_BUN;

@@ -1,7 +1,7 @@
 model_provider = "rcp"
 model = "moonshotai/Kimi-K2.7-Code"
 model_catalog_json = "models.json"
-model_reasoning_effort = "medium"
+# Use each model's catalog default; RCP models accept different effort values.
 show_raw_agent_reasoning = true
 # RCP does not provide OpenAI's hosted web search; use the Exa MCP tools below.
 web_search = "disabled"

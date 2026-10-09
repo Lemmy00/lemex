@@ -24,7 +24,7 @@ Published GitHub Releases contain a [DotSlash](https://dotslash-cli.com/) file f
 
 ### Build from source (convenience script)
 
-The fastest way to install from source is the provided script:
+Use the provided script to install from source:
 
 ```bash
 git clone https://github.com/Lemmy00/lemex.git
@@ -32,7 +32,19 @@ cd lemex
 ./scripts/install/install_from_source.sh
 ```
 
-The script checks for Node.js/npm, installs Rust if needed, builds the release binary, installs `lemex` globally via npm, and copies the bundled default RCP config (`config/config.toml` and `config/models.json`) into `~/.lemex` if none exists.
+The script checks for Node.js/npm and ripgrep, installs Rust if needed, builds the release runtime and its helpers, installs `lemex` globally via npm, and copies the bundled default RCP config (`config/config.toml` and `config/models.json`) into `~/.lemex` if none exists. The installed npm package contains its own runtime files and survives moving or deleting the checkout.
+
+An initial source build still compiles the Rust dependencies and downloads the pinned V8 artifacts. Local release installs disable LTO and use 16 codegen units to reduce build and link time while keeping release optimization. They also omit debug symbols and incremental compilation. These settings can produce larger binaries than the distribution release profile; set `CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=4` to use that profile's link settings instead. Caller-provided Cargo profile settings are preserved. Build concurrency defaults to four jobs; set `CARGO_BUILD_JOBS` to suit the memory and CPU capacity of your machine.
+
+By default the script creates a temporary Cargo directory under `${XDG_CACHE_HOME:-$HOME/.cache}/lemex-build.*`, prints its location, and removes it when the installer exits, including after a failed build. This also removes the V8 artifacts downloaded into that directory. Only the packaged runtime remains; Rust's shared registry and toolchain caches are left alone.
+
+For repeated installs, choose a reusable build directory to avoid compiling dependencies again:
+
+```bash
+CARGO_TARGET_DIR="$HOME/.cache/lemex-source-build" ./scripts/install/install_from_source.sh
+```
+
+An explicitly supplied `CARGO_TARGET_DIR` is always retained, even on failure. Alternatively, set `LEMEX_KEEP_BUILD=1` to retain the generated temporary directory; the installer prints the path to reuse on your next install. Reusing a build directory saves time at the cost of retaining its build files. Once you no longer need it, that directory can be removed without affecting the installed `lemex` command.
 
 To copy an existing Lemex config from another machine during install (overriding the default):
 

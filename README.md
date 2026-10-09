@@ -111,6 +111,12 @@ requires_openai_auth = false
 
 Use `lemex exec -m <model-id> ...` to select a different model from the catalog for a single run.
 
+The RCP catalog includes Kimi K2.7 Code, Qwen 3.5 397B A17B, GLM 5.3 Flash,
+DeepSeek V4.1 Flash, Qwen 3.8 Flash Next, and Qwen 3.8 27B. Leave
+`model_reasoning_effort` unset in your config to use each model's catalog default.
+DeepSeek V4.1 defaults to `high` and accepts `low`, `high`, `xhigh`, and `max`;
+RCP rejects `medium` for that model.
+
 For DeepSeek V4.1 Flash on RCP:
 
 ```shell
@@ -124,7 +130,7 @@ lemex -m Qwen/Qwen3.8-Flash-Next -c 'model_reasoning_effort="xhigh"'
 lemex -m Qwen/Qwen3.8-27B -c 'model_reasoning_effort="xhigh"'
 ```
 
-These Qwen models accept `low`, `medium`, and `xhigh` reasoning on RCP;
+These Qwen models default to `medium` and accept `low`, `medium`, and `xhigh` reasoning on RCP;
 `high` is rejected. The explicit override also works when your saved default
 reasoning effort is `high` for a different model.
 
