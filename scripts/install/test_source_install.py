@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("import_remote_config", Path(__file__).with_name("import_remote_config.py"))
 remote_config = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(remote_config)
+package_spec = importlib.util.spec_from_file_location("prepare_source_package", Path(__file__).with_name("prepare_source_package.py"))
+source_package = importlib.util.module_from_spec(package_spec)
+package_spec.loader.exec_module(source_package)
 
 
 class SourceInstallTests(unittest.TestCase):
@@ -67,20 +70,47 @@ class SourceInstallTests(unittest.TestCase):
         target = {"darwin:arm64": "aarch64-apple-darwin", "darwin:x64": "x86_64-apple-darwin", "linux:x64": "x86_64-unknown-linux-gnu", "linux:arm64": "aarch64-unknown-linux-gnu"}[node_platform]
         binary = package / "vendor" / target / "bin" / "lemex"
         binary.parent.mkdir(parents=True)
-        binary.write_text('#!/bin/sh\nprintf "runtime:%s\\n" "${LEMEX_MANAGED_BY_PNPM:-npm}"\n')
+        binary.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo "lemex 0.0.0"; else printf "runtime:%s\\n" "${LEMEX_MANAGED_BY_PNPM:-npm}"; fi\n')
         binary.chmod(0o755)
+        helper = binary.with_name("lemex-code-mode-host")
+        shutil.copy2(binary, helper)
+        package_root = binary.parent.parent
+        if "linux" in target:
+            sandbox = package_root / "codex-resources/bwrap"
+            sandbox.parent.mkdir()
+            shutil.copy2(binary, sandbox)
+        rg = self.root / "rg"
+        rg.write_text("#!/bin/sh\nexit 0\n")
+        rg.chmod(0o755)
+        # Exercise upgrading the old relative symbolic-link layout as well.
+        binary.with_name("codex").symlink_to("lemex")
+        source_package.prepare_package(package_root, target, rg)
         return package
 
     @unittest.skipUnless(shutil.which("npm") and shutil.which("node"), "Node/npm required")
     def test_global_install_survives_checkout_deletion(self):
         checkout = self.package(self.root / "checkout")
         prefix = self.root / "prefix"
+        # Reproduce the broken installed links to an already deleted checkout.
+        modules = prefix / "lib/node_modules"
+        modules.mkdir(parents=True)
+        (modules / "lemex").symlink_to(self.root / "deleted-checkout")
+        (prefix / "bin").mkdir()
+        (prefix / "bin/lemex").symlink_to("../lib/node_modules/lemex/bin/lemex.js")
         env = dict(os.environ, npm_config_offline="true", npm_config_audit="false", npm_config_cache=str(self.root / "cache"))
         subprocess.run(["/bin/bash", "-c", 'source "$1"; CODEX_CLI_DIR="$2"; LEMEX_INSTALL_PREFIX="$3"; install_npm_package', "test", str(ROOT / "scripts/install/install_from_source.sh"), str(checkout), str(prefix)], env=env, check=True, capture_output=True, text=True)
         self.assertFalse((prefix / "lib/node_modules/lemex").is_symlink())
         shutil.rmtree(checkout)
-        result = subprocess.check_output([str(prefix / "bin/lemex"), "--version"], env=env, text=True)
+        result = subprocess.check_output([str(prefix / "bin/lemex"), "--probe"], env=env, text=True)
         self.assertEqual(result.strip(), "runtime:npm")
+        installed = prefix / "lib/node_modules/lemex/vendor"
+        manifest = next(installed.glob("*/codex-package.json"))
+        metadata = json.loads(manifest.read_text())
+        package_root = manifest.parent
+        self.assertTrue((package_root / metadata["entrypoint"]).is_file())
+        self.assertTrue((package_root / "bin/codex-code-mode-host").is_file())
+        self.assertTrue((package_root / metadata["pathDir"] / "rg").is_file())
+        self.assertEqual(subprocess.check_output([str(package_root / metadata["entrypoint"]), "--version"], text=True).strip(), "lemex 0.0.0")
 
     @unittest.skipUnless(shutil.which("node"), "Node required")
     def test_pnpm_ownership_detected(self):
