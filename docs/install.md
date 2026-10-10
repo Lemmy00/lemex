@@ -67,5 +67,5 @@ lemex doctor
 To check that your provider responds:
 
 ```sh
-lemex exec --ephemeral "Reply exactly OK"
+lemex exec --ephemeral --skip-git-repo-check "Reply exactly OK"
 ```

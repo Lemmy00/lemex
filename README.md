@@ -25,11 +25,13 @@ lemex
 
 Add the export to your shell profile (`~/.zshrc` or `~/.bashrc`) to keep it across sessions, then reload the profile or open a new terminal. This is the only environment variable required by the default configuration.
 
-For a single task:
+For a single task, run from your project's Git repository:
 
 ```sh
 lemex exec "Explain this codebase"
 ```
+
+Outside a Git repository, add `--skip-git-repo-check`.
 
 ## Customize
 
