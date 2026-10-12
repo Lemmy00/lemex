@@ -531,13 +531,11 @@ pub struct ConfigToml {
     /// Legacy fallback for `tui.disable_paste_burst`. Prefer the setting under `[tui]`.
     pub disable_paste_burst: Option<bool>,
 
-    /// When `enabled` is `false`, disables OpenAI analytics across Codex product surfaces on this machine.
-    /// Custom OTLP metrics exporters are controlled by `otel.metrics_exporter`.
-    /// When unset, the default depends on the client.
+    /// Legacy analytics setting. External analytics reporting is unavailable in Lemex.
+    /// Custom OTLP exporters require explicit configuration.
     pub analytics: Option<AnalyticsConfigToml>,
 
-    /// When `false`, disables feedback collection across Codex product surfaces.
-    /// Defaults to `true`.
+    /// Legacy feedback setting. External feedback reporting is unavailable in Lemex.
     pub feedback: Option<FeedbackConfigToml>,
 
     /// Settings for app-specific controls.

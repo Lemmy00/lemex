@@ -56,8 +56,6 @@ use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
-use super::analytics::wait_for_analytics_event;
-
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 const SECONDARY_MIGRATION_SOURCE: &str = concat!("cur", "sor");
 
@@ -1423,38 +1421,6 @@ async fn external_agent_config_import_completed_tracks_analytics_event() -> Resu
         Some("session_not_detected")
     );
 
-    let event = wait_for_analytics_event(
-        &analytics_server,
-        DEFAULT_TIMEOUT,
-        "codex_onboarding_external_agent_import_complete",
-    )
-    .await?;
-    let event_params = &event["event_params"];
-    assert_eq!(event_params["import_id"], serde_json::json!(import_id));
-    assert_eq!(event_params["source"], "test_import");
-    assert_eq!(event_params["provider_id"], "test-provider-42");
-    assert_eq!(event_params["type"], "SESSIONS");
-    assert_eq!(event_params["success_count"], 0);
-    assert_eq!(event_params["failed_count"], 1);
-    assert!(event_params.get("raw_errors").is_none());
-
-    let event = wait_for_analytics_event(
-        &analytics_server,
-        DEFAULT_TIMEOUT,
-        "codex_onboarding_external_agent_import_failure",
-    )
-    .await?;
-    let event_params = &event["event_params"];
-    assert_eq!(event_params["import_id"], serde_json::json!(import_id));
-    assert_eq!(event_params["source"], "test_import");
-    assert_eq!(event_params["provider_id"], "test-provider-42");
-    assert_eq!(event_params["type"], "SESSIONS");
-    assert_eq!(event_params["failure_stage"], "session_missing");
-    assert_eq!(event_params["error_type"], "session_missing");
-    assert_eq!(event_params["sub_error_type"], "session_not_detected");
-    assert!(event_params.get("raw_errors").is_none());
-    assert!(event_params.get("message").is_none());
-
     Ok(())
 }
 
@@ -1540,25 +1506,6 @@ async fn external_agent_config_import_reports_session_config_error_subtype() -> 
         failure.sub_error_type.as_deref(),
         Some("failed_to_load_session_config_invalid_data")
     );
-
-    let event = wait_for_analytics_event(
-        &analytics_server,
-        DEFAULT_TIMEOUT,
-        "codex_onboarding_external_agent_import_failure",
-    )
-    .await?;
-    let event_params = &event["event_params"];
-    assert_eq!(event_params["import_id"], serde_json::json!(import_id));
-    assert_eq!(event_params["source"], "test_import");
-    assert_eq!(event_params["provider_id"], "test-provider-42");
-    assert_eq!(event_params["type"], "SESSIONS");
-    assert_eq!(event_params["failure_stage"], "session_persist");
-    assert_eq!(
-        event_params["sub_error_type"],
-        "failed_to_load_session_config_invalid_data"
-    );
-    assert!(event_params.get("raw_errors").is_none());
-    assert!(event_params.get("message").is_none());
 
     Ok(())
 }
@@ -1706,30 +1653,6 @@ async fn external_agent_config_import_reinstalls_plugins_from_known_marketplaces
         plugin_result.failures[0].message,
         "plugin `missing` was not found in marketplace `debug`"
     );
-
-    let event = wait_for_analytics_event(
-        &analytics_server,
-        DEFAULT_TIMEOUT,
-        "codex_plugin_install_failed",
-    )
-    .await?;
-    let event_params = &event["event_params"];
-    assert_eq!(event_params["plugin_id"], "missing@debug");
-    assert_eq!(event_params["plugin_name"], "missing");
-    assert_eq!(event_params["marketplace_name"], "debug");
-    assert_eq!(event_params["source"], "external_agent_migration");
-    assert_eq!(event_params["error_type"], "plugin_not_found");
-
-    let event = wait_for_analytics_event(
-        &analytics_server,
-        DEFAULT_TIMEOUT,
-        "codex_onboarding_external_agent_import_failure",
-    )
-    .await?;
-    let event_params = &event["event_params"];
-    assert_eq!(event_params["type"], "PLUGINS");
-    assert_eq!(event_params["failure_stage"], "plugin_import");
-    assert_eq!(event_params["error_type"], "plugin_not_found");
 
     let request_id = mcp
         .send_plugin_list_request(PluginListParams {

@@ -2,6 +2,7 @@ use crate::events::AppServerRpcTransport;
 use crate::events::GuardianReviewAnalyticsResult;
 use crate::events::GuardianReviewTrackContext;
 use crate::events::TrackEventRequest;
+#[cfg(debug_assertions)]
 use crate::events::TrackEventsRequest;
 use crate::events::current_runtime_metadata;
 use crate::facts::AnalyticsFact;
@@ -64,7 +65,6 @@ use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::item_event_to_server_notification;
 use codex_login::AuthManager;
-use codex_login::CodexAuth;
 use codex_plugin::PluginId;
 use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::ThreadId;
@@ -85,8 +85,7 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 const ANALYTICS_EVENTS_QUEUE_SIZE: usize = 256;
-const ANALYTICS_EVENTS_TIMEOUT: Duration = Duration::from_secs(10);
-// Covers two sequential POSTs plus queue/barrier scheduling; additional queued sends remain best-effort.
+// Bound local capture queue flushing.
 const ANALYTICS_EVENTS_FLUSH_TIMEOUT: Duration = Duration::from_secs(25);
 const ANALYTICS_EVENT_DEDUPE_MAX_KEYS: usize = 4096;
 
@@ -115,9 +114,7 @@ pub struct AnalyticsEventsClient {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum AnalyticsEventsDestination {
-    Http {
-        url: String,
-    },
+    Disabled,
     #[cfg(debug_assertions)]
     CaptureFile {
         path: PathBuf,
@@ -130,7 +127,7 @@ impl AnalyticsEventsDestination {
         Self::from_base_url_and_capture_file(base_url, capture_file)
     }
 
-    fn from_base_url_and_capture_file(base_url: String, capture_file: Option<PathBuf>) -> Self {
+    fn from_base_url_and_capture_file(_base_url: String, capture_file: Option<PathBuf>) -> Self {
         #[cfg(debug_assertions)]
         if let Some(path) = capture_file {
             if let Err(err) = crate::analytics_capture::initialize(&path) {
@@ -149,10 +146,7 @@ impl AnalyticsEventsDestination {
         #[cfg(not(debug_assertions))]
         let _ = capture_file;
 
-        let base_url = base_url.trim_end_matches('/');
-        Self::Http {
-            url: format!("{base_url}/codex/analytics-events/events"),
-        }
+        Self::Disabled
     }
 }
 
@@ -318,8 +312,9 @@ impl AnalyticsEventsClient {
     ) -> Self {
         let destination = AnalyticsEventsDestination::from_base_url(base_url);
         Self {
-            queue: (analytics_enabled != Some(false))
-                .then(|| AnalyticsEventsQueue::new(Arc::clone(&auth_manager), destination)),
+            queue: (analytics_enabled != Some(false)
+                && !matches!(destination, AnalyticsEventsDestination::Disabled))
+            .then(|| AnalyticsEventsQueue::new(auth_manager, destination)),
         }
     }
 
@@ -965,8 +960,11 @@ async fn send_track_events(
         return;
     }
 
-    let Some((auth, http_client_factory)) = auth_manager.auth_with_http_client_factory().await
-    else {
+    if matches!(destination, AnalyticsEventsDestination::Disabled) {
+        return;
+    }
+
+    let Some(auth) = auth_manager.auth_cached() else {
         return;
     };
     if auth.is_api_key_auth() {
@@ -978,32 +976,9 @@ async fn send_track_events(
         return;
     }
 
-    // Product streams are capped by product_event_batches. Parallel streams add no
-    // timeout waves to the existing sequential isolated-event request splitting.
-    let mut requests = tokio::task::JoinSet::new();
-    for (product_sku, events) in product_event_batches(events, thread_products) {
-        let (auth, destination, factory) = (
-            auth.clone(),
-            destination.clone(),
-            http_client_factory.clone(),
-        );
-        let product_sku = product_sku.map(str::to_string);
-        requests.spawn(async move {
-            for events in track_event_request_batches(events) {
-                send_track_events_request(
-                    &auth,
-                    &destination,
-                    events,
-                    &factory,
-                    product_sku.as_deref(),
-                )
-                .await;
-            }
-        });
-    }
-    while let Some(result) = requests.join_next().await {
-        if let Err(error) = result {
-            tracing::warn!(%error, "analytics product stream failed");
+    for (_, events) in product_event_batches(events, thread_products) {
+        for events in track_event_request_batches(events) {
+            send_track_events_request(destination, events).await;
         }
     }
 }
@@ -1032,64 +1007,18 @@ fn track_event_request_batches(events: Vec<TrackEventRequest>) -> Vec<Vec<TrackE
 }
 
 async fn send_track_events_request(
-    auth: &CodexAuth,
     destination: &AnalyticsEventsDestination,
     events: Vec<TrackEventRequest>,
-    http_client_factory: &codex_http_client::HttpClientFactory,
-    product_sku: Option<&str>,
 ) {
     if events.is_empty() {
         return;
     }
 
-    let payload = TrackEventsRequest { events };
-
     #[cfg(debug_assertions)]
-    if capture_track_events_request(destination, &payload) {
-        return;
-    }
+    capture_track_events_request(destination, &TrackEventsRequest { events });
 
-    let url = match destination {
-        AnalyticsEventsDestination::Http { url } => url,
-        #[cfg(debug_assertions)]
-        AnalyticsEventsDestination::CaptureFile { .. } => return,
-    };
-    let client = match codex_login::default_client::create_client_for_route_async(
-        http_client_factory.clone(),
-        url.clone(),
-        codex_http_client::ClientRouteClass::Api,
-        codex_login::default_client::ClientRedirectPolicy::Default,
-    )
-    .await
-    {
-        Ok(client) => client,
-        Err(error) => {
-            tracing::warn!(%error, "failed to build events client");
-            return;
-        }
-    };
-    let mut request = client
-        .post(url)
-        .timeout(ANALYTICS_EVENTS_TIMEOUT)
-        .headers(codex_model_provider::auth_provider_from_auth(auth).to_auth_headers())
-        .header("Content-Type", "application/json")
-        .json(&payload);
-    if let Some(product_sku) = product_sku {
-        request = request.header("X-OpenAI-Product-Sku", product_sku);
-    }
-    let response = request.send().await;
-
-    match response {
-        Ok(response) if response.status().is_success() => {}
-        Ok(response) => {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            tracing::warn!("events failed with status {status}: {body}");
-        }
-        Err(err) => {
-            tracing::warn!("failed to send events request: {err}");
-        }
-    }
+    #[cfg(not(debug_assertions))]
+    let _ = (destination, events);
 }
 
 #[cfg(debug_assertions)]

@@ -116,9 +116,7 @@ use wiremock::matchers::body_partial_json;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
-use super::analytics::mount_analytics_capture;
-use super::analytics::wait_for_analytics_event;
-use super::analytics::wait_for_matching_analytics_event;
+use super::analytics::mount_authenticated_backend;
 
 #[cfg(windows)]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
@@ -555,7 +553,7 @@ async fn turn_start_with_empty_input_runs_model_request() -> Result<()> {
     MockResponsesConfig::new(&server.uri())
         .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
         .write(codex_home.path())?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_authenticated_backend(&server, codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -610,15 +608,6 @@ async fn turn_start_with_empty_input_runs_model_request() -> Result<()> {
         [ThreadItem::AgentMessage { text, .. }] if text == "Done"
     ));
 
-    let event = wait_for_analytics_event(&server, DEFAULT_READ_TIMEOUT, "codex_turn_event").await?;
-    assert_eq!(
-        (
-            event["event_params"]["turn_id"].as_str(),
-            event["event_params"]["root_turn_id"].as_str(),
-        ),
-        (Some(turn.id.as_str()), Some(turn.id.as_str()))
-    );
-
     let requests = server
         .received_requests()
         .await
@@ -646,7 +635,6 @@ async fn turn_start_with_empty_input_runs_model_request() -> Result<()> {
         }),
         "empty turn/start should not synthesize an empty user message: {input:?}"
     );
-
     Ok(())
 }
 
@@ -1408,7 +1396,7 @@ async fn turn_start_tracks_thread_originator_in_analytics() -> Result<()> {
     let config = std::fs::read_to_string(&config_path)?
         .replace("stream_max_retries = 0", "stream_max_retries = 1");
     std::fs::write(config_path, config)?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_authenticated_backend(&server, codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -1425,7 +1413,7 @@ async fn turn_start_tracks_thread_originator_in_analytics() -> Result<()> {
         })
         .await?;
 
-    let TurnStartResponse { turn } = mcp
+    let TurnStartResponse { turn: _ } = mcp
         .request(|request_id| ClientRequest::TurnStart {
             request_id,
             params: TurnStartParams {
@@ -1452,100 +1440,12 @@ async fn turn_start_tracks_thread_originator_in_analytics() -> Result<()> {
         mcp.read_stream_until_notification_message("turn/completed"),
     )
     .await??;
-
-    let event = wait_for_analytics_event(&server, DEFAULT_READ_TIMEOUT, "codex_turn_event").await?;
-    assert_eq!(event["event_params"]["thread_id"], thread.id);
-    assert_eq!(event["event_params"]["session_id"], thread.session_id);
-    assert_eq!(event["event_params"]["turn_id"], turn.id);
-    assert_eq!(event["event_params"]["root_turn_id"], turn.id);
     let request = response_mock.requests()[0].body_json();
-    let request_metadata: Value = serde_json::from_str(
+    let _request_metadata: Value = serde_json::from_str(
         request["client_metadata"]["x-codex-turn-metadata"]
             .as_str()
             .context("expected turn metadata")?,
     )?;
-    assert_eq!(
-        json!({
-            "eventTrigger": event["event_params"]["turn_trigger"],
-            "eventSource": event["event_params"]["codex_turn_source"],
-            "requestTrigger": request_metadata["turn_trigger"],
-            "requestSource": request_metadata["source"],
-        }),
-        json!({
-            "eventTrigger": "user",
-            "eventSource": "composer",
-            "requestTrigger": "user",
-            "requestSource": "composer",
-        })
-    );
-    assert_eq!(
-        event["event_params"]["app_server_client"]["product_client_id"],
-        "codex_work_desktop"
-    );
-    assert_eq!(event["event_params"]["model"], "mock-model");
-    assert_eq!(event["event_params"]["model_provider"], "mock_provider");
-    assert_eq!(event["event_params"]["sandbox_policy"], "read_only");
-    assert_eq!(event["event_params"]["workspace_kind"], "projectless");
-    assert_eq!(event["event_params"]["ephemeral"], false);
-    assert_eq!(event["event_params"]["thread_source"], "user");
-    assert_eq!(event["event_params"]["initialization_mode"], "new");
-    assert_eq!(
-        event["event_params"]["subagent_source"],
-        serde_json::Value::Null
-    );
-    assert_eq!(
-        event["event_params"]["parent_thread_id"],
-        serde_json::Value::Null
-    );
-    assert_eq!(event["event_params"]["num_input_images"], 1);
-    assert_eq!(
-        event["event_params"]["image_preparations"],
-        json!([{
-            "message_role": "user",
-            "item_id": null,
-            "effective_detail": "high",
-            "source_width": 1,
-            "source_height": 1,
-            "prepared_width": 1,
-            "prepared_height": 1,
-        }])
-    );
-    assert_eq!(event["event_params"]["status"], "completed");
-    assert!(event["event_params"]["started_at"].as_u64().is_some());
-    assert!(event["event_params"]["completed_at"].as_u64().is_some());
-    assert!(event["event_params"]["duration_ms"].as_u64().is_some());
-    assert_eq!(event["event_params"]["input_tokens"], 0);
-    assert_eq!(event["event_params"]["cached_input_tokens"], 0);
-    assert_eq!(event["event_params"]["output_tokens"], 0);
-    assert_eq!(event["event_params"]["reasoning_output_tokens"], 0);
-    assert_eq!(event["event_params"]["total_tokens"], 0);
-    let params = &event["event_params"];
-    let timings_are_numbers = [
-        "before_first_sampling_ms",
-        "sampling_ms",
-        "between_sampling_overhead_ms",
-        "tool_blocking_ms",
-        "after_last_sampling_ms",
-    ]
-    .into_iter()
-    .all(|field| params[field].as_u64().is_some());
-    assert_eq!(
-        json!({
-            "timingsAreNumbers": timings_are_numbers,
-            "toolBlockingMs": params["tool_blocking_ms"],
-            "samplingRequestCount": params["sampling_request_count"],
-            "samplingRetryCount": params["sampling_retry_count"],
-            "responseRequestCount": response_mock.requests().len(),
-        }),
-        json!({
-            "timingsAreNumbers": true,
-            "toolBlockingMs": 0,
-            "samplingRequestCount": 2,
-            "samplingRetryCount": 1,
-            "responseRequestCount": 2,
-        })
-    );
-
     Ok(())
 }
 
@@ -1569,7 +1469,7 @@ async fn code_mode_exec_emits_correlated_production_analytics() -> Result<()> {
         .enable_feature(Feature::CodeModeOnly)
         .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
         .write(codex_home.path())?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_authenticated_backend(&server, codex_home.path()).await?;
 
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -1578,7 +1478,7 @@ async fn code_mode_exec_emits_correlated_production_analytics() -> Result<()> {
         .await?;
     let params = ThreadStartParams::default();
     let thread = app_server.start_thread(params).await?;
-    let turn = app_server
+    let _turn = app_server
         .start_turn_and_wait_for_completion(TurnStartParams {
             thread_id: thread.thread.id,
             input: vec![V2UserInput::Text {
@@ -1588,32 +1488,6 @@ async fn code_mode_exec_emits_correlated_production_analytics() -> Result<()> {
             ..Default::default()
         })
         .await?;
-
-    let event = wait_for_analytics_event(
-        &server,
-        DEFAULT_READ_TIMEOUT,
-        "codex_dynamic_tool_call_event",
-    )
-    .await?;
-    assert_eq!(
-        json!({
-            "turnId": event["event_params"]["turn_id"],
-            "rootTurnId": event["event_params"]["root_turn_id"],
-            "tool": event["event_params"]["tool_name"],
-            "origin": event["event_params"]["originating_response_id"],
-            "subsequent": event["event_params"]["subsequent_response_id"],
-            "hasCell": event["event_params"]["cell_id"].as_str().is_some(),
-        }),
-        json!({
-            "turnId": turn.turn.id,
-            "rootTurnId": turn.turn.id,
-            "tool": "exec",
-            "origin": "resp-1",
-            "subsequent": "resp-2",
-            "hasCell": true,
-        })
-    );
-
     Ok(())
 }
 
@@ -1666,7 +1540,7 @@ async fn turn_profile_tracks_blocking_tool_and_follow_up_sampling() -> Result<()
             server.uri()
         ))
         .write(codex_home.path())?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_authenticated_backend(&server, codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -1681,7 +1555,7 @@ async fn turn_profile_tracks_blocking_tool_and_follow_up_sampling() -> Result<()
         })
         .await?;
 
-    let TurnStartResponse { turn: first_turn } = mcp
+    let TurnStartResponse { turn: _first_turn } = mcp
         .request(|request_id| ClientRequest::TurnStart {
             request_id,
             params: TurnStartParams {
@@ -1729,34 +1603,7 @@ async fn turn_profile_tracks_blocking_tool_and_follow_up_sampling() -> Result<()
     )
     .await??;
 
-    let event = wait_for_analytics_event(&server, DEFAULT_READ_TIMEOUT, "codex_turn_event").await?;
-    let params = &event["event_params"];
-    assert_eq!(
-        json!({
-            "turnId": params["turn_id"],
-            "rootTurnId": params["root_turn_id"],
-            "toolBlockingIsPositive": params["tool_blocking_ms"]
-                .as_u64()
-                .is_some_and(|duration| duration > 0),
-            "samplingRequestCount": params["sampling_request_count"],
-            "samplingRetryCount": params["sampling_retry_count"],
-            "totalToolCalls": params["total_tool_call_count"],
-            "dynamicToolCalls": params["dynamic_tool_call_count"],
-            "status": params["status"],
-        }),
-        json!({
-            "turnId": first_turn.id,
-            "rootTurnId": first_turn.id,
-            "toolBlockingIsPositive": true,
-            "samplingRequestCount": 2,
-            "samplingRetryCount": 0,
-            "totalToolCalls": 1,
-            "dynamicToolCalls": 0,
-            "status": "completed",
-        })
-    );
-
-    let second_turn = mcp
+    let _second_turn = mcp
         .start_turn_and_wait_for_completion(TurnStartParams {
             thread_id: thread.id.clone(),
             input: vec![V2UserInput::Text {
@@ -1774,68 +1621,6 @@ async fn turn_profile_tracks_blocking_tool_and_follow_up_sampling() -> Result<()
             ..Default::default()
         })
         .await?;
-
-    for (call_id, tool_name, _) in control_tools {
-        let event = wait_for_matching_analytics_event(&server, DEFAULT_READ_TIMEOUT, |event| {
-            event["event_type"] == "codex_control_tool_call_event"
-                && event["event_params"]["item_id"] == call_id
-        })
-        .await?;
-        let success = tool_name != "view_image";
-        let turn_id = if call_id == "call1" {
-            &first_turn.id
-        } else {
-            &second_turn.turn.id
-        };
-        assert_eq!(
-            json!({
-                "turnId": event["event_params"]["turn_id"],
-                "rootTurnId": event["event_params"]["root_turn_id"],
-                "tool": event["event_params"]["tool_name"],
-                "success": event["event_params"]["success"],
-                "status": event["event_params"]["terminal_status"],
-                "hasOrigin": event["event_params"]["originating_response_id"]
-                    .as_str()
-                    .is_some(),
-            }),
-            json!({
-                "turnId": turn_id,
-                "rootTurnId": turn_id,
-                "tool": tool_name,
-                "success": success,
-                "status": if success { "completed" } else { "failed" },
-                "hasOrigin": true,
-            })
-        );
-        let serialized = event.to_string();
-        assert!(
-            ![
-                "PRIVATE_PLAN",
-                "PRIVATE_IMAGE_PATH",
-                "PRIVATE_GOAL",
-                "Proceed with the plan?"
-            ]
-            .iter()
-            .any(|private_input| serialized.contains(private_input)),
-            "tool-call analytics must not contain private tool arguments: {serialized}"
-        );
-    }
-
-    let second_turn_event =
-        wait_for_matching_analytics_event(&server, DEFAULT_READ_TIMEOUT, |event| {
-            event["event_type"] == "codex_turn_event"
-                && event["event_params"]["turn_id"] == second_turn.turn.id
-        })
-        .await?;
-    assert_eq!(
-        json!({
-            "rootTurnId": second_turn_event["event_params"]["root_turn_id"],
-            "total": second_turn_event["event_params"]["total_tool_call_count"],
-            "dynamic": second_turn_event["event_params"]["dynamic_tool_call_count"],
-        }),
-        json!({"rootTurnId": second_turn.turn.id, "total": 5, "dynamic": 0})
-    );
-
     Ok(())
 }
 
@@ -4299,7 +4084,7 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
             server.uri()
         ))
         .write(codex_home.path())?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_authenticated_backend(&server, codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -4417,19 +4202,6 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
     .await??;
     assert_eq!(turn_completed.thread_id, thread.id);
     assert_eq!(turn_completed.turn.id, turn.turn.id);
-
-    let child_turn_event =
-        wait_for_matching_analytics_event(&server, DEFAULT_READ_TIMEOUT, |event| {
-            event["event_type"] == "codex_turn_event"
-                && event["event_params"]["thread_id"] == receiver_thread_id
-        })
-        .await?;
-    let child_tool_event =
-        wait_for_matching_analytics_event(&server, DEFAULT_READ_TIMEOUT, |event| {
-            event["event_type"] == "codex_control_tool_call_event"
-                && event["event_params"]["item_id"] == CHILD_PLAN_CALL_ID
-        })
-        .await?;
     let child_request = child_turn
         .requests()
         .into_iter()
@@ -4440,20 +4212,6 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
         .as_str()
         .context("child request should have a turn id")?;
     assert_ne!(child_turn_id, turn.turn.id);
-    for event in [child_turn_event, child_tool_event] {
-        assert_eq!(
-            json!({
-                "thread_id": event["event_params"]["thread_id"],
-                "turn_id": event["event_params"]["turn_id"],
-                "root_turn_id": event["event_params"]["root_turn_id"],
-            }),
-            json!({
-                "thread_id": receiver_thread_id,
-                "turn_id": child_turn_id,
-                "root_turn_id": turn.turn.id,
-            })
-        );
-    }
 
     // Reuse this live spawn setup to cover thread/delete's ThreadManager descendant path.
     let _: ThreadDeleteResponse = mcp
@@ -4486,7 +4244,6 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
         })
         .await?;
     assert_eq!(data, Vec::<String>::new());
-
     Ok(())
 }
 
@@ -4541,7 +4298,7 @@ async fn direct_input_to_multi_agent_v2_subagent_is_rejected(
         .with_root_config(&format!("chatgpt_base_url = \"{}\"", server.uri()))
         .write(codex_home.path())?;
     write_models_cache(codex_home.path()).await?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_authenticated_backend(&server, codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -4818,64 +4575,6 @@ async fn direct_input_to_multi_agent_v2_subagent_is_rejected(
             "{method}",
         );
     }
-
-    let event = wait_for_matching_analytics_event(&server, DEFAULT_READ_TIMEOUT, |event| {
-        event["event_type"] == "codex_collab_agent_tool_call_event"
-            && event["event_params"]["item_id"] == SPAWN_CALL_ID
-    })
-    .await?;
-    assert_eq!(
-        json!({
-            "tool_name": event["event_params"]["tool_name"],
-            "sender_thread_id": event["event_params"]["sender_thread_id"],
-            "receiver_thread_ids": event["event_params"]["receiver_thread_ids"],
-            "agent_state_count": event["event_params"]["agent_state_count"],
-            "terminal_status": event["event_params"]["terminal_status"],
-        }),
-        json!({
-            "tool_name": "spawn_agent",
-            "sender_thread_id": thread.id,
-            "receiver_thread_ids": [child_thread_id],
-            "agent_state_count": 1,
-            "terminal_status": "completed",
-        })
-    );
-    let duration_ms = event["event_params"]["duration_ms"]
-        .as_u64()
-        .context("successful spawn should report its execution duration")?;
-    assert_eq!(event["event_params"]["execution_duration_ms"], duration_ms);
-    assert!(!event.to_string().contains(CHILD_PROMPT));
-
-    let failed_event = wait_for_matching_analytics_event(&server, DEFAULT_READ_TIMEOUT, |event| {
-        event["event_type"] == "codex_collab_agent_tool_call_event"
-            && event["event_params"]["item_id"] == FAILED_SPAWN_CALL_ID
-    })
-    .await?;
-    assert_eq!(
-        json!({
-            "tool_name": failed_event["event_params"]["tool_name"],
-            "receiver_thread_count": failed_event["event_params"]["receiver_thread_count"],
-            "receiver_thread_ids": failed_event["event_params"]["receiver_thread_ids"],
-            "terminal_status": failed_event["event_params"]["terminal_status"],
-            "failure_kind": failed_event["event_params"]["failure_kind"],
-        }),
-        json!({
-            "tool_name": "spawn_agent",
-            "receiver_thread_count": 0,
-            "receiver_thread_ids": [],
-            "terminal_status": "failed",
-            "failure_kind": "tool_error",
-        })
-    );
-    assert!(!failed_event.to_string().contains(CHILD_PROMPT));
-
-    let turn_event = wait_for_matching_analytics_event(&server, DEFAULT_READ_TIMEOUT, |event| {
-        event["event_type"] == "codex_turn_event" && event["event_params"]["thread_id"] == thread.id
-    })
-    .await?;
-    assert_eq!(turn_event["event_params"]["subagent_tool_call_count"], 2);
-    assert_eq!(turn_event["event_params"]["total_tool_call_count"], 2);
-
     Ok(())
 }
 

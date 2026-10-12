@@ -117,7 +117,7 @@
       "description": "Analytics settings loaded from config.toml. Fields are optional so we can apply defaults.",
       "properties": {
         "enabled": {
-          "description": "When `false`, disables OpenAI analytics across Codex product surfaces in this profile. Custom OTLP metrics exporters remain enabled; set `otel.metrics_exporter = \"none\"` to disable them.",
+          "description": "Legacy analytics setting. External analytics reporting is unavailable in Lemex. Custom OTLP exporters require explicit configuration.",
           "type": "boolean"
         }
       },
@@ -1683,7 +1683,7 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "description": "When `false`, disables the feedback flow across Codex product surfaces.",
+          "description": "Legacy feedback setting. External feedback reporting is unavailable in Lemex.",
           "type": "boolean"
         }
       },
@@ -3433,7 +3433,7 @@
               "$ref": "#/definitions/OtelExporterKind"
             }
           ],
-          "description": "Metrics exporter. Defaults to `statsig`, which follows `analytics.enabled`. Custom OTLP exporters are independent of `analytics.enabled`; `none` disables metrics export."
+          "description": "Metrics exporter. Defaults to `none`; the legacy `statsig` value is disabled. Custom OTLP exporters are independent of `analytics.enabled`; `none` disables metrics export."
         },
         "span_attributes": {
           "additionalProperties": {
@@ -3479,7 +3479,13 @@
       "oneOf": [
         {
           "enum": [
-            "none",
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Legacy value accepted for compatibility; exports nothing in Lemex.",
+          "enum": [
             "statsig"
           ],
           "type": "string"
@@ -6842,7 +6848,7 @@
           "$ref": "#/definitions/AnalyticsConfigToml"
         }
       ],
-      "description": "When `enabled` is `false`, disables OpenAI analytics across Codex product surfaces on this machine. Custom OTLP metrics exporters are controlled by `otel.metrics_exporter`. When unset, the default depends on the client."
+      "description": "Legacy analytics setting. External analytics reporting is unavailable in Lemex. Custom OTLP exporters require explicit configuration."
     },
     "approval_policy": {
       "allOf": [
@@ -7560,7 +7566,7 @@
           "$ref": "#/definitions/FeedbackConfigToml"
         }
       ],
-      "description": "When `false`, disables feedback collection across Codex product surfaces. Defaults to `true`."
+      "description": "Legacy feedback setting. External feedback reporting is unavailable in Lemex."
     },
     "file_opener": {
       "allOf": [

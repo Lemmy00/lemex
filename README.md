@@ -2,6 +2,8 @@
 
 Lemex is a local coding agent based on OpenAI Codex. It runs as `lemex` and keeps its configuration and login state in `~/.lemex`, so you can use it alongside Codex.
 
+External analytics and feedback reporting are removed. Local logs and token usage are preserved. Custom OpenTelemetry exporters require explicit configuration.
+
 ## Install
 
 On macOS, Linux, or Windows through WSL2, install Git, Node.js/npm, Python 3.11+, ripgrep, and the [platform build dependencies](docs/install.md#requirements). Then run:

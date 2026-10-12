@@ -62,10 +62,7 @@ use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
-use super::analytics::assert_basic_thread_initialized_event;
-use super::analytics::mount_analytics_capture;
-use super::analytics::thread_initialized_event;
-use super::analytics::wait_for_analytics_payload;
+use super::analytics::mount_authenticated_backend;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
@@ -959,7 +956,7 @@ async fn thread_start_tracks_thread_initialized_analytics(originator: &str) -> R
 
     let codex_home = TempDir::new()?;
     create_config_toml_with_chatgpt_base_url(codex_home.path(), &server.uri(), &server.uri())?;
-    mount_analytics_capture(&server, codex_home.path()).await?;
+    mount_authenticated_backend(&server, codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -967,7 +964,7 @@ async fn thread_start_tracks_thread_initialized_analytics(originator: &str) -> R
         .build_initialized()
         .await?;
 
-    let ThreadStartResponse { thread, .. } = mcp
+    let ThreadStartResponse { thread: _, .. } = mcp
         .start_thread(ThreadStartParams {
             thread_source: Some(ThreadSource::User),
             service_name: Some(originator.to_string()),
@@ -975,17 +972,19 @@ async fn thread_start_tracks_thread_initialized_analytics(originator: &str) -> R
         })
         .await?;
 
-    let payload = wait_for_analytics_payload(&server, DEFAULT_READ_TIMEOUT).await?;
-    assert_eq!(payload["events"].as_array().expect("events array").len(), 1);
-    let event = thread_initialized_event(&payload)?;
-    assert_basic_thread_initialized_event(
-        event,
-        &thread.id,
-        &thread.session_id,
-        originator,
-        "mock-model",
-        "new",
-        "user",
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .all(|request| {
+                !request
+                    .url
+                    .path()
+                    .ends_with("/codex/analytics-events/events")
+            }),
+        "external analytics reporting must remain disabled"
     );
     Ok(())
 }

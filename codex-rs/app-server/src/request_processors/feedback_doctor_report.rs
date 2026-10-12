@@ -2,7 +2,7 @@
 //!
 //! Feedback upload should never depend on doctor succeeding. This module runs
 //! the configured Codex executable as a subprocess, accepts only valid JSON from
-//! `codex doctor --json --feedback`, derives a small set of Sentry tags, and otherwise
+//! `codex doctor --json --feedback`, derives a small set of diagnostic tags, and otherwise
 //! skips the attachment with a warning. Keeping the report generation out of the
 //! app-server process avoids sharing doctor internals across crates while still
 //! using the CLI's JSON report format with bounded database scans.
@@ -29,7 +29,7 @@ const MAX_DOCTOR_TAG_VALUE_LEN: usize = 256;
 pub(crate) struct DoctorFeedbackReport {
     /// JSON support report to upload as `codex-doctor-report.json`.
     pub(crate) attachment: FeedbackAttachment,
-    /// Low-cardinality Sentry tags derived from the report status and check ids.
+    /// Low-cardinality diagnostic tags derived from the report status and check ids.
     pub(crate) tags: BTreeMap<String, String>,
 }
 

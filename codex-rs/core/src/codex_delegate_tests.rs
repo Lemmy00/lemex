@@ -235,19 +235,12 @@ async fn run_codex_thread_interactive_respects_pre_cancelled_spawn() {
 }
 
 #[tokio::test]
-async fn delegate_start_analytics_honors_child_opt_out_with_enabled_parent() {
+async fn delegate_start_never_reports_external_analytics() {
     use codex_analytics::AnalyticsEventsClient;
     use codex_login::CodexAuth;
-    use wiremock::Mock;
     use wiremock::MockServer;
-    use wiremock::ResponseTemplate;
-    use wiremock::matchers::path;
 
     let server = MockServer::start().await;
-    Mock::given(path("/codex/analytics-events/events"))
-        .respond_with(ResponseTemplate::new(200))
-        .mount(&server)
-        .await;
     let client = AnalyticsEventsClient::new(
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
         server.uri(),
@@ -268,12 +261,11 @@ async fn delegate_start_analytics_honors_child_opt_out_with_enabled_parent() {
         .await
         .expect("set parent client metadata");
 
-    let mut expected_events = Vec::new();
     for analytics_enabled in [false, true] {
         let mut config = parent_ctx.config.as_ref().clone();
         config.permissions.approval_policy = Constrained::allow_only(AskForApproval::Never);
         config.analytics_enabled = Some(analytics_enabled);
-        let (session, io) = run_codex_thread_interactive(
+        let (_session, io) = run_codex_thread_interactive(
             config,
             Arc::clone(&parent_session.services.auth_manager),
             Arc::clone(&parent_session.services.models_manager),
@@ -289,29 +281,25 @@ async fn delegate_start_analytics_honors_child_opt_out_with_enabled_parent() {
         )
         .await
         .expect("delegate session should start");
-        if analytics_enabled {
-            expected_events.push(serde_json::json!([
-                "codex_thread_initialized",
-                session.thread_id().to_string(),
-            ]));
-        }
         io.shutdown_and_wait()
             .await
             .expect("delegate session should shut down");
     }
     client.flush().await;
-    let events = server
-        .received_requests()
-        .await
-        .expect("analytics requests")
-        .into_iter()
-        .flat_map(|request| {
-            let payload: Value = serde_json::from_slice(&request.body).expect("analytics payload");
-            payload["events"].as_array().expect("events array").clone()
-        })
-        .map(|event| serde_json::json!([event["event_type"], event["event_params"]["thread_id"]]))
-        .collect::<Vec<_>>();
-    assert_eq!(events, expected_events);
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .all(|request| {
+                !request
+                    .url
+                    .path()
+                    .ends_with("/codex/analytics-events/events")
+            }),
+        "external analytics reporting must remain disabled"
+    );
 }
 
 #[tokio::test]

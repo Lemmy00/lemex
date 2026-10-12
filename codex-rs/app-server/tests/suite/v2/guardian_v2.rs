@@ -67,9 +67,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio::time::timeout;
 
-use super::analytics::captured_analytics_events;
-use super::analytics::mount_analytics_capture;
-use super::analytics::wait_for_matching_analytics_event;
+use super::analytics::mount_authenticated_backend;
 use super::mcp_tool::TEST_SERVER_NAME;
 use super::mcp_tool::TEST_TOOL_NAME;
 use super::mcp_tool::start_mcp_server;
@@ -854,7 +852,7 @@ async fn guardian_v2_routes_scoped_tool_approvals(
 
     let codex_home = TempDir::new()?;
     let analytics_server = responses::start_mock_server().await;
-    mount_analytics_capture(&analytics_server, codex_home.path()).await?;
+    mount_authenticated_backend(&analytics_server, codex_home.path()).await?;
     let mixed_evidence = matches!(transcript_content, TranscriptContent::MixedEvidence);
     let root_skill = if matches!(lifecycle, ThreadLifecycle::RootTrustedSkill) || mixed_evidence {
         let path = codex_home.path().join("skills/root-trusted/SKILL.md");
@@ -2018,109 +2016,6 @@ async fn guardian_v2_routes_scoped_tool_approvals(
 
     if matches!(review_outcome, ReviewOutcome::Deny) && !lifecycle.has_user_answer() {
         timeout(TIMEOUT, responses_state.truncation_recorded.notified()).await?;
-    }
-
-    if matches!(lifecycle, ThreadLifecycle::New)
-        && matches!(scope, GuardianToolScope::AllTools)
-        && sensitive_action.is_none()
-    {
-        if classifier_in_scope {
-            wait_for_matching_analytics_event(&analytics_server, TIMEOUT, |event| {
-                event["event_type"] == "codex_guardian_v2_classification"
-                    && event["event_params"]["item_id"] == "guardian-action-0"
-            })
-            .await?;
-        }
-        let turn = wait_for_matching_analytics_event(&analytics_server, TIMEOUT, |event| {
-            event["event_type"] == "codex_turn_event"
-                && event["event_params"]["thread_id"] == reviewed_thread_id
-        })
-        .await?;
-        timeout(TIMEOUT, app_server.shutdown_gracefully()).await??;
-        let reviewer_id = responses_state
-            .guardian_requests
-            .lock()
-            .expect("Guardian requests")[0]["client_metadata"]["thread_id"]
-            .as_str()
-            .expect("reviewer ID")
-            .to_owned();
-        let state_db = StateRuntime::init(
-            codex_state::SqliteConfig::new_for_testing(codex_home.path().abs()),
-            "mock_provider".to_owned(),
-        )
-        .await?;
-        let metadata = state_db
-            .get_thread(codex_protocol::ThreadId::from_string(&reviewer_id)?)
-            .await?
-            .expect("reviewer metadata should be persisted");
-        assert_eq!(
-            (
-                metadata.source.as_str(),
-                metadata.title.as_str(),
-                metadata.name.as_deref(),
-                metadata.preview.as_deref(),
-                metadata.first_user_message.as_deref(),
-            ),
-            (
-                r#"{"subagent":{"other":"guardian"}}"#,
-                "Guardian review",
-                Some("Guardian review"),
-                Some("Approval review"),
-                None
-            ),
-        );
-        let events = captured_analytics_events(&analytics_server).await;
-        let turn = &turn["event_params"];
-        assert_eq!(turn["guardian_v2_enabled"], classifier_in_scope);
-        let classification = events.iter().find(|event| {
-            event["event_type"] == "codex_guardian_v2_classification"
-                && event["event_params"]["item_id"] == "guardian-action-0"
-        });
-        assert_eq!(classification.is_some(), classifier_in_scope);
-        if let Some(event) = classification {
-            assert_eq!(
-                json!([
-                    event["event_params"]["outcome"],
-                    event["event_params"]["risk_level"]
-                ]),
-                match risk {
-                    GuardianRisk::Low | GuardianRisk::LowWithStreamFailure =>
-                        json!(["success", "low"]),
-                    GuardianRisk::Threshold | GuardianRisk::High => json!(["success", "high"]),
-                    GuardianRisk::InvalidResponse => json!(["failure", null]),
-                }
-            );
-        }
-        let approvals = events
-            .iter()
-            .filter(|event| event["event_type"] == "codex_guardian_v2_fast_decision")
-            .collect::<Vec<_>>();
-        assert_eq!(
-            approvals.len(),
-            usize::from(classifier_in_scope && matches!(risk, GuardianRisk::Low))
-        );
-        for event in classification.into_iter().chain(approvals) {
-            let params = &event["event_params"];
-            for key in [
-                "session_id",
-                "thread_id",
-                "turn_id",
-                "model",
-                "app_server_client",
-                "runtime",
-                "thread_source",
-                "subagent_source",
-                "parent_thread_id",
-            ] {
-                assert_eq!(params[key], turn[key], "{key}");
-            }
-            if event["event_type"] == "codex_guardian_v2_fast_decision" {
-                assert_eq!(
-                    json!([params["item_id"], params["decision"]]),
-                    json!(["guardian-action-1", "approved"])
-                );
-            }
-        }
     }
 
     mcp_server_handle.abort();

@@ -23,3 +23,12 @@ url = "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa,web_search_adva
 enabled = true
 startup_timeout_sec = 30
 tool_timeout_sec = 60
+
+[analytics]
+enabled = false
+
+[feedback]
+enabled = false
+
+[otel]
+metrics_exporter = "none"

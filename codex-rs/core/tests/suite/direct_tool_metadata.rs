@@ -20,7 +20,6 @@ use wiremock::Request;
 use wiremock::ResponseTemplate;
 use wiremock::matchers::body_partial_json;
 use wiremock::matchers::method;
-use wiremock::matchers::path;
 use wiremock::matchers::path_regex;
 
 use codex_protocol::models::PermissionProfile;
@@ -689,11 +688,6 @@ async fn direct_metadata_limit_respects_provider_support(
             }))
         })
         .with_priority(/*p*/ 1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/codex/analytics-events/events"))
-        .respond_with(ResponseTemplate::new(/*s*/ 200))
         .mount(&server)
         .await;
     let mut events = vec![

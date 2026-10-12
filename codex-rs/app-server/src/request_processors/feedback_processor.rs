@@ -61,7 +61,7 @@ impl FeedbackRequestProcessor {
     ) -> Result<FeedbackUploadResponse, JSONRPCErrorError> {
         if !self.config.feedback_enabled {
             return Err(invalid_request(
-                "sending feedback is disabled by configuration",
+                "external feedback reporting is unavailable in Lemex",
             ));
         }
         let permit = self

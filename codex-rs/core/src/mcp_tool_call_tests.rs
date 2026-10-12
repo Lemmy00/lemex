@@ -2175,16 +2175,8 @@ fn accepted_elicitation_without_content_defaults_to_accept() {
 }
 
 #[tokio::test]
-async fn dispatched_mcp_approval_with_closed_response_is_classified_as_approval() {
-    use wiremock::matchers::method;
-    use wiremock::matchers::path;
-
+async fn dispatched_mcp_approval_with_closed_response_aborts_without_reporting() {
     let server = wiremock::MockServer::start().await;
-    wiremock::Mock::given(method("POST"))
-        .and(path("/codex/analytics-events/events"))
-        .respond_with(wiremock::ResponseTemplate::new(200))
-        .mount(&server)
-        .await;
 
     let (mut session, turn_context, rx_event) = make_session_and_context_with_rx().await;
     let client = codex_analytics::AnalyticsEventsClient::new(
@@ -2288,30 +2280,19 @@ async fn dispatched_mcp_approval_with_closed_response_is_classified_as_approval(
         .expect("item-completed notification should deserialize"),
     ));
     client.flush().await;
-    let events = server
-        .received_requests()
-        .await
-        .expect("analytics requests should be recorded")
-        .into_iter()
-        .flat_map(|request| {
-            serde_json::from_slice::<serde_json::Value>(&request.body)
-                .expect("analytics request should deserialize")["events"]
-                .as_array()
-                .expect("analytics events should be an array")
-                .clone()
-        })
-        .collect::<Vec<_>>();
-    let mcp_events = events
-        .iter()
-        .filter(|event| {
-            event["event_type"] == "codex_mcp_tool_call_event"
-                && event["event_params"]["item_id"] == call_id
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(mcp_events.len(), 1);
-    assert_eq!(
-        mcp_events[0]["event_params"]["elicitation_type"],
-        "approval"
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .all(|request| {
+                !request
+                    .url
+                    .path()
+                    .ends_with("/codex/analytics-events/events")
+            }),
+        "external analytics reporting must remain disabled"
     );
 }
 

@@ -21,10 +21,7 @@ use wiremock::matchers::body_partial_json;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
-use super::analytics::mount_analytics_capture;
-use super::analytics::wait_for_matching_analytics_event;
-
-const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
+use super::analytics::mount_authenticated_backend;
 
 const THREAD_HINT: &str =
     "Recent notes (up to 5, most-recent first):\n- /root/notes/latest.md (2 lines, 14 UTF-8 bytes)";
@@ -138,7 +135,7 @@ async fn app_server_uses_configured_notes_backend_for_context_window_hints(
             server.uri(),
         ))
         .write(codex_home.path())?;
-    mount_analytics_capture(&backend, codex_home.path()).await?;
+    mount_authenticated_backend(&backend, codex_home.path()).await?;
 
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -226,23 +223,6 @@ async fn app_server_uses_configured_notes_backend_for_context_window_hints(
             && item["namespace"] == "notes"
             && item["name"] == "thread_hint"
     }));
-
-    if use_history_notes_extension {
-        let event = wait_for_matching_analytics_event(&backend, DEFAULT_READ_TIMEOUT, |event| {
-            event["event_type"] == "codex_thread_hint_status"
-                && event["event_params"]["thread_id"] == thread.id
-        })
-        .await?;
-        assert_eq!(
-            event["event_params"]["status"],
-            if hint_status == 200 {
-                "succeeded"
-            } else {
-                "failed"
-            },
-        );
-    }
-
     Ok(())
 }
 
@@ -360,7 +340,7 @@ async fn history_notes_and_async_message_emit_control_tool_analytics() -> Result
             "[features.token_budget]\nenabled = true\nuse_history_notes_extension = true",
         )
         .write(codex_home.path())?;
-    mount_analytics_capture(&backend, codex_home.path()).await?;
+    mount_authenticated_backend(&backend, codex_home.path()).await?;
 
     let mut app_server = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -372,7 +352,7 @@ async fn history_notes_and_async_message_emit_control_tool_analytics() -> Result
         .start_thread(ThreadStartParams::default())
         .await?
         .thread;
-    let completed = app_server
+    let _completed = app_server
         .start_turn_and_wait_for_completion(TurnStartParams {
             thread_id: thread.id.clone(),
             input: vec![UserInput::Text {
@@ -395,46 +375,6 @@ async fn history_notes_and_async_message_emit_control_tool_analytics() -> Result
             .expect("declared history or notes tool");
         assert_eq!(tool["parameters"]["properties"][field]["encrypted"], true);
     }
-
-    for (index, (namespace, tool, _)) in calls.iter().enumerate() {
-        let event = wait_for_matching_analytics_event(&backend, DEFAULT_READ_TIMEOUT, |event| {
-            event["event_type"] == "codex_control_tool_call_event"
-                && event["event_params"]["item_id"] == format!("call-{index}")
-        })
-        .await?;
-        let params = &event["event_params"];
-        assert_eq!(
-            json!({
-                "tool": params["tool_name"],
-                "thread": params["thread_id"],
-                "turn": params["turn_id"],
-                "status": params["terminal_status"],
-                "origin": params["originating_response_id"],
-                "duration": params["execution_duration_ms"].is_u64(),
-            }),
-            json!({
-                "tool": if *namespace == "functions" { tool.to_string() } else { format!("{namespace}.{tool}") },
-                "thread": thread.id,
-                "turn": completed.turn.id,
-                "status": if index < 10 { "completed" } else { "failed" },
-                "origin": format!("resp-{index}"),
-                "duration": true,
-            })
-        );
-        assert!(!event.to_string().contains("PRIVATE_"));
-    }
-    let turn_event = wait_for_matching_analytics_event(&backend, DEFAULT_READ_TIMEOUT, |event| {
-        event["event_type"] == "codex_turn_event"
-            && event["event_params"]["turn_id"] == completed.turn.id
-    })
-    .await?;
-    assert_eq!(
-        json!({
-            "total": turn_event["event_params"]["total_tool_call_count"],
-            "dynamic": turn_event["event_params"]["dynamic_tool_call_count"],
-        }),
-        json!({"total": calls.len(), "dynamic": 0})
-    );
     assert_eq!(
         response_mock.requests()[10].function_call_output_text("call-9"),
         Some(r#"{"accepted":true}"#.to_string())
@@ -443,6 +383,5 @@ async fn history_notes_and_async_message_emit_control_tool_analytics() -> Result
         response_mock.requests()[11].function_call_output_text("call-10"),
         Some("History tool arguments must be a JSON object".to_string())
     );
-
     Ok(())
 }
