@@ -697,7 +697,7 @@ pub struct Config {
     pub hide_agent_reasoning: bool,
 
     /// When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output.
-    /// Defaults to `false`.
+    /// Defaults to `true` in Lemex.
     pub show_raw_agent_reasoning: bool,
 
     /// Base instructions override.
@@ -4473,7 +4473,7 @@ impl Config {
             show_raw_agent_reasoning: cfg
                 .show_raw_agent_reasoning
                 .or(show_raw_agent_reasoning)
-                .unwrap_or(false),
+                .unwrap_or(true),
             guardian_policy_config,
             guardian_extra_policy,
             guardian_policy_template,

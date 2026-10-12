@@ -252,6 +252,33 @@ async fn load_config_applies_optional_mcp_startup_grace() -> std::io::Result<()>
 }
 
 #[tokio::test]
+async fn load_config_raw_reasoning_defaults_on_and_respects_explicit_settings() -> anyhow::Result<()>
+{
+    let codex_home = tempdir()?;
+    for (toml, show_raw_agent_reasoning, expected) in [
+        ("", None, true),
+        ("model_reasoning_effort = \"high\"", None, true),
+        ("show_raw_agent_reasoning = true", None, true),
+        ("show_raw_agent_reasoning = false", None, false),
+        ("", Some(false), false),
+        ("", Some(true), true),
+        ("show_raw_agent_reasoning = false", Some(true), false),
+    ] {
+        let config = Config::load_from_base_config_with_overrides(
+            toml::from_str(toml)?,
+            ConfigOverrides {
+                show_raw_agent_reasoning,
+                ..Default::default()
+            },
+            codex_home.abs(),
+        )
+        .await?;
+        assert_eq!(config.show_raw_agent_reasoning, expected);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn load_config_resolves_thread_unload_delay() -> anyhow::Result<()> {
     let codex_home = tempdir()?;
     for (toml, seconds) in [

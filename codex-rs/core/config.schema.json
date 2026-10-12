@@ -7958,7 +7958,7 @@
       }
     },
     "show_raw_agent_reasoning": {
-      "description": "When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output. Defaults to `false`.",
+      "description": "When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output. Defaults to `true` in Lemex.",
       "type": "boolean"
     },
     "skills": {

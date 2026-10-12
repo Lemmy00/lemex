@@ -392,7 +392,7 @@ pub struct ConfigToml {
     pub hide_agent_reasoning: Option<bool>,
 
     /// When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output.
-    /// Defaults to `false`.
+    /// Defaults to `true` in Lemex.
     pub show_raw_agent_reasoning: Option<bool>,
 
     pub model_reasoning_effort: Option<ReasoningEffort>,

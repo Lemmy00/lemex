@@ -33,7 +33,7 @@ The bundled configuration selects the RCP provider, loads `models.json`, uses a 
 | `model_context_window`           | Context window to use, within the model's supported limit.                  |
 | `model_auto_compact_token_limit` | Token threshold for automatic context compaction.                           |
 | `model_reasoning_effort`         | Optional reasoning effort; leave unset to use each model's catalog default. |
-| `show_raw_agent_reasoning`       | Show or hide reasoning text returned by the provider.                       |
+| `show_raw_agent_reasoning`       | Show provider reasoning; defaults to `true` even when omitted.              |
 | `mcp_servers`                    | MCP servers that provide additional tools.                                  |
 
 Keep top-level settings above any `[table]` headers. Restart Lemex after editing configuration files. Use `/model` to select a model interactively or override settings for one launch:
@@ -77,7 +77,9 @@ To add a model, copy a suitable entry in `models.json` and update its `slug`, di
 
 The bundled config uses MCP tools for web search and sets `web_search = "disabled"` for the provider's hosted search. Manage servers with `lemex mcp` and inspect connected tools with `/mcp`. Enable hosted search only if your provider supports it.
 
-Press **Ctrl+T** to view the expanded transcript, including reasoning returned by the provider.
+Lemex shows raw reasoning returned by the provider by default, including for existing configuration files that omit `show_raw_agent_reasoning`. Set it to `false` to hide raw reasoning.
+
+Press **Ctrl+T** to view completed reasoning blocks in the expanded transcript. The compact chat shows the current reasoning activity in its status line.
 
 ## Managed hooks
 
