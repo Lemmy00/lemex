@@ -3808,7 +3808,7 @@ enabled = true
                 );
                 exit_info.disconnect_info = Some(codex_tui::DisconnectInfo {
                     command: vec![
-                        "codex".to_string(),
+                        "lemex".to_string(),
                         "--remote".to_string(),
                         "wss://example.com:443/".to_string(),
                     ],
@@ -3825,8 +3825,8 @@ enabled = true
             vec![
                 "Disconnected from this task. Any running work continues.",
                 "To reconnect, run:",
-                "  codex --remote wss://example.com:443/ --remote-auth-token-env CODEX_REMOTE_TOKEN resume 123e4567-e89b-12d3-a456-426614174000",
-                "Stop the current turn: run codex --remote wss://example.com:443/ --remote-auth-token-env CODEX_REMOTE_TOKEN agents, select this task, and press ctrl + x.",
+                "  lemex --remote wss://example.com:443/ --remote-auth-token-env CODEX_REMOTE_TOKEN resume 123e4567-e89b-12d3-a456-426614174000",
+                "Stop the current turn: run lemex --remote wss://example.com:443/ --remote-auth-token-env CODEX_REMOTE_TOKEN agents, select this task, and press ctrl + x.",
                 "Token usage so far: total=2 input=0 output=2",
             ]
         );
@@ -3888,7 +3888,7 @@ enabled = true
             vec![
                 "Token usage: total=2 input=0 output=2".to_string(),
                 "To continue this session, run:".to_string(),
-                "  codex resume 123e4567-e89b-12d3-a456-426614174000".to_string(),
+                "  lemex resume 123e4567-e89b-12d3-a456-426614174000".to_string(),
             ]
         );
     }
@@ -3903,7 +3903,7 @@ enabled = true
                 insta::assert_snapshot!(lines.join("\n"), @"
                 Token usage: total=2 input=0 output=2
                 To continue this session, run:
-                  codex resume 123e4567-e89b-12d3-a456-426614174000
+                  lemex resume 123e4567-e89b-12d3-a456-426614174000
                 ");
             }
         }
@@ -3921,7 +3921,7 @@ enabled = true
             vec![
                 "Token usage: total=2 input=0 output=2",
                 "To continue this session, run:",
-                "  \u{1b}[36mcodex resume 123e4567-e89b-12d3-a456-426614174000\u{1b}[39m",
+                "  \u{1b}[36mlemex resume 123e4567-e89b-12d3-a456-426614174000\u{1b}[39m",
             ]
         );
     }
@@ -3936,8 +3936,8 @@ enabled = true
         insta::assert_snapshot!(lines.join("\n"), @"
         Token usage: total=2 input=0 output=2
         To continue this session, run:
-          codex resume 123e4567-e89b-12d3-a456-426614174000
-        Or run codex resume and select my-thread.
+          lemex resume 123e4567-e89b-12d3-a456-426614174000
+        Or run lemex resume and select my-thread.
         ");
     }
 
@@ -3953,8 +3953,8 @@ enabled = true
             vec![
                 "Token usage: total=2 input=0 output=2",
                 "To continue this session, run:",
-                "  \u{1b}[36mcodex resume 123e4567-e89b-12d3-a456-426614174000\u{1b}[39m",
-                "Or run \u{1b}[36mcodex resume\u{1b}[39m and select \u{1b}[36mmy-thread\u{1b}[39m.",
+                "  \u{1b}[36mlemex resume 123e4567-e89b-12d3-a456-426614174000\u{1b}[39m",
+                "Or run \u{1b}[36mlemex resume\u{1b}[39m and select \u{1b}[36mmy-thread\u{1b}[39m.",
             ]
         );
     }
