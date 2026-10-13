@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Complete a source install for the upstream app-server daemon contract."""
+"""Prepare a complete Lemex runtime package without duplicate binaries."""
 
 import argparse
 import json
@@ -19,24 +19,21 @@ def prepare_package(package: Path, target: str, rg: Path) -> None:
     if "linux" in target and not (package / "codex-resources/bwrap").is_file():
         raise RuntimeError("Missing Linux sandbox helper: codex-resources/bwrap")
 
-    # npm excludes symbolic links and does not reliably extract hard links.
-    # Regular copies retain upstream's internal binary names in npm installs.
+    # Remove aliases left by earlier installs. Every runtime path now resolves
+    # the Lemex entrypoint and helper directly, including explicit daemon starts.
     for alias, original in (
         ("codex", "lemex"),
         ("codex-code-mode-host", "lemex-code-mode-host"),
     ):
         destination = binaries / f"{alias}{suffix}"
-        source = binaries / f"{original}{suffix}"
         if destination.is_symlink():
-            if destination.readlink() != Path(source.name):
+            if destination.readlink() != Path(f"{original}{suffix}"):
                 raise RuntimeError(
                     f"Unexpected existing compatibility entry: {destination}"
                 )
             destination.unlink()
-        elif destination.exists() and destination.samefile(source):
+        elif destination.exists():
             destination.unlink()
-        # Overwrite earlier generated copies when installing an updated build.
-        shutil.copy2(source, destination)
 
     path_dir = package / "codex-path"
     path_dir.mkdir(exist_ok=True)
@@ -52,7 +49,7 @@ def prepare_package(package: Path, target: str, rg: Path) -> None:
         "version": version,
         "target": target,
         "variant": "codex",
-        "entrypoint": f"bin/codex{suffix}",
+        "entrypoint": f"bin/lemex{suffix}",
         "resourcesDir": "codex-resources",
         "pathDir": "codex-path",
     }

@@ -13,16 +13,10 @@ fn daemon_handoff_uses_selected_executable_and_propagates_failure() -> anyhow::R
         "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\n",
     )?;
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(/*mode*/ 0o700))?;
-    for (source, expected) in [
-        (
-            DaemonUpdateSource::PublicStable,
-            "app-server\ndaemon\nupdate\n",
-        ),
-        (
-            DaemonUpdateSource::ThisCli,
-            "app-server\ndaemon\nupdate\n--from-cli\n--yes\n",
-        ),
-    ] {
+    for (source, expected) in [(
+        DaemonUpdateSource::ThisCli,
+        "app-server\ndaemon\nupdate\n--from-cli\n--yes\n",
+    )] {
         run_update_action(UpdateAction::Daemon(source), Some(&executable))?;
         assert_eq!(std::fs::read_to_string(&receipt)?, expected);
     }

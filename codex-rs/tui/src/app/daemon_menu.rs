@@ -40,7 +40,7 @@ impl App {
                 "Manage this server on its host. Local daemon updates are unavailable for remote connections.",
             )
         } else if self.daemon_cli_executable.is_none() {
-            Some("Run the Codex CLI to manage the daemon from this menu.")
+            Some("Run the Lemex CLI to manage the daemon from this menu.")
         } else {
             None
         };
@@ -56,28 +56,22 @@ impl App {
             .package_layout
             .is_some()
         });
-        let items = [
-            (
-                DaemonUpdateSource::PublicStable,
-                "Install latest public stable",
-            ),
-            (DaemonUpdateSource::ThisCli, "Use this CLI build"),
-        ]
-        .into_iter()
-        .map(|(source, name)| SelectionItem {
-            name: name.to_string(),
-            is_disabled: unavailable.is_some(),
-            disabled_reason: (unavailable.is_none()
-                && source == DaemonUpdateSource::ThisCli
-                && !has_package)
-                .then(|| "This CLI has no local package to copy".to_string()),
-            actions: vec![Box::new(move |tx| {
-                tx.send(AppEvent::ConfirmDaemonUpdate(source));
-            })],
-            dismiss_on_select: true,
-            ..Default::default()
-        })
-        .collect();
+        let items = [(DaemonUpdateSource::ThisCli, "Use this Lemex build")]
+            .into_iter()
+            .map(|(source, name)| SelectionItem {
+                name: name.to_string(),
+                is_disabled: unavailable.is_some() || !has_package,
+                disabled_reason: (unavailable.is_none()
+                    && source == DaemonUpdateSource::ThisCli
+                    && !has_package)
+                    .then(|| "This CLI has no local package to copy".to_string()),
+                actions: vec![Box::new(move |tx| {
+                    tx.send(AppEvent::ConfirmDaemonUpdate(source));
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            })
+            .collect();
         self.chat_widget.show_selection_view(SelectionViewParams {
             header: Box::new(DaemonMenuHeader(header)),
             items,
@@ -93,16 +87,21 @@ impl App {
             return;
         }
         let mut explanation = match source {
-            DaemonUpdateSource::PublicStable => "Install the latest public stable release. Restore production updates; keep your automatic-update setting.".to_string(),
             DaemonUpdateSource::ThisCli => {
                 let version = codex_install_context::InstallContext::current()
                     .package_manifest()
-                    .map_or_else(|| CODEX_CLI_VERSION.to_string(), |manifest| manifest.version.to_string());
-                format!("Use this CLI package v{version} from {}. Copy the complete package and pin it against automatic updates.", executable.display())
+                    .map_or_else(
+                        || CODEX_CLI_VERSION.to_string(),
+                        |manifest| manifest.version.to_string(),
+                    );
+                format!(
+                    "Use this CLI package v{version} from {}. Copy the complete package. Future daemon updates remain manual.",
+                    executable.display()
+                )
             }
         };
-        explanation.push_str("\nThis may restart the daemon and interrupt active or queued work.\nCodex exits to update in this terminal. Relaunch it afterward.");
-        let mut header = vec![Line::from("Update daemon and exit Codex?".bold())];
+        explanation.push_str("\nThis may restart the daemon and interrupt active or queued work.\nLemex exits to update in this terminal. Relaunch it afterward.");
+        let mut header = vec![Line::from("Update daemon and exit Lemex?".bold())];
         header.extend(explanation.lines().map(|line| Line::from(line.to_owned())));
         self.chat_widget.show_selection_view(SelectionViewParams {
             header: Box::new(DaemonMenuHeader(header)),

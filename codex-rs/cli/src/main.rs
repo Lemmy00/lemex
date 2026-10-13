@@ -661,13 +661,13 @@ enum AppServerDaemonSubcommand {
     /// Restart the local app server daemon.
     Restart,
 
-    /// Update the daemon package (may interrupt running work).
+    /// Replace the daemon with this installed Lemex package (may interrupt work).
     Update {
         /// Copy and pin this CLI package.
         #[arg(long)]
         from_cli: bool,
         /// Confirm replacing the daemon package without an interactive prompt.
-        #[arg(short = 'y', long, requires = "from_cli")]
+        #[arg(short = 'y', long)]
         yes: bool,
     },
 
@@ -682,17 +682,6 @@ enum AppServerDaemonSubcommand {
 
     /// Print local CLI and running app-server versions as JSON.
     Version,
-
-    /// [internal] Run the detached pid-backed standalone updater loop.
-    #[clap(hide = true)]
-    PidUpdateLoop {
-        /// Check support for daemon-owned packages without starting the updater.
-        #[arg(long, hide = true)]
-        check_package_ownership: bool,
-        /// Authorize one production restoration of this selected release.
-        #[arg(long, hide = true)]
-        restore_release: Option<String>,
-    },
 }
 
 #[derive(Debug, Args)]
@@ -1311,10 +1300,7 @@ async fn cli_main(
                     AppServerDaemonSubcommand::Restart => {
                         print_app_server_daemon_output(AppServerLifecycleCommand::Restart).await?;
                     }
-                    AppServerDaemonSubcommand::Update {
-                        from_cli: true,
-                        yes,
-                    } => {
+                    AppServerDaemonSubcommand::Update { from_cli: _, yes } => {
                         let result = codex_app_server_daemon::update_from_cli(|request| {
                             daemon_install::confirm_install(request, yes)
                         })
@@ -1345,57 +1331,6 @@ async fn cli_main(
                     }
                     AppServerDaemonSubcommand::Version => {
                         print_app_server_daemon_output(AppServerLifecycleCommand::Version).await?;
-                    }
-                    AppServerDaemonSubcommand::PidUpdateLoop {
-                        check_package_ownership: true,
-                        ..
-                    } => return Ok(()),
-                    AppServerDaemonSubcommand::Update {
-                        from_cli: false, ..
-                    }
-                    | AppServerDaemonSubcommand::PidUpdateLoop {
-                        check_package_ownership: false,
-                        ..
-                    } => {
-                        let cli_overrides = root_config_overrides
-                            .parse_overrides()
-                            .map_err(anyhow::Error::msg)?;
-                        let config = ConfigBuilder::default()
-                            .cli_overrides(cli_overrides)
-                            .build()
-                            .await
-                            .map_err(anyhow::Error::from);
-                        let http_client_factory = updater_http_client_factory(config)?;
-                        if matches!(
-                            daemon_cli.subcommand,
-                            AppServerDaemonSubcommand::Update { .. }
-                        ) {
-                            let result = codex_app_server_daemon::update(http_client_factory)
-                                .await
-                                .map(Some);
-                            daemon_telemetry::record_command(
-                                &root_config_overrides,
-                                analytics_default_enabled,
-                                "public_stable",
-                                &result,
-                            )
-                            .await;
-                            if let Some(output) = result? {
-                                println!("{}", serde_json::to_string(&output)?);
-                            }
-                        } else {
-                            let AppServerDaemonSubcommand::PidUpdateLoop {
-                                restore_release, ..
-                            } = daemon_cli.subcommand
-                            else {
-                                unreachable!()
-                            };
-                            codex_app_server_daemon::run_pid_update_loop(
-                                http_client_factory,
-                                restore_release,
-                            )
-                            .await?;
-                        }
                     }
                 },
                 Some(AppServerSubcommand::Proxy(proxy_cli)) => {
@@ -2340,7 +2275,6 @@ fn app_server_subcommand_name(subcommand: Option<&AppServerSubcommand>) -> &'sta
             }
             AppServerDaemonSubcommand::Stop => "app-server daemon stop",
             AppServerDaemonSubcommand::Version => "app-server daemon version",
-            AppServerDaemonSubcommand::PidUpdateLoop { .. } => "app-server daemon pid-update-loop",
         },
         Some(AppServerSubcommand::Proxy(_)) => "app-server proxy",
         Some(AppServerSubcommand::GenerateTs(_)) => "app-server generate-ts",
@@ -2355,14 +2289,6 @@ async fn print_app_server_daemon_output(command: AppServerLifecycleCommand) -> a
     let output = codex_app_server_daemon::run(command).await?;
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
-}
-
-fn updater_http_client_factory(
-    config: anyhow::Result<codex_core::config::Config>,
-) -> anyhow::Result<codex_http_client::HttpClientFactory> {
-    let mut config = config?;
-    codex_app_server::in_process::EmbeddedNetworkPolicy::default().activate(&mut config);
-    Ok(config.http_client_factory())
 }
 
 async fn print_app_server_remote_control_output(
@@ -2782,83 +2708,6 @@ mod tests {
             format!(
                 "Could not find an absolute update command `{command}` on PATH. Please update manually: https://developers.openai.com/codex/cli/"
             )
-        );
-    }
-
-    #[tokio::test]
-    async fn updater_http_client_factory_honors_respect_system_proxy() {
-        let codex_home = tempfile::tempdir().expect("temporary Lemex home");
-        let config = ConfigBuilder::default()
-            .codex_home(codex_home.path().to_path_buf())
-            .cli_overrides(vec![(
-                "features.respect_system_proxy".to_string(),
-                toml::Value::Boolean(true),
-            )])
-            .build()
-            .await
-            .expect("config should load");
-
-        assert_eq!(
-            updater_http_client_factory(Ok(config))
-                .expect("updater configuration")
-                .outbound_proxy_policy(),
-            codex_http_client::OutboundProxyPolicy::RespectSystemProxy
-        );
-    }
-
-    #[test]
-    fn updater_http_client_factory_propagates_config_errors() {
-        assert_eq!(
-            updater_http_client_factory(Err(anyhow::anyhow!("invalid config")))
-                .expect_err("invalid configuration must prevent updates")
-                .to_string(),
-            "invalid config"
-        );
-    }
-
-    #[tokio::test]
-    async fn updater_http_client_factory_enforces_application_requirements() {
-        let home = tempfile::tempdir().expect("temporary Codex home");
-        let requirements = home.path().join("requirements.toml");
-        std::fs::write(
-            &requirements,
-            r#"
-[application.network]
-enabled = true
-[application.network.domains]
-"bedrock-mantle.us-gov-west-1.api.aws" = "allow"
-"chatgpt.com" = "deny"
-"releases.openai.com" = "deny"
-"#,
-        )
-        .expect("write managed requirements");
-        let mut overrides = LoaderOverrides::without_managed_config_for_tests();
-        overrides.system_requirements_path = Some(requirements);
-        let config = ConfigBuilder::default()
-            .codex_home(home.path().to_path_buf())
-            .loader_overrides(overrides)
-            .build()
-            .await
-            .expect("load managed configuration");
-        let factory = updater_http_client_factory(Ok(config)).expect("updater configuration");
-        for host in ["chatgpt.com", "releases.openai.com", "unlisted.example"] {
-            assert_eq!(
-                factory
-                    .network_policy()
-                    .acquire(&format!("https://{host}/").parse().expect("URL"))
-                    .err(),
-                Some(codex_http_client::NetworkPolicyDenied::Destination)
-            );
-        }
-        assert!(
-            factory
-                .network_policy()
-                .acquire(
-                    &"https://bedrock-mantle.us-gov-west-1.api.aws/"
-                        .parse()
-                        .expect("URL")
-                )
-                .is_ok()
         );
     }
 

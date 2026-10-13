@@ -58,6 +58,14 @@ pub(super) struct CompatibilityError {
     pub restart_features: Option<BTreeMap<String, bool>>,
 }
 
+/// Discovery is opt-in too: an old daemon must not capture a normal launch.
+pub(super) fn reuse_requested(cli: &Cli, features: Option<&codex_features::FeaturesToml>) -> bool {
+    cli.agents_overview
+        || features.is_some_and(|features| {
+            features.entries().get(Feature::DaemonAutoStart.key()) == Some(&true)
+        })
+}
+
 pub(super) fn exclusion(
     cli: &Cli,
     cli_kv_overrides: &[(String, toml::Value)],

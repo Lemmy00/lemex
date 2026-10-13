@@ -6,7 +6,6 @@ expression: "render_bottom_popup(&app.chat_widget, 80)"
   Running daemon: v0.153.0
 
 
-› 1. Install latest public stable
-  2. Use this CLI build
+› 1. Use this Lemex build
 
   enter select · esc back

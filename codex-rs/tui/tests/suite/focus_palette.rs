@@ -294,7 +294,7 @@ impl PtyCodex {
         extra_args: &[&str],
     ) -> Result<Self> {
         let codex = codex_utils_cargo_bin::cargo_bin("codex-tui")
-            .or_else(|_| codex_utils_cargo_bin::cargo_bin("codex"))?;
+            .or_else(|_| codex_utils_cargo_bin::cargo_bin("lemex"))?;
         Self::start_binary(
             &codex, repo_root, codex_home, extra_args, /*editor*/ None,
         )
@@ -306,8 +306,8 @@ impl PtyCodex {
         codex_home: TempDir,
         extra_args: &[&str],
     ) -> Result<Self> {
-        let codex = codex_utils_cargo_bin::cargo_bin("codex")
-            .context("build codex-cli and set CARGO_BIN_EXE_codex to its executable")?;
+        let codex = codex_utils_cargo_bin::cargo_bin("lemex")
+            .context("build codex-cli and set CARGO_BIN_EXE_lemex to its executable")?;
         Self::start_binary(
             &codex, repo_root, codex_home, extra_args, /*editor*/ None,
         )
@@ -571,7 +571,10 @@ fn no_daemon_skips_startup_and_discovery() -> Result<()> {
         let contents = std::fs::read_to_string(&config)?;
         std::fs::write(
             config,
-            contents.replace("features.daemon_auto_start = false\n", ""),
+            contents.replace(
+                "features.daemon_auto_start = false\n",
+                "features.daemon_auto_start = true\n",
+            ),
         )?;
         let socket_path = codex_app_server_client::app_server_control_socket_path(home.path())?;
         std::fs::create_dir_all(socket_path.as_path().parent().unwrap())?;
@@ -619,7 +622,10 @@ fn auto_daemon_start_failure_exits_with_manual_fallback_hint() -> Result<()> {
     let contents = std::fs::read_to_string(&config)?;
     std::fs::write(
         config,
-        contents.replace("features.daemon_auto_start = false\n", ""),
+        contents.replace(
+            "features.daemon_auto_start = false\n",
+            "features.daemon_auto_start = true\n",
+        ),
     )?;
     // An incomplete selected package must fail without installing a replacement.
     std::fs::create_dir_all(home.path().join("packages/app-server-daemon/current"))?;

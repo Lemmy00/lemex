@@ -105,29 +105,21 @@ async fn shutdown_grace_accepts_zero_through_five_minutes() {
 }
 
 #[tokio::test]
-async fn update_interval_accepts_long_values_and_rejects_zero() {
+async fn legacy_updater_settings_cannot_enable_updates_or_block_startup() {
     let temp = TempDir::new().expect("temp dir");
     let path = temp.path().join("settings.json");
-    for minutes in [u32::MAX, 0] {
-        tokio::fs::write(
-            &path,
-            serde_json::to_vec(&serde_json::json!({
-                "updater": {"updateIntervalMinutes": minutes},
-            }))
-            .expect("serialize invalid settings"),
-        )
-        .await
-        .expect("write invalid settings");
-        let loaded = DaemonSettings::load(&path).await;
-        if minutes == 0 {
-            assert!(loaded.is_err());
-        } else {
-            assert_eq!(
-                loaded.expect("load long interval").update_interval_minutes,
-                minutes
-            );
-        }
-    }
+    tokio::fs::write(
+        &path,
+        r#"{"updater":{"autoUpdateEnabled":true,"updateIntervalMinutes":0}}"#,
+    )
+    .await
+    .expect("write obsolete settings");
+    assert_eq!(
+        DaemonSettings::load(&path)
+            .await
+            .expect("ignore removed updater"),
+        DaemonSettings::default()
+    );
 }
 
 #[tokio::test]
@@ -148,7 +140,7 @@ async fn telemetry_distinguishes_presence_from_default_values() -> anyhow::Resul
             crate::telemetry::settings_tags(home.path())
                 .await
                 .map(|(_, value)| value),
-            ["enabled", presence, presence, presence]
+            ["disabled", presence, presence, presence]
         );
     }
     Ok(())

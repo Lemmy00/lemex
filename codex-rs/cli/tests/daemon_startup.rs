@@ -10,6 +10,18 @@ use std::time::Duration;
 
 #[tokio::test]
 #[cfg(unix)]
+async fn ordinary_sessions_use_embedded_without_creating_a_daemon() -> Result<()> {
+    daemon_startup("embedded-default").await
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn ordinary_sessions_do_not_attach_to_an_existing_daemon() -> Result<()> {
+    daemon_startup("embedded-existing").await
+}
+
+#[tokio::test]
+#[cfg(unix)]
 async fn auto_daemon_start_attaches_to_shared_server() -> Result<()> {
     daemon_startup("start").await
 }
@@ -69,7 +81,7 @@ async fn elevated_local_tui_uses_embedded_without_starting_daemon() -> Result<()
     for command in ["elevated", "elevated-resume", "elevated-fork"] {
         daemon_startup(command).await?;
     }
-    let codex = codex_utils_cargo_bin::cargo_bin("codex")?;
+    let codex = codex_utils_cargo_bin::cargo_bin("lemex")?;
     let home = tempfile::tempdir()?;
     for operation in ["start", "restart"] {
         let output = Command::new(&codex)
@@ -98,7 +110,7 @@ async fn restrictive_launcher_uses_embedded_if_daemon_cannot_start() -> Result<(
         // The PTY creates its own breakaway-permitted job. Add Cargo's
         // restriction *inside* the PTY so it is the CLI's innermost job.
         let job = codex_utils_pty::JobObject::create_without_breakaway()?;
-        let codex = codex_utils_cargo_bin::cargo_bin("codex")?;
+        let codex = codex_utils_cargo_bin::cargo_bin("lemex")?;
         let mut command = tokio::process::Command::new(codex);
         command
             .arg("--no-alt-screen")
@@ -133,7 +145,7 @@ async fn daemon_startup(command: &str) -> Result<()> {
     #[cfg(not(windows))]
     let elevated = false;
     let elevated_launch = command.starts_with("elevated");
-    let codex = codex_utils_cargo_bin::cargo_bin("codex")?.canonicalize()?;
+    let codex = codex_utils_cargo_bin::cargo_bin("lemex")?.canonicalize()?;
     let workspace = tempfile::tempdir()?;
     let workspace_path = workspace.path().canonicalize()?;
     #[cfg(unix)]
@@ -155,7 +167,7 @@ async fn daemon_startup(command: &str) -> Result<()> {
         home.path().join("config.toml"),
         format!(
             "model = \"gpt-5.6-terra\"\n\
-         features.bedrock_setup_wizard = true\ncli_auth_credentials_store = \"file\"\n\
+         features.daemon_auto_start = true\nfeatures.bedrock_setup_wizard = true\ncli_auth_credentials_store = \"file\"\n\
          suppress_unstable_features_warning = true\nanalytics.enabled = false\n\
          windows.sandbox = \"unelevated\"\n\
          tui.disable_paste_burst = true\n\
@@ -164,6 +176,14 @@ async fn daemon_startup(command: &str) -> Result<()> {
             serde_json::to_string(&workspace_path)?,
         ),
     )?;
+    let embedded_default = command.starts_with("embedded-");
+    if embedded_default {
+        let path = home.path().join("config.toml");
+        fs::write(
+            &path,
+            fs::read_to_string(&path)?.replace("features.daemon_auto_start = true\n", ""),
+        )?;
+    }
     let mismatch = command.starts_with("mismatch-");
     let persisted = command == "mismatch-disable-persisted";
     let disabling = matches!(command, "mismatch-disable" | "mismatch-disable-persisted");
@@ -196,7 +216,11 @@ async fn daemon_startup(command: &str) -> Result<()> {
     env.insert("TERM".into(), "xterm-256color".into());
     let mut args = vec!["--no-alt-screen".to_string()];
     let mut steps: VecDeque<(&str, &[u8])> = VecDeque::new();
-    if matches!(command, "start" | "bedrock-running" | "restrictive-job") || mismatch {
+    if matches!(
+        command,
+        "start" | "bedrock-running" | "restrictive-job" | "embedded-existing"
+    ) || mismatch
+    {
         // A selected package with a stopped daemon avoids installing a release.
         let managed = home
             .path()
@@ -223,7 +247,7 @@ async fn daemon_startup(command: &str) -> Result<()> {
     }
     let pid_file = home.path().join("app-server-daemon/daemon.pid");
     let result = async {
-        let mut existing_daemon = if command == "bedrock-running" || (mismatch && !disabling) {
+        let mut existing_daemon = if command == "bedrock-running" || command == "embedded-existing" || (mismatch && !disabling) {
             let started = Command::new(&codex)
                 .env_clear()
                 .envs(&env)
@@ -239,7 +263,10 @@ async fn daemon_startup(command: &str) -> Result<()> {
         } else {
             None
         };
-        let expected = if command == "start" {
+        let expected = if embedded_default {
+            steps.push_back(("GPT-5.6-Terra", b"/status\r"));
+            "Model:"
+        } else if command == "start" {
             // The draft header is visible before the session's command composer is ready.
             steps.push_back(("GPT-5.6-Terra", b"/status\r"));
             "Server:Localbackgroundserver"
@@ -357,7 +384,15 @@ async fn daemon_startup(command: &str) -> Result<()> {
                     steps.pop_front();
                     output.clear();
                 } else if steps.is_empty() && text.contains(expected) {
-                    if mismatch {
+                    if embedded_default {
+                        ensure!(!text.contains("Server:Localbackgroundserver"));
+                        if let Some(existing) = &existing_daemon {
+                            ensure!(fs::read(&pid_file)? == *existing);
+                        } else {
+                            ensure!(!pid_file.exists());
+                            ensure!(!home.path().join("packages/app-server-daemon").exists());
+                        }
+                    } else if mismatch {
                         let previous_pid = existing_daemon.as_ref().context("missing original daemon PID")?;
                         ensure!((fs::read(&pid_file)? != *previous_pid) == restart);
                         if command == "mismatch-cancel" {

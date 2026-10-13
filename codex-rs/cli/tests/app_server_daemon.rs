@@ -24,7 +24,7 @@ struct TestDaemon {
 impl TestDaemon {
     fn new() -> Result<Self> {
         let home = tempfile::Builder::new().tempdir_in("/tmp")?;
-        let codex = codex_utils_cargo_bin::cargo_bin("codex")?;
+        let codex = codex_utils_cargo_bin::cargo_bin("lemex")?;
         let codex_source = std::fs::canonicalize(&codex)?;
         let target = if cfg!(target_os = "macos") {
             format!("{}-apple-darwin", std::env::consts::ARCH)
@@ -130,9 +130,6 @@ fn managed_daemon_restarts_from_deleted_working_directory() -> Result<()> {
         String::from_utf8_lossy(&started.stderr)
     );
     let old_pid = daemon.pid("app-server.pid")?;
-    let old_updater_pid = daemon.pid("app-server-updater.pid")?;
-    signal(old_updater_pid, libc::SIGTERM)?;
-    wait_for_exit(old_updater_pid)?;
 
     // Delete the restart caller's cwd without changing the test process's cwd.
     let restarted = Command::new("/bin/sh")
@@ -154,20 +151,8 @@ fn managed_daemon_restarts_from_deleted_working_directory() -> Result<()> {
     let restarted: Value = serde_json::from_slice(&restarted.stdout)?;
     assert_eq!(restarted["status"], "restarted");
     assert_ne!(daemon.pid("app-server.pid")?, old_pid);
-    assert_ne!(daemon.pid("app-server-updater.pid")?, old_updater_pid);
+    assert!(daemon.pid("app-server-updater.pid").is_err());
     assert_eq!(daemon.lifecycle("version")?["status"], "running");
-    let updater_socket = daemon
-        .home
-        .path()
-        .join("app-server-daemon/app-server-updater.sock");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while std::os::unix::net::UnixStream::connect(&updater_socket).is_err() {
-        ensure!(
-            Instant::now() < deadline,
-            "replacement updater did not become ready"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
     Ok(())
 }
 
@@ -202,7 +187,6 @@ fn wait_for_exit(pid: u32) -> Result<()> {
 fn managed_identity_survives_locale_and_timezone_changes() -> Result<()> {
     let daemon = TestDaemon::new()?;
     let mut original = Vec::new();
-    let mut updater_pid = 0;
     let pid_file = daemon.home.path().join("app-server-daemon/app-server.pid");
     for (action, locale, timezone, expected_status) in [
         ("start", "C", "UTC0", "started"),
@@ -224,7 +208,6 @@ fn managed_identity_survives_locale_and_timezone_changes() -> Result<()> {
         let output: Value = serde_json::from_slice(&output.stdout)?;
         assert_eq!(output["status"], expected_status);
         if action == "start" {
-            updater_pid = daemon.pid("app-server-updater.pid")?;
             original = std::fs::read(&pid_file)?;
             let record: Value = serde_json::from_slice(&original)?;
             assert!(record["processIdentity"].is_object());
@@ -246,19 +229,8 @@ fn managed_identity_survives_locale_and_timezone_changes() -> Result<()> {
             );
         } else if action == "version" {
             assert_eq!(output["backend"], "pid");
-            assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
             assert_eq!(std::fs::read(&pid_file)?, original);
 
-            // Finish startup promotion before deliberately restoring a legacy record.
-            let updater_socket = daemon
-                .home
-                .path()
-                .join("app-server-daemon/app-server-updater.sock");
-            let deadline = Instant::now() + Duration::from_secs(30);
-            while !updater_socket.exists() {
-                ensure!(Instant::now() < deadline, "updater did not become ready");
-                std::thread::sleep(Duration::from_millis(50));
-            }
             let mut legacy: Value = serde_json::from_slice(&original)?;
             legacy
                 .as_object_mut()
@@ -282,207 +254,31 @@ fn managed_identity_survives_locale_and_timezone_changes() -> Result<()> {
                 String::from_utf8(result.stderr)?.replace(&legacy["pid"].to_string(), "[PID]");
             insta::assert_snapshot!(stderr, @"Error: cannot verify pid-managed process [PID]: legacy start time changed; PID record retained. Retry with the locale and timezone used to start the daemon. If the system clock changed, stop the original process before restarting the daemon");
         }
-        if action == "restart" {
-            assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
-        }
+        if action == "restart" {}
     }
     assert!(!pid_file.exists());
     Ok(())
 }
 
 #[test]
-fn package_ownership_check_does_not_start_an_updater() -> Result<()> {
+fn explicit_lifecycle_never_starts_an_updater_even_with_legacy_opt_in() -> Result<()> {
     let daemon = TestDaemon::new()?;
-    let output = daemon
-        .command()
-        .args([
-            "app-server",
-            "daemon",
-            "pid-update-loop",
-            "--check-package-ownership",
-        ])
-        .output()?;
-    ensure!(
-        output.status.success(),
-        "ownership check failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
     let state = daemon.home.path().join("app-server-daemon");
-    assert!(!state.join("app-server-updater.pid").exists());
-    assert!(!state.join("daemon-updater.pid").exists());
-    Ok(())
-}
-
-#[test]
-fn managed_starts_ensure_one_updater_and_recover_a_missing_one() -> Result<()> {
-    let daemon = TestDaemon::new()?;
-    assert_eq!(daemon.lifecycle("start")?["status"], "started");
-    let backend_pid = daemon.pid("app-server.pid")?;
-    let updater_pid = daemon.pid("app-server-updater.pid")?;
-    assert_ne!(backend_pid, updater_pid);
-
-    assert_eq!(daemon.lifecycle("start")?["status"], "alreadyRunning");
-    assert_eq!(daemon.pid("app-server.pid")?, backend_pid);
-    assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
-
-    signal(updater_pid, libc::SIGTERM)?;
-    wait_for_exit(updater_pid)?;
-    // A replacement updater also upgrades still-verifiable records left by an old CLI.
-    let server_record_path = daemon.home.path().join("app-server-daemon/app-server.pid");
-    let mut legacy: Value = serde_json::from_slice(&std::fs::read(&server_record_path)?)?;
-    let native = legacy.as_object_mut().unwrap().remove("processIdentity");
-    std::fs::write(&server_record_path, serde_json::to_vec(&legacy)?)?;
-    assert_eq!(daemon.lifecycle("start")?["status"], "alreadyRunning");
-    assert_eq!(daemon.pid("app-server.pid")?, backend_pid);
-    let replacement_pid = daemon.pid("app-server-updater.pid")?;
-    assert_ne!(replacement_pid, updater_pid);
-    if let Some(native) = native {
-        legacy["processIdentity"] = native;
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            let record: Value = serde_json::from_slice(&std::fs::read(&server_record_path)?)?;
-            if record == legacy {
-                break;
-            }
-            ensure!(
-                Instant::now() < deadline,
-                "legacy record was not upgraded: {record}"
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
+    std::fs::write(
+        state.join("settings.json"),
+        br#"{"shutdownGraceSeconds":0,"updater":{"autoUpdateEnabled":true}}"#,
+    )?;
+    for action in ["start", "restart", "stop"] {
+        daemon.lifecycle(action)?;
+        assert!(!state.join("app-server-updater.pid").exists());
+        assert!(!state.join("daemon-updater.pid").exists());
     }
-    assert_eq!(daemon.lifecycle("restart")?["status"], "restarted");
-    assert_ne!(daemon.pid("app-server.pid")?, backend_pid);
-    assert_eq!(daemon.pid("app-server-updater.pid")?, replacement_pid);
-    daemon.lifecycle("stop")?;
-    assert!(
-        !daemon
-            .home
-            .path()
-            .join("app-server-daemon/app-server.pid")
-            .exists()
-    );
-    assert_eq!(daemon.lifecycle("start")?["status"], "started");
-    assert!(
-        !daemon
-            .home
-            .path()
-            .join("packages/app-server-daemon")
-            .exists()
-    );
-    Ok(())
-}
-
-#[test]
-fn managed_start_succeeds_when_updater_record_is_invalid() -> Result<()> {
-    let daemon = TestDaemon::new()?;
-    let state_dir = daemon.home.path().join("app-server-daemon");
-    std::fs::create_dir_all(&state_dir)?;
-    std::fs::write(state_dir.join("app-server-updater.pid"), "not a PID record")?;
-
-    assert_eq!(daemon.lifecycle("start")?["status"], "started");
-    let server_pid = daemon.pid("app-server.pid")?;
-    assert_eq!(daemon.lifecycle("start")?["status"], "alreadyRunning");
-    assert_eq!(daemon.pid("app-server.pid")?, server_pid);
-    Ok(())
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-#[test]
-fn wall_clock_shift_keeps_server_and_updater_managed() -> Result<()> {
-    let daemon = TestDaemon::new()?;
-    assert_eq!(daemon.lifecycle("start")?["status"], "started");
-    let server_pid = daemon.pid("app-server.pid")?;
-    let updater_pid = daemon.pid("app-server-updater.pid")?;
-    for name in ["app-server.pid", "app-server-updater.pid"] {
-        let path = daemon.home.path().join("app-server-daemon").join(name);
-        let mut record: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
-        record["processStartTime"] = "historical wall-clock start time".into();
-        let replacement = path.with_extension("replacement");
-        std::fs::write(&replacement, serde_json::to_vec(&record)?)?;
-        std::fs::rename(replacement, path)?;
-    }
-
-    let version = daemon.lifecycle("version")?;
-    assert_eq!(version["status"], "running");
-    assert_eq!(version["backend"], "pid");
-    assert_eq!(daemon.lifecycle("start")?["status"], "alreadyRunning");
-    assert_eq!(daemon.pid("app-server.pid")?, server_pid);
-    assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
-    assert_eq!(daemon.lifecycle("restart")?["status"], "restarted");
-    wait_for_exit(server_pid)?;
-    assert_ne!(daemon.pid("app-server.pid")?, server_pid);
-    assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
-    Ok(())
-}
-
-#[test]
-fn managed_start_keeps_updater_on_marker_mismatch_but_stops_it_for_pin() -> Result<()> {
-    let daemon = TestDaemon::new()?;
-    assert_eq!(daemon.lifecycle("start")?["status"], "started");
-    let updater_pid = daemon.pid("app-server-updater.pid")?;
-    let marker = daemon
-        .home
-        .path()
-        .join("packages/standalone/auto-update-version");
-    std::fs::write(&marker, "0.1.0-other-target")?;
-    assert_eq!(daemon.lifecycle("start")?["status"], "alreadyRunning");
-    assert_eq!(daemon.pid("app-server-updater.pid")?, updater_pid);
-    std::thread::sleep(Duration::from_millis(250));
-    let updater_state = Command::new("/bin/ps")
-        .args(["-p", &updater_pid.to_string(), "-o", "stat="])
+    let removed = daemon
+        .command()
+        .args(["app-server", "daemon", "pid-update-loop"])
         .output()?;
-    ensure!(
-        updater_state.status.success()
-            && !String::from_utf8_lossy(&updater_state.stdout)
-                .trim()
-                .starts_with('Z'),
-        "updater exited during the latest marker transition"
-    );
-
-    std::fs::remove_file(marker)?;
-
-    assert_eq!(daemon.lifecycle("start")?["status"], "alreadyRunning");
-    wait_for_exit(updater_pid)?;
-    assert!(
-        !daemon
-            .home
-            .path()
-            .join("app-server-daemon/app-server-updater.pid")
-            .exists()
-    );
-    Ok(())
-}
-
-#[test]
-fn restart_applies_saved_updater_preference() -> Result<()> {
-    let daemon = TestDaemon::new()?;
-    assert_eq!(daemon.lifecycle("start")?["status"], "started");
-    let updater_pid = daemon.pid("app-server-updater.pid")?;
-    let settings = daemon.home.path().join("app-server-daemon/settings.json");
-    std::fs::write(
-        &settings,
-        serde_json::to_vec(&serde_json::json!({
-            "updater": {"autoUpdateEnabled": false, "updateIntervalMinutes": 2},
-        }))?,
-    )?;
-    assert_eq!(daemon.lifecycle("restart")?["status"], "restarted");
-    wait_for_exit(updater_pid)?;
-    assert!(daemon.pid("app-server-updater.pid").is_err());
-    assert_eq!(daemon.lifecycle("bootstrap")?["autoUpdateEnabled"], false);
-    assert!(daemon.pid("app-server-updater.pid").is_err());
-
-    std::fs::write(
-        &settings,
-        serde_json::to_vec(&serde_json::json!({
-            "updater": {"autoUpdateEnabled": true, "updateIntervalMinutes": 2},
-        }))?,
-    )?;
-    assert_eq!(daemon.lifecycle("restart")?["status"], "restarted");
-    assert_ne!(daemon.pid("app-server-updater.pid")?, updater_pid);
-
-    std::fs::write(&settings, "{malformed")?;
-    assert_eq!(daemon.lifecycle("stop")?["status"], "stopped");
+    assert!(!removed.status.success());
+    assert!(String::from_utf8_lossy(&removed.stderr).contains("unrecognized subcommand"));
     Ok(())
 }
 
@@ -513,7 +309,11 @@ fn unmanaged_app_server_does_not_launch_updater() -> Result<()> {
     let output = daemon.lifecycle("start")?;
     assert_eq!(output["status"], "alreadyRunning");
     assert_eq!(output["backend"], Value::Null);
-    assert_eq!(daemon.lifecycle("update")?["status"], "unsupported");
+    let update = daemon
+        .command()
+        .args(["app-server", "daemon", "update", "--yes"])
+        .output()?;
+    assert!(!update.status.success());
     assert!(
         !daemon
             .home
@@ -534,7 +334,11 @@ fn manual_update_rejects_an_unowned_installation() -> Result<()> {
             .join("packages/standalone/current/bin/codex"),
     )?;
 
-    assert_eq!(daemon.lifecycle("update")?["status"], "unsupported");
+    let update = daemon
+        .command()
+        .args(["app-server", "daemon", "update", "--yes"])
+        .output()?;
+    assert!(!update.status.success());
     assert!(daemon.pid("app-server.pid").is_err());
     assert!(daemon.pid("app-server-updater.pid").is_err());
     Ok(())
@@ -557,10 +361,10 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
     for directory in ["bin", "codex-path", "codex-resources"] {
         std::fs::create_dir_all(package.join(directory))?;
     }
-    copy_executable(&daemon.codex, &package.join("bin/codex"))?;
-    daemon.codex = package.join("bin/codex");
+    copy_executable(&daemon.codex, &package.join("bin/lemex"))?;
+    daemon.codex = package.join("bin/lemex");
     for helper in [
-        "bin/codex-code-mode-host",
+        "bin/lemex-code-mode-host",
         "codex-path/rg",
         "codex-resources/bwrap",
     ] {
@@ -580,7 +384,7 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
     std::fs::write(
         package.join("codex-package.json"),
         serde_json::to_vec(&serde_json::json!({
-            "version": env!("CARGO_PKG_VERSION"), "target": target, "entrypoint": "bin/codex"
+            "version": env!("CARGO_PKG_VERSION"), "target": target, "entrypoint": "bin/lemex"
         }))?,
     )?;
     if action == "start" && initial == InitialDaemon::Missing {
@@ -625,20 +429,19 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
         output["managedCodexPath"],
         initial_root
             .canonicalize()?
-            .join("current/bin/codex")
+            .join(if initial == InitialDaemon::Legacy {
+                "current/bin/codex"
+            } else {
+                "current/bin/lemex"
+            })
             .to_str()
             .context("managed path is not UTF-8")?
     );
     assert_eq!(daemon.codex.canonicalize()?, cli_before);
     assert_eq!(standalone.join("current").canonicalize()?, cli_selection);
     assert!(state.join(initial_pid_file).exists());
-    let legacy_updater = match initial {
-        InitialDaemon::Missing => {
-            assert!(!state.join("app-server-updater.pid").exists());
-            None
-        }
-        InitialDaemon::Legacy => Some(daemon.pid("app-server-updater.pid")?),
-    };
+    assert!(!state.join("app-server-updater.pid").exists());
+    assert!(!state.join("daemon-updater.pid").exists());
     if action == "start" {
         let initial_current = initial_root.join("current");
         let current = dedicated.join("current");
@@ -657,10 +460,10 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
             assert!(!current.exists());
         }
 
-        std::fs::remove_file(package.join("bin/codex-code-mode-host"))?;
+        std::fs::remove_file(package.join("bin/lemex-code-mode-host"))?;
         let invalid = daemon
             .command()
-            .args(["app-server", "daemon", "update", "--from-cli", "--yes"])
+            .args(["app-server", "daemon", "update", "--yes"])
             .output()?;
         assert!(!invalid.status.success());
         assert_eq!(daemon.pid(initial_pid_file)?, original_pid);
@@ -669,12 +472,12 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
             assert!(!current.exists());
         }
         codex_utils_cargo_bin::write_executable(
-            &package.join("bin/codex-code-mode-host"),
+            &package.join("bin/lemex-code-mode-host"),
             "replacement helper",
         )?;
         let replaced = daemon
             .command()
-            .args(["app-server", "daemon", "update", "--from-cli", "--yes"])
+            .args(["app-server", "daemon", "update", "--yes"])
             .output()?;
         ensure!(
             replaced.status.success(),
@@ -685,15 +488,12 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
         assert_eq!(output["status"], "updated");
         assert_ne!(daemon.pid("daemon.pid")?, original_pid);
         wait_for_exit(original_pid)?;
-        if let Some(pid) = legacy_updater {
-            wait_for_exit(pid)?;
-        }
         assert!(!state.join("app-server.pid").exists());
         assert!(!state.join("app-server-updater.pid").exists());
         assert_eq!(
             output["managedCodexPath"],
             current
-                .join("bin/codex")
+                .join("bin/lemex")
                 .to_str()
                 .context("managed path is not UTF-8")?
         );
@@ -701,12 +501,12 @@ fn packaged_daemon_launch(action: &str, initial: InitialDaemon) -> Result<()> {
         assert!(!dedicated.join("auto-update-version").exists());
         assert_eq!(std::fs::read(state.join("settings.json"))?, settings_before);
         assert_eq!(
-            std::fs::read(current.join("bin/codex-code-mode-host"))?,
+            std::fs::read(current.join("bin/lemex-code-mode-host"))?,
             b"replacement helper"
         );
         if initial == InitialDaemon::Missing {
             assert_eq!(
-                std::fs::read(original.join("bin/codex-code-mode-host"))?,
+                std::fs::read(original.join("bin/lemex-code-mode-host"))?,
                 b"runtime fixture"
             );
         }

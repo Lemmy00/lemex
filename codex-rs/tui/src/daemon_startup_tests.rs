@@ -6,6 +6,26 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 #[test]
+fn daemon_discovery_requires_opt_in_or_explicit_agents_overview() {
+    use clap::Parser;
+    let mut cli = Cli::parse_from(["lemex"]);
+    assert!(!Feature::DaemonAutoStart.default_enabled());
+    assert!(!daemon_startup::reuse_requested(&cli, None));
+    for enabled in [false, true] {
+        let features = codex_features::FeaturesToml::from(std::collections::BTreeMap::from([(
+            "daemon_auto_start".to_string(),
+            enabled,
+        )]));
+        assert_eq!(
+            daemon_startup::reuse_requested(&cli, Some(&features)),
+            enabled
+        );
+    }
+    cli.agents_overview = true;
+    assert!(daemon_startup::reuse_requested(&cli, None));
+}
+
+#[test]
 fn audited_overrides_allow_daemon_without_allowing_arbitrary_config() {
     for (raw, eligible) in [
         ("features.transcript_v2=true", true),

@@ -308,6 +308,8 @@ pub(super) async fn run_main_inner(
         screen,
     )?;
 
+    let reuse_implicit_local_daemon = reuse_implicit_local_daemon
+        && daemon_startup::reuse_requested(&cli, bootstrap_config.config_toml.features.as_ref());
     let default_daemon = if explicit_remote_endpoint.is_none() && reuse_implicit_local_daemon {
         startup_draft
             .run_until(maybe_probe_default_daemon_socket(&codex_home))
@@ -928,7 +930,6 @@ pub(super) async fn run_main_inner(
             (
                 "update_target",
                 match source {
-                    DaemonUpdateSource::PublicStable => "public_stable",
                     DaemonUpdateSource::ThisCli => "this_cli",
                 },
             ),

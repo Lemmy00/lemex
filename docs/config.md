@@ -84,3 +84,29 @@ Press **Ctrl+T** to view completed reasoning blocks in the expanded transcript. 
 ## Managed hooks
 
 Admins can set `allow_managed_hooks_only = true` in `requirements.toml` to ignore user, project, and session hooks while allowing managed hooks. This setting belongs in `requirements.toml`.
+
+## Background daemon
+
+Normal terminal sessions, resume/fork, and `lemex exec` use the embedded backend.
+They do not start a persistent daemon or attach to one left by an older install.
+
+For shared sessions and work that continues after closing the terminal, opt in:
+
+```sh
+lemex --enable daemon_auto_start
+```
+
+To save that preference, run `lemex features enable daemon_auto_start`, or add:
+
+```toml
+[features]
+daemon_auto_start = true
+```
+
+`lemex --no-daemon` overrides the preference for one launch. `lemex agents` and
+explicit daemon or remote-control commands request a persistent backend directly.
+
+The daemon never downloads releases or updates itself. After updating Lemex,
+refresh an explicitly installed daemon with `lemex app-server daemon update`.
+Stop it with `lemex app-server daemon stop`. These commands may interrupt running
+work; ordinary CLI upgrades do not replace or stop an active daemon.

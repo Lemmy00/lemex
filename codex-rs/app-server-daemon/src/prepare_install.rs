@@ -72,7 +72,7 @@ pub async fn update_from_cli(
             .ok()
             .map(|info| info.app_server_version),
         managed_codex_path,
-        message: "The CLI package is selected and pinned. Run `codex app-server daemon update` to return to production updates.".to_string(),
+        message: "The installed Lemex package is selected. Daemon updates are manual.".to_string(),
     }))
 }
 
@@ -155,13 +155,16 @@ async fn prepare_from_package(
     let version = manifest.version.to_string();
     let target = platform_target()?;
     let metadata: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
-    let entrypoint = if cfg!(windows) {
-        "bin/codex.exe"
+    let entrypoint = metadata["entrypoint"]
+        .as_str()
+        .context("missing package entrypoint")?;
+    let allowed_entrypoints = if cfg!(windows) {
+        ["bin/lemex.exe", "bin/codex.exe"]
     } else {
-        "bin/codex"
+        ["bin/lemex", "bin/codex"]
     };
     anyhow::ensure!(
-        metadata["target"] == target && metadata["entrypoint"] == entrypoint,
+        metadata["target"] == target && allowed_entrypoints.contains(&entrypoint),
         "the CLI package does not match this platform or executable"
     );
     validate_package(source)?;
@@ -260,10 +263,6 @@ async fn prepare_from_package(
             "an existing daemon release has different contents; refusing to overwrite it"
         );
     } else {
-        #[cfg(unix)]
-        if !stage.path().join("codex").exists() {
-            std::os::unix::fs::symlink("bin/codex", stage.path().join("codex"))?;
-        }
         #[cfg(windows)]
         windows::publish_release(stage.path(), &release).await?;
         #[cfg(not(windows))]
@@ -313,21 +312,7 @@ async fn prepare_from_package(
             Ok::<(), anyhow::Error>(())
         }
         .await;
-        if let Err(error) = stopped {
-            if let Err(restore_error) = async {
-                daemon
-                    .current_installation()?
-                    .ensure_managed_updater(settings)
-                    .await
-            }
-            .await
-            {
-                eprintln!(
-                    "warning: failed to restore the daemon updater after replacement failed: {restore_error:#}"
-                );
-            }
-            return Err(error);
-        }
+        stopped?;
     }
     let marker = root.join("auto-update-version");
     if follows_latest {
@@ -430,17 +415,37 @@ fn stable_version(value: &str) -> Option<semver::Version> {
 }
 
 fn validate_package(root: &Path) -> Result<()> {
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("codex-package.json"))?)?;
+    let entrypoint = metadata["entrypoint"]
+        .as_str()
+        .context("missing package entrypoint")?;
+    let (lemex, codex, lemex_helper, codex_helper) = if cfg!(windows) {
+        (
+            "bin/lemex.exe",
+            "bin/codex.exe",
+            "bin/lemex-code-mode-host.exe",
+            "bin/codex-code-mode-host.exe",
+        )
+    } else {
+        (
+            "bin/lemex",
+            "bin/codex",
+            "bin/lemex-code-mode-host",
+            "bin/codex-code-mode-host",
+        )
+    };
+    anyhow::ensure!(
+        [lemex, codex].contains(&entrypoint),
+        "unsupported package entrypoint"
+    );
     let mut names = vec![
         "codex-package.json",
-        if cfg!(windows) {
-            "bin/codex.exe"
+        entrypoint,
+        if entrypoint == lemex {
+            lemex_helper
         } else {
-            "bin/codex"
-        },
-        if cfg!(windows) {
-            "bin/codex-code-mode-host.exe"
-        } else {
-            "bin/codex-code-mode-host"
+            codex_helper
         },
         if cfg!(windows) {
             "codex-path/rg.exe"

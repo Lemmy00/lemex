@@ -279,14 +279,9 @@ pub(super) async fn start_app_server_for_session_command(
             cli.bypass_hook_trust,
         )
         .is_none();
-    let default_daemon = if explicit_remote_endpoint.is_none() && reuse_implicit_local_daemon {
-        super::maybe_probe_default_daemon_socket(codex_home.as_path()).await
-    } else {
-        None
-    };
     let mut app_server_target = super::app_server_target_for_launch(
         explicit_remote_endpoint,
-        default_daemon,
+        /*default_daemon_socket*/ None,
         reuse_implicit_local_daemon,
         workload_identity_selected,
         std::env::var_os(codex_exec_server::CODEX_EXEC_SERVER_URL_ENV_VAR).as_deref(),
@@ -378,6 +373,20 @@ pub(super) async fn start_app_server_for_session_command(
         .build()
         .await
         .wrap_err("failed to load configuration")?;
+    if reuse_implicit_local_daemon
+        && config
+            .features
+            .enabled(codex_features::Feature::DaemonAutoStart)
+    {
+        let default_daemon = super::maybe_probe_default_daemon_socket(codex_home.as_path()).await;
+        app_server_target = super::app_server_target_for_launch(
+            /*explicit_remote_endpoint*/ None,
+            default_daemon,
+            /*can_reuse_implicit_local_daemon*/ true,
+            workload_identity_selected,
+            std::env::var_os(codex_exec_server::CODEX_EXEC_SERVER_URL_ENV_VAR).as_deref(),
+        )?;
+    }
     let environment_manager = Arc::new(
         prepared_environment_manager
             .build(

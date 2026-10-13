@@ -185,14 +185,12 @@ mod tests {
 /// Package source explicitly selected by the user in the daemon menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonUpdateSource {
-    PublicStable,
     ThisCli,
 }
 
 impl DaemonUpdateSource {
     pub fn command_args(self) -> &'static [&'static str] {
         match self {
-            Self::PublicStable => &["app-server", "daemon", "update"],
             Self::ThisCli => &["app-server", "daemon", "update", "--from-cli", "--yes"],
         }
     }

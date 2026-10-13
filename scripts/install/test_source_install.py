@@ -94,6 +94,7 @@ esac
         rg.chmod(0o755)
         # Exercise upgrading the old relative symbolic-link layout as well.
         binary.with_name("codex").symlink_to("lemex")
+        shutil.copy2(helper, helper.with_name("codex-code-mode-host"))
         source_package.prepare_package(package_root, target, rg)
         return package
 
@@ -123,7 +124,9 @@ esac
         metadata = json.loads(manifest.read_text())
         package_root = manifest.parent
         self.assertTrue((package_root / metadata["entrypoint"]).is_file())
-        self.assertTrue((package_root / "bin/codex-code-mode-host").is_file())
+        self.assertTrue((package_root / "bin/lemex-code-mode-host").is_file())
+        self.assertFalse((package_root / "bin/codex").exists())
+        self.assertFalse((package_root / "bin/codex-code-mode-host").exists())
         self.assertTrue((package_root / metadata["pathDir"] / "rg").is_file())
         self.assertEqual(subprocess.check_output([str(package_root / metadata["entrypoint"]), "--version"], text=True).strip(), "lemex 0.0.0")
 

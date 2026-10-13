@@ -90,15 +90,6 @@ enum PidCommandKind {
 }
 
 impl PidBackend {
-    pub(crate) async fn running_executable_identity(&self) -> Result<Option<ExecutableIdentity>> {
-        match self.read_pid_file_state().await? {
-            PidFileState::Running(record) if self.record_is_active(&record).await? => {
-                Ok(record.executable_identity)
-            }
-            _ => Ok(None),
-        }
-    }
-
     pub(crate) fn new(codex_bin: PathBuf, pid_file: PathBuf, remote_control_enabled: bool) -> Self {
         let lock_file = pid_file.with_extension("pid.lock");
         Self {
