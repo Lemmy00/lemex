@@ -349,6 +349,57 @@ async fn resume_lookup_model_providers_filters_only_last_lookup() {
 }
 
 #[test]
+fn public_text_deltas_are_filtered_to_the_primary_turn() {
+    use codex_app_server_protocol::AgentMessageDeltaNotification;
+    use codex_app_server_protocol::CommandExecutionOutputDeltaNotification;
+    use codex_app_server_protocol::ReasoningSummaryTextDeltaNotification;
+    use codex_app_server_protocol::ReasoningTextDeltaNotification;
+
+    for (thread, turn, expected) in [
+        ("thread-1", "turn-1", true),
+        ("thread-2", "turn-1", false),
+        ("thread-1", "turn-2", false),
+    ] {
+        let notifications = [
+            ServerNotification::AgentMessageDelta(AgentMessageDeltaNotification {
+                thread_id: thread.to_string(),
+                turn_id: turn.to_string(),
+                item_id: "message".to_string(),
+                delta: "Message".to_string(),
+            }),
+            ServerNotification::CommandExecutionOutputDelta(
+                CommandExecutionOutputDeltaNotification {
+                    thread_id: thread.to_string(),
+                    turn_id: turn.to_string(),
+                    item_id: "command".to_string(),
+                    delta: "Output".to_string(),
+                },
+            ),
+            ServerNotification::ReasoningSummaryTextDelta(ReasoningSummaryTextDeltaNotification {
+                thread_id: thread.to_string(),
+                turn_id: turn.to_string(),
+                item_id: "reasoning".to_string(),
+                delta: "Summary".to_string(),
+                summary_index: 0,
+            }),
+            ServerNotification::ReasoningTextDelta(ReasoningTextDeltaNotification {
+                thread_id: thread.to_string(),
+                turn_id: turn.to_string(),
+                item_id: "reasoning".to_string(),
+                delta: "Trace".to_string(),
+                content_index: 0,
+            }),
+        ];
+        for notification in notifications {
+            assert_eq!(
+                should_process_notification(&notification, "thread-1", "turn-1"),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
 fn turn_items_for_thread_returns_matching_turn_items() {
     let thread = AppServerThread {
         environments: None,

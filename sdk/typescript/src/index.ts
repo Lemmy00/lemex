@@ -6,6 +6,7 @@ export type {
   TurnFailedEvent,
   ItemStartedEvent,
   ItemUpdatedEvent,
+  ItemDeltaEvent,
   ItemCompletedEvent,
   ThreadError,
   ThreadErrorEvent,

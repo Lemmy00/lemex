@@ -124,10 +124,13 @@ pub use exec_events::CollabToolCallItem;
 pub use exec_events::CollabToolCallStatus;
 pub use exec_events::CommandExecutionItem;
 pub use exec_events::CommandExecutionStatus;
+pub use exec_events::DeltaField;
+pub use exec_events::DeltaItemType;
 pub use exec_events::ErrorItem;
 pub use exec_events::FileChangeItem;
 pub use exec_events::FileUpdateChange;
 pub use exec_events::ItemCompletedEvent;
+pub use exec_events::ItemDeltaEvent;
 pub use exec_events::ItemStartedEvent;
 pub use exec_events::ItemUpdatedEvent;
 pub use exec_events::McpToolCallItem;
@@ -137,6 +140,7 @@ pub use exec_events::McpToolCallStatus;
 pub use exec_events::PatchApplyStatus;
 pub use exec_events::PatchChangeKind;
 pub use exec_events::ReasoningItem;
+pub use exec_events::ReasoningKind;
 pub use exec_events::ThreadErrorEvent;
 pub use exec_events::ThreadEvent;
 pub use exec_events::ThreadItem as ExecThreadItem;
@@ -1704,6 +1708,18 @@ fn should_process_notification(
             notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::ItemStarted(notification) => {
+            notification.thread_id == thread_id && notification.turn_id == turn_id
+        }
+        ServerNotification::AgentMessageDelta(notification) => {
+            notification.thread_id == thread_id && notification.turn_id == turn_id
+        }
+        ServerNotification::CommandExecutionOutputDelta(notification) => {
+            notification.thread_id == thread_id && notification.turn_id == turn_id
+        }
+        ServerNotification::ReasoningSummaryTextDelta(notification) => {
+            notification.thread_id == thread_id && notification.turn_id == turn_id
+        }
+        ServerNotification::ReasoningTextDelta(notification) => {
             notification.thread_id == thread_id && notification.turn_id == turn_id
         }
         ServerNotification::ModelRerouted(notification) => {

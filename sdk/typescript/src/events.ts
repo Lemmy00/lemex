@@ -55,6 +55,21 @@ export type ItemUpdatedEvent = {
   item: ThreadItem;
 };
 
+/** Append an exposed text fragment to the item with the same ID. */
+export type ItemDeltaEvent = {
+  type: "item.delta";
+  item_id: string;
+  delta: string;
+} & (
+  | {
+      item_type: "reasoning";
+      field: "text" | "raw_text";
+      reasoning_kind: "summary" | "trace";
+    }
+  | { item_type: "agent_message"; field: "text" }
+  | { item_type: "command_execution"; field: "aggregated_output" }
+);
+
 /** Signals that an item has reached a terminal state—either success or failure. */
 export type ItemCompletedEvent = {
   type: "item.completed";
@@ -80,5 +95,6 @@ export type ThreadEvent =
   | TurnFailedEvent
   | ItemStartedEvent
   | ItemUpdatedEvent
+  | ItemDeltaEvent
   | ItemCompletedEvent
   | ThreadErrorEvent;

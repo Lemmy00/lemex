@@ -76,6 +76,100 @@ use codex_exec::TurnStartedEvent;
 use codex_exec::Usage;
 use codex_exec::WebSearchItem;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_json_stream_obeys_config_visibility_with_local_provider() -> anyhow::Result<()> {
+    use core_test_support::responses;
+    use core_test_support::test_codex_exec::test_codex_exec;
+
+    for (hide, raw) in [(false, false), (false, true), (true, true)] {
+        let server = responses::start_mock_server().await;
+        responses::mount_sse_once(
+            &server,
+            responses::sse(vec![
+                responses::ev_response_created("response-1"),
+                responses::ev_reasoning_item_added("r", &[""]),
+                responses::ev_reasoning_summary_text_delta("Summary"),
+                responses::ev_reasoning_text_delta("Exposed trace"),
+                responses::ev_reasoning_item("r", &["Summary"], &["Exposed trace"]),
+                responses::ev_message_item_added("m", ""),
+                responses::ev_output_text_delta("Done"),
+                responses::ev_assistant_message("m", "Done"),
+                responses::ev_completed("response-1"),
+            ]),
+        )
+        .await;
+        let test = test_codex_exec();
+        let output = test
+            .cmd_with_server(&server)
+            .arg("--skip-git-repo-check")
+            .arg("--json")
+            .args([
+                "-c",
+                "features.code_mode=false",
+                "-c",
+                "features.code_mode_only=false",
+            ])
+            .arg("-c")
+            .arg(format!("hide_agent_reasoning={hide}"))
+            .arg("-c")
+            .arg(format!("show_raw_agent_reasoning={raw}"))
+            .arg("test public streaming")
+            .output()?;
+        assert!(output.status.success(), "local exec failed: {output:?}");
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(!stdout.contains("encrypted_content"));
+        let events: Vec<serde_json::Value> = stdout
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()?;
+        let reasoning: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event["item"]["type"] == "reasoning" || event["item_type"] == "reasoning"
+            })
+            .collect();
+        if hide {
+            assert!(reasoning.is_empty());
+            assert!(!stdout.contains("Exposed trace"));
+        } else {
+            let ending = reasoning
+                .iter()
+                .find(|event| event["type"] == "item.completed")
+                .expect("reasoning completed");
+            let id = &ending["item"]["id"];
+            assert_eq!(ending["item"]["text"], "Summary");
+            assert_eq!(
+                ending["item"]["raw_text"].as_str(),
+                raw.then_some("Exposed trace")
+            );
+            for event in &reasoning {
+                assert_eq!(
+                    event["item"]["id"]
+                        .as_str()
+                        .or_else(|| event["item_id"].as_str()),
+                    id.as_str()
+                );
+            }
+            assert!(
+                reasoning
+                    .iter()
+                    .any(|event| event["type"] == "item.delta"
+                        && event["reasoning_kind"] == "summary")
+            );
+            assert_eq!(
+                reasoning
+                    .iter()
+                    .any(|event| event["reasoning_kind"] == "trace"),
+                raw
+            );
+        }
+        assert!(events.iter().any(|event| event["type"] == "item.delta"
+            && event["item_type"] == "agent_message"
+            && event["delta"] == "Done"));
+    }
+    Ok(())
+}
+
 #[test]
 fn map_todo_items_preserves_text_and_completion_state() {
     let items = EventProcessorWithJsonOutput::map_todo_items(&[
@@ -208,6 +302,25 @@ fn command_execution_started_and_completed_translate_to_thread_events() {
             })],
             status: CodexStatus::Running,
         }
+    );
+
+    let delta = processor.collect_thread_events(ServerNotification::CommandExecutionOutputDelta(
+        codex_app_server_protocol::CommandExecutionOutputDeltaNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "cmd-1".to_string(),
+            delta: "a.txt\n".to_string(),
+        },
+    ));
+    assert_eq!(
+        serde_json::to_value(&delta.events).expect("serialize command delta"),
+        json!([{
+            "type": "item.delta",
+            "item_id": "item_0",
+            "item_type": "command_execution",
+            "field": "aggregated_output",
+            "delta": "a.txt\n"
+        }]),
     );
 
     let completed = processor.collect_thread_events(ServerNotification::ItemCompleted(
@@ -359,6 +472,7 @@ fn reasoning_items_emit_summary_not_raw_content() {
                     id: "item_0".to_string(),
                     details: ThreadItemDetails::Reasoning(ReasoningItem {
                         text: "safe summary".to_string(),
+                        raw_text: None,
                     }),
                 },
             })],
@@ -1023,7 +1137,7 @@ fn agent_message_item_updates_final_message() {
 }
 
 #[test]
-fn agent_message_item_started_is_ignored() {
+fn agent_message_item_started_is_emitted() {
     let mut processor = EventProcessorWithJsonOutput::new(/*last_message_path*/ None);
 
     let collected =
@@ -1044,7 +1158,14 @@ fn agent_message_item_started_is_ignored() {
     assert_eq!(
         collected,
         CollectedThreadEvents {
-            events: Vec::new(),
+            events: vec![ThreadEvent::ItemStarted(ItemStartedEvent {
+                item: ExecThreadItem {
+                    id: "item_0".to_string(),
+                    details: ThreadItemDetails::AgentMessage(AgentMessageItem {
+                        text: "hello".to_string(),
+                    }),
+                },
+            })],
             status: CodexStatus::Running,
         }
     );
@@ -1075,6 +1196,7 @@ fn reasoning_item_completed_uses_synthetic_id() {
                     id: "item_0".to_string(),
                     details: ThreadItemDetails::Reasoning(ReasoningItem {
                         text: "thinking...".to_string(),
+                        raw_text: None,
                     }),
                 },
             })],

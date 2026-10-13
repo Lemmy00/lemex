@@ -17,7 +17,12 @@ impl TestCodexExecBuilder {
         cmd.current_dir(self.cwd.path())
             .env("LEMEX_HOME", self.home.path())
             .env("LEMEX_SQLITE_HOME", self.home.path())
-            .env(LEMEX_API_KEY_ENV_VAR, "dummy");
+            .env(LEMEX_API_KEY_ENV_VAR, "dummy")
+            // Exec fixtures mock OpenAI explicitly; Lemex's user default is RCP.
+            .arg("-c")
+            .arg("model_provider=\"openai\"")
+            .arg("-c")
+            .arg("features.plugins=false");
         cmd
     }
     pub fn cmd_with_server(&self, server: &MockServer) -> assert_cmd::Command {

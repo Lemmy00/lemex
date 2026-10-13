@@ -302,7 +302,7 @@ describe("CodexExec", () => {
       expect(spawnEnv.CUSTOM_ENV).toBe("custom");
       expect(spawnEnv.CODEX_ENV_SHOULD_NOT_LEAK).toBeUndefined();
       expect(spawnEnv.LEMEX_API_KEY).toBe("test");
-      expect(spawnEnv.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBeDefined();
+      expect(spawnEnv.LEMEX_INTERNAL_ORIGINATOR_OVERRIDE).toBeDefined();
       expect(commandArgs).toContain("--config");
       expect(commandArgs).toContain(`openai_base_url=${JSON.stringify("https://example.test")}`);
     } finally {

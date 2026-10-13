@@ -30,10 +30,13 @@ use crate::exec_events::CollabToolCallItem;
 use crate::exec_events::CollabToolCallStatus;
 use crate::exec_events::CommandExecutionItem;
 use crate::exec_events::CommandExecutionStatus as ExecCommandExecutionStatus;
+use crate::exec_events::DeltaField;
+use crate::exec_events::DeltaItemType;
 use crate::exec_events::ErrorItem;
 use crate::exec_events::FileChangeItem;
 use crate::exec_events::FileUpdateChange;
 use crate::exec_events::ItemCompletedEvent;
+use crate::exec_events::ItemDeltaEvent;
 use crate::exec_events::ItemStartedEvent;
 use crate::exec_events::ItemUpdatedEvent;
 use crate::exec_events::McpToolCallItem;
@@ -43,6 +46,7 @@ use crate::exec_events::McpToolCallStatus as ExecMcpToolCallStatus;
 use crate::exec_events::PatchApplyStatus as ExecPatchApplyStatus;
 use crate::exec_events::PatchChangeKind as ExecPatchChangeKind;
 use crate::exec_events::ReasoningItem;
+use crate::exec_events::ReasoningKind;
 use crate::exec_events::ThreadErrorEvent;
 use crate::exec_events::ThreadEvent;
 use crate::exec_events::ThreadItem as ExecThreadItem;
@@ -60,6 +64,9 @@ pub struct EventProcessorWithJsonOutput {
     last_message_path: Option<PathBuf>,
     next_item_id: AtomicU64,
     raw_to_exec_item_id: HashMap<String, String>,
+    reasoning_part_indices: HashMap<(String, ReasoningKind), i64>,
+    show_agent_reasoning: bool,
+    show_raw_agent_reasoning: bool,
     running_todo_list: Option<RunningTodoList>,
     last_total_token_usage: Option<ThreadTokenUsage>,
     last_critical_error: Option<ThreadErrorEvent>,
@@ -85,6 +92,9 @@ impl EventProcessorWithJsonOutput {
             last_message_path,
             next_item_id: AtomicU64::new(0),
             raw_to_exec_item_id: HashMap::new(),
+            reasoning_part_indices: HashMap::new(),
+            show_agent_reasoning: true,
+            show_raw_agent_reasoning: false,
             running_todo_list: None,
             last_total_token_usage: None,
             last_critical_error: None,
@@ -95,6 +105,16 @@ impl EventProcessorWithJsonOutput {
 
     pub fn final_message(&self) -> Option<&str> {
         self.final_message.as_deref()
+    }
+
+    /// Apply native reasoning visibility without overriding the user's settings.
+    pub fn set_reasoning_visibility(
+        &mut self,
+        hide_agent_reasoning: bool,
+        show_raw_agent_reasoning: bool,
+    ) {
+        self.show_agent_reasoning = !hide_agent_reasoning;
+        self.show_raw_agent_reasoning = show_raw_agent_reasoning;
     }
 
     fn next_item_id(&self) -> String {
@@ -142,6 +162,9 @@ impl EventProcessorWithJsonOutput {
 
     fn map_item_with_id(
         item: ThreadItem,
+        show_agent_reasoning: bool,
+        show_raw_agent_reasoning: bool,
+        allow_empty: bool,
         make_id: impl FnOnce() -> String,
     ) -> Option<ExecThreadItem> {
         match item {
@@ -149,14 +172,20 @@ impl EventProcessorWithJsonOutput {
                 id: make_id(),
                 details: ThreadItemDetails::AgentMessage(AgentMessageItem { text }),
             }),
-            ThreadItem::Reasoning { summary, .. } => {
+            ThreadItem::Reasoning { summary, content, .. } => {
+                if !show_agent_reasoning {
+                    return None;
+                }
                 let text = summary.join("\n");
-                if text.trim().is_empty() {
+                let raw_text = show_raw_agent_reasoning
+                    .then(|| content.join("\n"))
+                    .filter(|text| !text.trim().is_empty());
+                if !allow_empty && text.trim().is_empty() && raw_text.is_none() {
                     return None;
                 }
                 Some(ExecThreadItem {
                     id: make_id(),
-                    details: ThreadItemDetails::Reasoning(ReasoningItem { text }),
+                    details: ThreadItemDetails::Reasoning(ReasoningItem { text, raw_text }),
                 })
             }
             ThreadItem::CommandExecution {
@@ -335,36 +364,102 @@ impl EventProcessorWithJsonOutput {
     }
 
     fn completed_item_id(&mut self, raw_id: &str) -> String {
+        self.reasoning_part_indices
+            .retain(|(item_id, _), _| item_id != raw_id);
         self.raw_to_exec_item_id
             .remove(raw_id)
             .unwrap_or_else(|| self.next_item_id())
     }
 
     fn map_started_item(&mut self, item: ThreadItem) -> Option<ExecThreadItem> {
-        match item {
-            ThreadItem::AgentMessage { .. } | ThreadItem::Reasoning { .. } => None,
-            other => {
-                let raw_id = other.id().to_string();
-                Self::map_item_with_id(other, || self.started_item_id(&raw_id))
-            }
-        }
+        let raw_id = item.id().to_string();
+        Self::map_item_with_id(
+            item,
+            self.show_agent_reasoning,
+            self.show_raw_agent_reasoning,
+            true,
+            || self.started_item_id(&raw_id),
+        )
     }
 
     fn map_completed_item_mut(&mut self, item: ThreadItem) -> Option<ExecThreadItem> {
-        if let ThreadItem::Reasoning { summary, .. } = &item
-            && summary.join("\n").trim().is_empty()
+        let raw_id = item.id().to_string();
+        // Close a visible started item even if it ultimately produced no exposed text.
+        let allow_empty = self.raw_to_exec_item_id.contains_key(&raw_id);
+        let mapped = Self::map_item_with_id(
+            item,
+            self.show_agent_reasoning,
+            self.show_raw_agent_reasoning,
+            allow_empty,
+            || self.completed_item_id(&raw_id),
+        );
+        if mapped.is_none() {
+            self.raw_to_exec_item_id.remove(&raw_id);
+            self.reasoning_part_indices
+                .retain(|(item_id, _), _| item_id != &raw_id);
+        }
+        mapped
+    }
+
+    /// Map one exposed fragment to its stable public item ID.
+    fn text_delta(
+        &mut self,
+        raw_id: &str,
+        item_type: DeltaItemType,
+        field: DeltaField,
+        delta: String,
+        reasoning_kind: Option<ReasoningKind>,
+    ) -> Option<ThreadEvent> {
+        if delta.is_empty()
+            || reasoning_kind.is_some()
+                && (!self.show_agent_reasoning
+                    || reasoning_kind == Some(ReasoningKind::Trace)
+                        && !self.show_raw_agent_reasoning)
         {
             return None;
         }
-        match &item {
-            ThreadItem::AgentMessage { .. } | ThreadItem::Reasoning { .. } => {
-                Self::map_item_with_id(item, || self.next_item_id())
-            }
-            other => {
-                let raw_id = other.id().to_string();
-                Self::map_item_with_id(item, || self.completed_item_id(&raw_id))
-            }
+        Some(ThreadEvent::ItemDelta(ItemDeltaEvent {
+            item_id: self.started_item_id(raw_id),
+            item_type,
+            field,
+            delta,
+            reasoning_kind,
+        }))
+    }
+
+    /// Preserve the separators used by the completed reasoning item's parts.
+    fn reasoning_delta(
+        &mut self,
+        raw_id: &str,
+        index: i64,
+        mut delta: String,
+        kind: ReasoningKind,
+    ) -> Option<ThreadEvent> {
+        if !self.show_agent_reasoning
+            || kind == ReasoningKind::Trace && !self.show_raw_agent_reasoning
+            || delta.is_empty()
+        {
+            return None;
         }
+        let last_index = self
+            .reasoning_part_indices
+            .entry((raw_id.to_string(), kind))
+            .or_insert(0);
+        if index > *last_index {
+            // Each completed part is joined with a newline, including empty parts.
+            delta = format!("{}{}", "\n".repeat((index - *last_index) as usize), delta);
+            *last_index = index;
+        }
+        self.text_delta(
+            raw_id,
+            DeltaItemType::Reasoning,
+            match kind {
+                ReasoningKind::Summary => DeltaField::Text,
+                ReasoningKind::Trace => DeltaField::RawText,
+            },
+            delta,
+            Some(kind),
+        )
     }
 
     fn reconcile_unfinished_started_items(
@@ -491,6 +586,44 @@ impl EventProcessorWithJsonOutput {
                 }
                 CodexStatus::Running
             }
+            ServerNotification::AgentMessageDelta(notification) => {
+                events.extend(self.text_delta(
+                    &notification.item_id,
+                    DeltaItemType::AgentMessage,
+                    DeltaField::Text,
+                    notification.delta,
+                    None,
+                ));
+                CodexStatus::Running
+            }
+            ServerNotification::CommandExecutionOutputDelta(notification) => {
+                events.extend(self.text_delta(
+                    &notification.item_id,
+                    DeltaItemType::CommandExecution,
+                    DeltaField::AggregatedOutput,
+                    notification.delta,
+                    None,
+                ));
+                CodexStatus::Running
+            }
+            ServerNotification::ReasoningSummaryTextDelta(notification) => {
+                events.extend(self.reasoning_delta(
+                    &notification.item_id,
+                    notification.summary_index,
+                    notification.delta,
+                    ReasoningKind::Summary,
+                ));
+                CodexStatus::Running
+            }
+            ServerNotification::ReasoningTextDelta(notification) => {
+                events.extend(self.reasoning_delta(
+                    &notification.item_id,
+                    notification.content_index,
+                    notification.delta,
+                    ReasoningKind::Trace,
+                ));
+                CodexStatus::Running
+            }
             ServerNotification::ModelRerouted(notification) => {
                 events.push(ThreadEvent::ItemCompleted(ItemCompletedEvent {
                     item: ExecThreadItem {
@@ -605,10 +738,11 @@ impl EventProcessorWithJsonOutput {
 impl EventProcessor for EventProcessorWithJsonOutput {
     fn print_config_summary(
         &mut self,
-        _: &Config,
+        config: &Config,
         _: &str,
         session_configured: &SessionConfiguredEvent,
     ) {
+        self.set_reasoning_visibility(config.hide_agent_reasoning, config.show_raw_agent_reasoning);
         self.emit(Self::thread_started_event(session_configured));
     }
 

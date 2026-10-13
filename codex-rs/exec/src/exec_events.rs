@@ -28,6 +28,9 @@ pub enum ThreadEvent {
     /// Emitted when an item is updated.
     #[serde(rename = "item.updated")]
     ItemUpdated(ItemUpdatedEvent),
+    /// Append a public text fragment without resending the full item.
+    #[serde(rename = "item.delta")]
+    ItemDelta(ItemDeltaEvent),
     /// Signals that an item has reached a terminal state—either success or failure.
     #[serde(rename = "item.completed")]
     ItemCompleted(ItemCompletedEvent),
@@ -87,6 +90,41 @@ pub struct ItemUpdatedEvent {
     pub item: ThreadItem,
 }
 
+/// A text fragment belonging to the same item as its started/completed events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+pub struct ItemDeltaEvent {
+    pub item_id: String,
+    pub item_type: DeltaItemType,
+    pub field: DeltaField,
+    pub delta: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reasoning_kind: Option<ReasoningKind>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum DeltaItemType {
+    Reasoning,
+    AgentMessage,
+    CommandExecution,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum DeltaField {
+    Text,
+    RawText,
+    AggregatedOutput,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningKind {
+    Summary,
+    Trace,
+}
+
 /// Fatal error emitted by the stream.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 pub struct ThreadErrorEvent {
@@ -143,6 +181,10 @@ pub struct AgentMessageItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 pub struct ReasoningItem {
     pub text: String,
+    /// Provider-exposed reasoning, present only when native visibility permits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub raw_text: Option<String>,
 }
 
 /// The status of a command execution.

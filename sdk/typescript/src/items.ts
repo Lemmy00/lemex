@@ -84,6 +84,8 @@ export type ReasoningItem = {
   id: string;
   type: "reasoning";
   text: string;
+  /** Provider-exposed trace, present only when native reasoning visibility allows it. */
+  raw_text?: string;
 };
 
 /** Captures a web search request. Completes when results are returned to the agent. */
