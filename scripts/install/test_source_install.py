@@ -108,9 +108,11 @@ esac
         (modules / "lemex").symlink_to(self.root / "deleted-checkout")
         (prefix / "bin").mkdir()
         (prefix / "bin/lemex").symlink_to("../lib/node_modules/lemex/bin/lemex.js")
-        env = dict(os.environ, npm_config_offline="true", npm_config_audit="false", npm_config_cache=str(self.root / "cache"))
+        env = dict(os.environ, npm_config_offline="true", npm_config_audit="false", npm_config_cache=str(self.root / "cache"), TMPDIR=str(self.root))
         subprocess.run(["/bin/bash", "-c", 'source "$1"; CODEX_CLI_DIR="$2"; LEMEX_INSTALL_PREFIX="$3"; install_npm_package', "test", str(ROOT / "scripts/install/install_from_source.sh"), str(checkout), str(prefix)], env=env, check=True, capture_output=True, text=True)
         self.assertFalse((prefix / "lib/node_modules/lemex").is_symlink())
+        self.assertFalse((self.root / "cache").exists())
+        self.assertEqual(list(self.root.glob("lemex-package.*")), [])
         shutil.rmtree(checkout)
         result = subprocess.check_output([str(prefix / "bin/lemex"), "--probe"], env=env, text=True)
         self.assertEqual(result.strip(), "runtime:npm")
@@ -147,10 +149,18 @@ esac
         output = subprocess.check_output(["/bin/bash", "-c", 'parse() { local v8_paths; v8_paths=$(printf "/cache/archive\\n/cache/bindings\\n");\n' + snippet + '\nprintf "%s\\n" "${v8_artifacts[@]}"; }; parse'], text=True)
         self.assertEqual(output.splitlines(), ["/cache/archive", "/cache/bindings"])
 
-    def run_build(self, overrides=None, *, fail=False):
+    def run_build(self, overrides=None, *, fail=False, install=False):
         """Exercise the real build/cleanup flow with offline compiler fixtures."""
         fixture = Path(tempfile.mkdtemp(dir=self.root))
         (fixture / "codex-rs").mkdir()
+        (fixture / "cli/bin").mkdir(parents=True)
+        shutil.copy2(ROOT / "codex-cli/package.json", fixture / "cli/package.json")
+        shutil.copy2(ROOT / "codex-cli/bin/lemex.js", fixture / "cli/bin/lemex.js")
+        if install:
+            # Earlier installs may have left runtimes for other hosts behind.
+            stale = fixture / "cli/vendor/obsolete/bin/lemex"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("old runtime")
         env = dict(os.environ)
         for name in (
             "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL",
@@ -159,19 +169,27 @@ esac
             "LEMEX_KEEP_BUILD", "RUSTY_V8_ARCHIVE", "RUSTY_V8_SRC_BINDING_PATH",
         ):
             env.pop(name, None)
-        env.update(LEMEX_BUILD="release", XDG_CACHE_HOME=str(fixture / "cache"))
+        env.update(LEMEX_BUILD="release", XDG_CACHE_HOME=str(fixture / "cache"), TMPDIR=str(fixture), npm_config_offline="true", FIXTURE_HOST_TARGET="x86_64-unknown-linux-gnu")
         env.update(overrides or {})
         script = r'''
 source "$1"
 fixture="$2"
 CODEX_RS_DIR="$fixture/codex-rs"
 CODEX_CLI_DIR="$fixture/cli"
-rustc() { printf 'host: x86_64-unknown-linux-gnu\n'; }
+rustc() { printf 'host: %s\n' "$FIXTURE_HOST_TARGET"; }
 git() { printf 'fixture-commit\n'; }
 python3() {
     if [ "$1" = "-" ]; then
         printf 'fetched\n' > "$fixture/fetch"
         printf '/fixture/archive\n/fixture/bindings\n'
+    else
+        printf '%s\n' "$LEMEX_TEMP_PACKAGE_DIR" > "$fixture/package-dir"
+        "$VENDOR_DIR/lemex" --version > "$fixture/runtime-version"
+        case "$HOST_TARGET" in
+            *-linux-*) test -f "$LEMEX_PACKAGE_DIR/vendor/$HOST_TARGET/codex-resources/bwrap" ;;
+        esac
+        test -f "$LEMEX_PACKAGE_DIR/bin/lemex.js"
+        test -f "$LEMEX_PACKAGE_DIR/package.json"
     fi
 }
 cargo() {
@@ -192,17 +210,38 @@ cargo() {
 }
 fail_build="$3"
 build_binary
+if [ "$4" = 1 ]; then
+    original_target="$CARGO_TARGET_DIR"
+    cleanup_build
+    test ! -d "$original_target"
+    LEMEX_INSTALL_PREFIX="$fixture/prefix"
+    install_npm_package
+fi
 '''
         result = subprocess.run(
             ["/bin/bash", "-c", script, "test",
              str(ROOT / "scripts/install/install_from_source.sh"), str(fixture),
-             "1" if fail else "0"],
+             "1" if fail else "0", "1" if install else "0"],
             env=env, capture_output=True, text=True,
         )
         observed = {}
         if (fixture / "build").exists():
             observed = dict(line.split("=", 1) for line in (fixture / "build").read_text().splitlines())
         return result, fixture, observed
+
+    @unittest.skipUnless(shutil.which("npm") and shutil.which("node"), "Node/npm required")
+    def test_staged_build_installs_only_current_host_and_removes_caches(self):
+        node_platform = subprocess.check_output(["node", "-p", 'process.platform + ":" + process.arch'], text=True).strip()
+        target = {"darwin:arm64": "aarch64-apple-darwin", "darwin:x64": "x86_64-apple-darwin", "linux:x64": "x86_64-unknown-linux-gnu", "linux:arm64": "aarch64-unknown-linux-gnu"}[node_platform]
+        result, fixture, observed = self.run_build({"FIXTURE_HOST_TARGET": target}, install=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        installed = fixture / "prefix/lib/node_modules/lemex"
+        self.assertEqual([path.name for path in (installed / "vendor").iterdir()], [target])
+        self.assertEqual(subprocess.check_output([str(fixture / "prefix/bin/lemex"), "--version"], text=True).strip(), "lemex 0.0.0")
+        self.assertFalse(Path(observed["target"]).exists())
+        self.assertEqual(list(fixture.glob("lemex-runtime.*")), [])
+        self.assertEqual(list(fixture.glob("lemex-package.*")), [])
+        self.assertTrue((fixture / "cli/vendor/obsolete/bin/lemex").is_file())
 
     def test_release_install_removes_build_cache_and_copies_runtime(self):
         result, fixture, observed = self.run_build()
@@ -216,14 +255,16 @@ build_binary
         self.assertIn("--bin lemex --bin lemex-code-mode-host --bin bwrap", observed["args"])
         self.assertFalse(Path(observed["target"]).exists())
         self.assertIn("Removing temporary Cargo build cache:", result.stdout)
-        self.assertTrue((fixture / "cli/vendor/x86_64-unknown-linux-gnu/bin/lemex").is_file())
-        self.assertTrue((fixture / "cli/vendor/x86_64-unknown-linux-gnu/codex-resources/bwrap").is_file())
+        self.assertEqual((fixture / "runtime-version").read_text().strip(), "lemex 0.0.0")
+        self.assertFalse((fixture / "cli/vendor").exists())
+        self.assertFalse(Path((fixture / "package-dir").read_text().strip()).exists())
 
     def test_failed_build_removes_temporary_cache(self):
         result, fixture, observed = self.run_build(fail=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(Path(observed["target"]).exists())
-        self.assertFalse((fixture / "cli").exists())
+        self.assertFalse((fixture / "cli/vendor").exists())
+        self.assertEqual(list(fixture.glob("lemex-runtime.*")), [])
 
     def test_debug_install_uses_small_profile_and_removes_cache(self):
         result, _, observed = self.run_build({"LEMEX_BUILD": "debug"})
@@ -271,6 +312,43 @@ build_binary
         self.assertEqual(observed, {})
         self.assertFalse((fixture / "fetch").exists())
         self.assertFalse((fixture / "cache").exists())
+
+    def test_packaging_failure_and_signals_remove_all_owned_temporary_files(self):
+        for failure in ("pack", "install", "INT", "TERM", "HUP"):
+            with self.subTest(failure=failure):
+                fixture = Path(tempfile.mkdtemp(dir=self.root))
+                script = r'''
+source "$1"
+fixture="$2"
+failure="$3"
+CODEX_CLI_DIR="$fixture"
+LEMEX_TEMP_BUILD_DIR="$(mktemp -d "$fixture/lemex-build.XXXXXX")"
+LEMEX_TEMP_PACKAGE_DIR="$(mktemp -d "$fixture/lemex-runtime.XXXXXX")"
+npm() {
+    case "$1" in
+        pack)
+            touch "$LEMEX_TEMP_NPM_DIR/runtime.tgz"
+            if [ "$failure" = pack ]; then return 1; fi
+            ;;
+        install)
+            mkdir -p "$LEMEX_TEMP_NPM_DIR/cache"
+            touch "$LEMEX_TEMP_NPM_DIR/cache/tarball"
+            if [ "$failure" = install ]; then return 1; fi
+            kill -s "$failure" "$$"
+            ;;
+    esac
+}
+install_npm_package
+'''
+                result = subprocess.run(
+                    ["/bin/bash", "-c", script, "test",
+                     str(ROOT / "scripts/install/install_from_source.sh"), str(fixture), failure],
+                    env=dict(os.environ, TMPDIR=str(fixture), LEMEX_KEEP_BUILD="0"),
+                    capture_output=True, text=True,
+                )
+                expected = {"INT": 130, "TERM": 143, "HUP": 129}.get(failure, 1)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertEqual(list(fixture.iterdir()), [])
 
 
 if __name__ == "__main__":

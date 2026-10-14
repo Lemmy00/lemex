@@ -28,8 +28,21 @@ LEMEX_BUILD="${LEMEX_BUILD:-release}"
 LEMEX_SKIP_RUST_INSTALL="${LEMEX_SKIP_RUST_INSTALL:-0}"
 LEMEX_HOME_DIR="${LEMEX_HOME:-$HOME/.lemex}"
 LEMEX_TEMP_BUILD_DIR=""
+LEMEX_TEMP_PACKAGE_DIR=""
+LEMEX_TEMP_NPM_DIR=""
 
 cleanup() {
+    # Packaging and npm's tarball cache belong to this invocation, including
+    # when packing/installing fails or the user interrupts the installer.
+    for temporary in "$LEMEX_TEMP_PACKAGE_DIR" "$LEMEX_TEMP_NPM_DIR"; do
+        if [ -n "$temporary" ]; then
+            rm -rf -- "$temporary"
+        fi
+    done
+    cleanup_build
+}
+
+cleanup_build() {
     if [ -z "$LEMEX_TEMP_BUILD_DIR" ]; then
         return
     fi
@@ -40,9 +53,13 @@ cleanup() {
         printf '\nRemoving temporary Cargo build cache: %s\n' "$LEMEX_TEMP_BUILD_DIR"
         rm -rf -- "$LEMEX_TEMP_BUILD_DIR"
     fi
+    LEMEX_TEMP_BUILD_DIR=""
 }
 
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 step() {
     printf '\n==> %s\n' "$1"
@@ -169,32 +186,38 @@ PY
             ;;
     esac
 
-    VENDOR_DIR="$CODEX_CLI_DIR/vendor/$HOST_TARGET/bin"
+    # Stage only this host's runtime outside the checkout. Old vendor targets
+    # must not become duplicate binaries in every subsequent npm install.
+    LEMEX_TEMP_PACKAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lemex-runtime.XXXXXX")"
+    LEMEX_PACKAGE_DIR="$LEMEX_TEMP_PACKAGE_DIR/runtime"
+    mkdir -p "$LEMEX_PACKAGE_DIR/bin"
+    cp "$CODEX_CLI_DIR/package.json" "$LEMEX_PACKAGE_DIR/package.json"
+    cp "$CODEX_CLI_DIR/bin/lemex.js" "$LEMEX_PACKAGE_DIR/bin/lemex.js"
+    VENDOR_DIR="$LEMEX_PACKAGE_DIR/vendor/$HOST_TARGET/bin"
     mkdir -p "$VENDOR_DIR"
     cp "$BUILD_OUTPUT_DIR/lemex" "$VENDOR_DIR/lemex"
     cp "$BUILD_OUTPUT_DIR/lemex-code-mode-host" "$VENDOR_DIR/lemex-code-mode-host"
     case "$HOST_TARGET" in
         *-linux-*)
-            mkdir -p "$CODEX_CLI_DIR/vendor/$HOST_TARGET/codex-resources"
-            cp "$BUILD_OUTPUT_DIR/bwrap" "$CODEX_CLI_DIR/vendor/$HOST_TARGET/codex-resources/bwrap"
+            mkdir -p "$LEMEX_PACKAGE_DIR/vendor/$HOST_TARGET/codex-resources"
+            cp "$BUILD_OUTPUT_DIR/bwrap" "$LEMEX_PACKAGE_DIR/vendor/$HOST_TARGET/codex-resources/bwrap"
             ;;
     esac
     python3 "$REPO_ROOT/scripts/install/prepare_source_package.py" \
-        "$CODEX_CLI_DIR/vendor/$HOST_TARGET" \
+        "$LEMEX_PACKAGE_DIR/vendor/$HOST_TARGET" \
         --target "$HOST_TARGET" --rg "$(command -v rg)"
     printf "Copied binary to %s\n" "$VENDOR_DIR/lemex"
 }
 
 install_npm_package() {
     step "Installing lemex npm package globally"
-    cd "$CODEX_CLI_DIR"
+    cd "${LEMEX_PACKAGE_DIR:-$CODEX_CLI_DIR}"
 
     # Installing a directory globally makes a symlink to the checkout. Pack it
     # first so the installed runtime survives moving or deleting that checkout.
-    local package_dir
-    package_dir="$(mktemp -d "${TMPDIR:-/tmp}/lemex-package.XXXXXX")"
-    npm pack --pack-destination "$package_dir" >/dev/null || {
-        rm -rf -- "$package_dir"
+    LEMEX_TEMP_NPM_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lemex-package.XXXXXX")"
+    local package_dir="$LEMEX_TEMP_NPM_DIR"
+    npm pack --cache "$package_dir/cache" --pack-destination "$package_dir" >/dev/null || {
         error "Failed to pack the Lemex runtime."
     }
     local packages=("$package_dir"/*.tgz)
@@ -203,11 +226,11 @@ install_npm_package() {
         NPM_ARGS+=(--prefix "$LEMEX_INSTALL_PREFIX")
     fi
 
-    npm install "${NPM_ARGS[@]}" || {
-        rm -rf -- "$package_dir"
+    npm install --cache "$package_dir/cache" --no-audit --no-fund "${NPM_ARGS[@]}" || {
         error "Failed to install the Lemex runtime."
     }
     rm -rf -- "$package_dir"
+    LEMEX_TEMP_NPM_DIR=""
 }
 
 install_default_config() {
@@ -288,6 +311,9 @@ main() {
     check_base_deps
     install_rust
     build_binary
+    # Release the large compiler artifacts before npm creates its tarball and
+    # installed runtime copies, keeping peak installation disk use lower.
+    cleanup_build
     install_npm_package
     install_default_config
     copy_remote_config

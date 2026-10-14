@@ -12,6 +12,10 @@ python := if os_family() == "windows" { "python" } else { "python3" }
 help:
     just -l
 
+# Remove generated Rust build artifacts; installed Lemex remains available.
+clean-build:
+    cargo clean
+
 # `codex`
 alias c := codex
 codex *args:

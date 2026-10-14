@@ -602,6 +602,9 @@ ignored = [
 ]
 
 [profile.dev]
+# This large workspace otherwise keeps gigabytes of incremental compiler state.
+# Opt in with CARGO_INCREMENTAL=1 when actively iterating on Rust code.
+incremental = false
 # The test profile inherits dev. Keep source locations in ordinary builds;
 # use CARGO_PROFILE_DEV_DEBUG=full (or CARGO_PROFILE_TEST_DEBUG=full) for locals.
 debug = "line-tables-only"

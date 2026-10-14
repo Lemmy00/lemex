@@ -41,11 +41,13 @@ No build environment variables are required. Common overrides are:
 | `LEMEX_KEEP_BUILD`        | Set to `1` to retain the generated temporary build directory.                 |
 | `LEMEX_SKIP_RUST_INSTALL` | Set to `1` to require an existing Rust installation.                          |
 
-By default, the temporary build directory is removed when installation finishes or fails. An explicitly supplied `CARGO_TARGET_DIR` is always retained:
+Source installs disable incremental compilation and release debug symbols to reduce disk usage. Build artifacts, runtime staging, tarballs, and the install's npm cache are temporary and removed on success, failure, or interruption. Only the installed runtime is retained; Cargo's shared dependency downloads remain available for other Rust projects. An explicitly supplied `CARGO_TARGET_DIR` is always retained:
 
 ```sh
 CARGO_TARGET_DIR="$HOME/.cache/lemex-build" ./scripts/install/install_from_source.sh
 ```
+
+Development builds also disable incremental compilation by default; set `CARGO_INCREMENTAL=1` to opt in. To reclaim build artifacts from earlier development builds, run `just clean-build` (or `cd codex-rs && cargo clean`). This leaves the globally installed CLI and your configuration intact. Source builds still need temporary disk space while compiling.
 
 ## Import existing configuration
 
