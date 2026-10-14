@@ -1226,6 +1226,49 @@ fn auth_check(config: &Config) -> DoctorCheck {
             env_auth_vars.join(", ")
         ));
     }
+    if config.model_provider_id == codex_model_provider_info::RCP_PROVIDER_ID {
+        let result = if config.model_provider.api_key().is_ok() {
+            Ok(true)
+        } else {
+            load_auth_dot_json(
+                &config.codex_home,
+                config.cli_auth_credentials_store_mode,
+                config.auth_keyring_backend_kind(),
+            )
+            .map(|auth| {
+                auth.is_some_and(|auth| {
+                    auth.openai_api_key
+                        .is_some_and(|key| !key.trim().is_empty())
+                        && auth.auth_mode.is_none_or(|mode| mode == AuthMode::ApiKey)
+                })
+            })
+        };
+        return match result {
+            Ok(true) => DoctorCheck::new(
+                "auth.credentials",
+                "auth",
+                CheckStatus::Ok,
+                "API key is configured",
+            )
+            .details(details),
+            Ok(false) => DoctorCheck::new(
+                "auth.credentials",
+                "auth",
+                CheckStatus::Fail,
+                "API key is missing",
+            )
+            .details(details)
+            .remediation("Run lemex setup or set LEMEX_API_KEY."),
+            Err(error) => DoctorCheck::new(
+                "auth.credentials",
+                "auth",
+                CheckStatus::Fail,
+                "API key storage could not be read",
+            )
+            .details(details.into_iter().chain([error.to_string()]).collect())
+            .remediation("Fix credential storage access, then run lemex setup."),
+        };
+    }
     if let Some(check) = provider_specific_auth_check(
         config.model_provider.requires_openai_auth,
         config.model_provider.env_key.as_deref(),
@@ -1275,8 +1318,9 @@ fn auth_check(config: &Config) -> DoctorCheck {
             let mut check =
                 DoctorCheck::new("auth.credentials", "auth", status, summary).details(details);
             if status == CheckStatus::Fail {
-                check =
-                    check.remediation("Run lemex login again or provide a supported auth env var.");
+                check = check.remediation(
+                    "Run lemex setup or set the provider API-key environment variable.",
+                );
             }
             check
         }
@@ -1294,7 +1338,7 @@ fn auth_check(config: &Config) -> DoctorCheck {
             "no Lemex credentials were found",
         )
         .details(details)
-        .remediation("Run lemex login or provide an API key through a supported auth env var."),
+        .remediation("Run lemex setup or set the provider API-key environment variable."),
         Err(err) => DoctorCheck::new(
             "auth.credentials",
             "auth",
@@ -1302,7 +1346,7 @@ fn auth_check(config: &Config) -> DoctorCheck {
             "stored credentials could not be read",
         )
         .detail(err.to_string())
-        .remediation("Fix auth storage access or run lemex login again."),
+        .remediation("Fix credential storage access, then run lemex setup."),
     }
 }
 

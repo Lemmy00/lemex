@@ -1408,7 +1408,7 @@ async fn usage_error_slash_command_is_available_from_local_recall() {
 }
 
 #[tokio::test]
-async fn signed_out_usage_command_reports_chatgpt_login_requirement() {
+async fn api_usage_command_suggests_session_status() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     submit_composer_text(&mut chat, "/usage");
@@ -1419,15 +1419,12 @@ async fn signed_out_usage_command_reports_chatgpt_login_requirement() {
         .map(|cell| lines_to_single_string(cell))
         .collect::<Vec<_>>()
         .join("\n");
-    assert_chatwidget_snapshot!(
-        "signed_out_usage_command_reports_chatgpt_login_requirement",
-        rendered
-    );
+    assert_chatwidget_snapshot!("api_usage_command_suggests_session_status", rendered);
     assert_eq!(recall_latest_after_clearing(&mut chat), "/usage");
 }
 
 #[tokio::test]
-async fn signed_out_usage_command_with_args_reports_chatgpt_login_requirement() {
+async fn api_usage_command_with_args_suggests_session_status() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     submit_composer_text(&mut chat, "/usage weekly");
@@ -1439,8 +1436,10 @@ async fn signed_out_usage_command_with_args_reports_chatgpt_login_requirement() 
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        rendered.contains("Sign in with ChatGPT to use /usage."),
-        "expected ChatGPT login requirement, got: {rendered:?}"
+        rendered.contains(
+            "Account usage is unavailable with an API key. Use /status for session token usage."
+        ),
+        "expected API status hint, got: {rendered:?}"
     );
     assert_eq!(recall_latest_after_clearing(&mut chat), "/usage weekly");
 }
@@ -1588,13 +1587,13 @@ async fn slash_exit_aliases_request_exit() {
     }
 }
 
-#[tokio::test]
-async fn slash_logout_requests_app_server_logout() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    chat.dispatch_command(SlashCommand::Logout);
-
-    assert_matches!(rx.try_recv(), Ok(AppEvent::Logout));
+#[test]
+fn api_only_commands_do_not_offer_logout() {
+    assert!(
+        !crate::slash_command::built_in_slash_commands()
+            .iter()
+            .any(|(name, _)| *name == "logout")
+    );
 }
 
 #[tokio::test]

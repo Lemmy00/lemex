@@ -296,13 +296,14 @@ print_next_steps() {
         "$LEMEX_HOME_DIR" "$LEMEX_HOME_DIR"
     cat <<'EOF'
 
-With the bundled configuration, set your provider API key and start Lemex:
+Set up your API key once and start Lemex:
 
-  export LEMEX_API_KEY="your-api-key"
+  lemex setup
   lemex
 
-Save the export in your shell profile to keep it across sessions.
-If you kept or imported another configuration, set the key named by its env_key.
+Setup defaults to RCP and lets you change the API URL. No OpenAI login is needed.
+For environment-only use, set LEMEX_API_KEY and optionally LEMEX_BASE_URL.
+If you kept or imported a custom provider, set the key named by its env_key.
 Run 'lemex doctor' to check your setup.
 EOF
 }

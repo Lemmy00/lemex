@@ -331,6 +331,16 @@ impl AccountRequestProcessor {
         request_id: ConnectionRequestId,
         params: LoginAccountParams,
     ) -> Result<(), JSONRPCErrorError> {
+        if matches!(
+            &params,
+            LoginAccountParams::Chatgpt { .. }
+                | LoginAccountParams::ChatgptDeviceCode
+                | LoginAccountParams::ChatgptAuthTokens { .. }
+        ) {
+            return Err(invalid_request(
+                "Lemex uses API keys. Run `lemex setup` or set LEMEX_API_KEY.",
+            ));
+        }
         if self.auth_manager.is_workload_identity_selected() {
             return Err(self.configured_auth_owned_by_host_error());
         }

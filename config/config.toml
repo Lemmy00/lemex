@@ -1,5 +1,5 @@
 model_provider = "rcp"
-# RCP reads LEMEX_API_KEY; set LEMEX_BASE_URL to use another endpoint.
+# Run lemex setup to save a key and URL; LEMEX_API_KEY and LEMEX_BASE_URL override them.
 model = "moonshotai/Kimi-K2.7-Code"
 model_catalog_json = "models.json"
 # Use a 200k context window and compact at 90% to leave headroom.

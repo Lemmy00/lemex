@@ -24,7 +24,7 @@ cd lemex
 
 The installer builds the CLI and its helpers, downloads verified V8 artifacts, and installs the runtime globally through npm. The installed command keeps working if you move or remove the checkout. Ensure npm's global binary directory is on your `PATH`.
 
-Missing `config.toml` and `models.json` files are copied from `config/` into `${LEMEX_HOME:-$HOME/.lemex}`. Existing files are left in place. Set `LEMEX_API_KEY` before starting Lemex; see [Configuration](config.md).
+Missing `config.toml` and `models.json` files are copied from `config/` into `${LEMEX_HOME:-$HOME/.lemex}`. Existing files are left in place. Run `lemex setup` to save your API key and endpoint before starting Lemex; see [API setup](authentication.md).
 
 To update a source installation, pull the latest changes and run the installer again.
 
@@ -57,7 +57,7 @@ To copy configuration and the model catalog from another machine over SSH:
 LEMEX_COPY_CONFIG_FROM=host:/home/user/.lemex ./scripts/install/install_from_source.sh
 ```
 
-The import validates the catalog, adapts absolute home and configuration paths, and backs up replaced files as `*.bak` (with a numeric suffix if needed). Set the provider's API-key environment variable separately.
+The import validates the catalog, adapts absolute home and configuration paths, and backs up replaced files as `*.bak` (with a numeric suffix if needed). Run `lemex setup` for the built-in RCP provider, or set the custom provider's API-key environment variable separately.
 
 ## Verify
 

@@ -4,20 +4,13 @@ Lemex reads `~/.lemex/config.toml` and stores its state in `~/.lemex`. Set `LEME
 
 ## Environment variables
 
-For the bundled configuration, set the API key for the RCP endpoint:
+Run `lemex setup` to save an API key and endpoint. The default endpoint is RCP (`https://inference.rcp.epfl.ch/v1`). No environment variables are required after setup.
 
-```sh
-export LEMEX_API_KEY="your-api-key"
-```
-
-Save the export in your shell profile (`~/.zshrc` or `~/.bashrc`) and reload it, or open a new terminal.
-
-| Variable             | When to set it                                                                                                                                           |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LEMEX_API_KEY`      | Required by the bundled provider configuration.                                                                                                          |
-| `LEMEX_BASE_URL`     | Optional override for the built-in RCP endpoint, which defaults to `https://inference.rcp.epfl.ch/v1`. Custom providers use their configured `base_url`. |
-| `LEMEX_HOME`         | Optional configuration and state directory; defaults to `~/.lemex`.                                                                                      |
-| `LEMEX_ACCESS_TOKEN` | Only for an access-token authentication setup; unused by the bundled provider.                                                                           |
+| Variable         | When to set it |
+| ---------------- | -------------- |
+| `LEMEX_API_KEY`  | Optional API key; overrides the saved key for the built-in RCP provider. |
+| `LEMEX_BASE_URL` | Optional endpoint override; takes precedence over the saved RCP URL. |
+| `LEMEX_HOME`     | Optional configuration and state directory; defaults to `~/.lemex`. |
 
 Custom providers read the environment variable named by their `env_key` setting.
 
@@ -51,7 +44,11 @@ To point the built-in RCP provider at another Responses API endpoint:
 export LEMEX_BASE_URL="https://api.example.com/v1"
 ```
 
-It continues to use `LEMEX_API_KEY`.
+It uses the saved API key or `LEMEX_API_KEY`. To save a URL and model instead:
+
+```sh
+lemex setup --base-url "https://api.example.com/v1" --model "your-model-id"
+```
 
 For another provider that supports the Responses API, replace the provider selection and add a provider table:
 

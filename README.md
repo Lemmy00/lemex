@@ -1,6 +1,6 @@
 # Lemex CLI
 
-Lemex is a local coding agent based on OpenAI Codex. It runs as `lemex` and keeps its configuration and login state in `~/.lemex`, so you can use it alongside Codex.
+Lemex is a local coding agent based on OpenAI Codex. It runs as `lemex` and keeps its configuration and state in `~/.lemex`, so you can use it alongside Codex.
 
 External analytics and feedback reporting are removed. Local logs and token usage are preserved. Custom OpenTelemetry exporters require explicit configuration.
 
@@ -20,14 +20,16 @@ The installer builds and installs `lemex` globally, installs Rust if needed, and
 
 ## Run
 
-The default configuration uses the RCP inference endpoint. Set its API key:
+Set up your API key once, then start Lemex:
 
 ```sh
-export LEMEX_API_KEY="your-api-key"
+lemex setup
 lemex
 ```
 
-Add the export to your shell profile (`~/.zshrc` or `~/.bashrc`) to keep it across sessions, then reload the profile or open a new terminal. This is the only environment variable required by the default configuration.
+Setup prompts for a hidden API key and an API URL, defaulting to `https://inference.rcp.epfl.ch/v1`. It saves the key in your configured credential store, separately from `config.toml`. Lemex uses API keys; there is no OpenAI or ChatGPT login.
+
+For scripts, you can instead set `LEMEX_API_KEY` in the environment. To change the saved URL or model, run `lemex setup --base-url "https://api.example.com/v1" --model "your-model-id"`.
 
 For a single task, run from your project's Git repository:
 

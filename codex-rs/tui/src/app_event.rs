@@ -672,7 +672,6 @@ pub(crate) enum AppEvent {
     },
 
     /// Request app-server account logout, then exit after it succeeds.
-    Logout,
 
     /// Request to exit the application due to a fatal error.
     #[allow(dead_code)]

@@ -38,7 +38,8 @@ const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
     "Press Ctrl+C to return to the main thread first.";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
-const USAGE_CHATGPT_LOGIN_REQUIRED: &str = "Sign in with ChatGPT to use /usage.";
+const USAGE_API_STATUS_HINT: &str =
+    "Account usage is unavailable with an API key. Use /status for session token usage.";
 
 impl ChatWidget {
     /// Dispatch a bare slash command and record its staged local-history entry.
@@ -488,9 +489,6 @@ impl ChatWidget {
             }
             SlashCommand::Quit | SlashCommand::Exit => {
                 self.request_quit_without_confirmation();
-            }
-            SlashCommand::Logout => {
-                self.app_event_tx.send(AppEvent::Logout);
             }
             SlashCommand::Copy => {
                 self.show_copy_picker();
@@ -1255,7 +1253,7 @@ impl ChatWidget {
         if self.has_codex_backend_auth {
             return true;
         }
-        self.add_error_message(USAGE_CHATGPT_LOGIN_REQUIRED.to_string());
+        self.add_error_message(USAGE_API_STATUS_HINT.to_string());
         false
     }
 
@@ -1326,7 +1324,6 @@ impl ChatWidget {
             | SlashCommand::Memories
             | SlashCommand::Quit
             | SlashCommand::Exit
-            | SlashCommand::Logout
             | SlashCommand::Mention
             | SlashCommand::Skills
             | SlashCommand::Import

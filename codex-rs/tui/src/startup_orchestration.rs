@@ -513,29 +513,6 @@ pub(super) async fn run_main_inner(
         && !app_server_target.uses_remote_workspace();
     if auto_start_daemon
         && daemon_exclusion.is_none()
-        && should_show_bedrock_setup_wizard(
-            LoginStatus::NotAuthenticated,
-            config.model_provider.requires_openai_auth,
-            &config,
-            &AppServerTarget::Embedded,
-        )
-        && startup_draft
-            .run_until(
-                config
-                    .auth_config()
-                    .load_auth(/*enable_codex_api_key_env*/ false),
-            )
-            .await?
-            .ok()
-            .flatten()
-            .is_none()
-    {
-        // The Bedrock wizard configures its provider through the embedded server.
-        daemon_exclusion = Some("Bedrock sign-in");
-        app_server_target = AppServerTarget::Embedded;
-    }
-    if auto_start_daemon
-        && daemon_exclusion.is_none()
         && matches!(&app_server_target, AppServerTarget::Embedded)
         && daemon_startup::uses_wsl_drvfs(&codex_home)
     {

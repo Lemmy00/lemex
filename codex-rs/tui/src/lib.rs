@@ -38,10 +38,8 @@ use codex_app_server_client::InProcessClientStartArgs;
 use codex_app_server_client::RemoteAppServerClient;
 use codex_app_server_client::RemoteAppServerConnectArgs;
 pub use codex_app_server_client::RemoteAppServerEndpoint;
-use codex_app_server_protocol::Account as AppServerAccount;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::ConfigWarningNotification;
-use codex_app_server_protocol::GetAccountResponse;
 use codex_app_server_protocol::Thread as AppServerThread;
 #[cfg(test)]
 use codex_app_server_protocol::ThreadListCwdFilter;
@@ -63,9 +61,7 @@ use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::enforce_login_restrictions;
 use codex_login::is_workload_identity_selected;
 use codex_protocol::ThreadId;
-use codex_protocol::auth::AuthMode;
 use codex_protocol::config_types::AltScreenMode;
-use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::SandboxMode;
 use codex_rollout::StateDbHandle;
 use codex_rollout::state_db;
@@ -271,9 +267,7 @@ pub(crate) mod test_backend;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-use crate::onboarding::onboarding_screen::OnboardingScreenArgs;
 use crate::onboarding::onboarding_screen::run_gov_cloud_guidance;
-use crate::onboarding::onboarding_screen::run_onboarding_app;
 use crate::startup_hooks_review::StartupHooksReviewOutcome;
 use crate::startup_hooks_review::load_startup_hooks_review_entry;
 use crate::startup_hooks_review::maybe_run_startup_hooks_review;
@@ -1148,7 +1142,7 @@ async fn run_ratatui_app(
     manually_selected_oss_provider: Option<String>,
     overrides: ConfigOverrides,
     cli_kv_overrides: Vec<(String, toml::Value)>,
-    mut cloud_config_bundle: CloudConfigBundleLoader,
+    cloud_config_bundle: CloudConfigBundleLoader,
     feedback: codex_feedback::CodexFeedback,
     log_db: Option<log_db::LogDbLayer>,
     mut state_db: Option<StateDbHandle>,
@@ -1270,21 +1264,20 @@ async fn run_ratatui_app(
     app_server_session.model_provider_override = overrides.model_provider.clone();
     let mut app_server = Some(app_server_session);
     // Folder consent runs after the picker resolves the actual destination.
-    let should_show_trust_screen_flag = false;
     #[cfg(target_os = "windows")]
     let mut trust_decision_was_made = false;
     let startup_model_provider = initial_config.model_provider_id.clone();
-    let (login_status, mut startup_account) = if workload_identity_selected {
-        (LoginStatus::AuthMode(AuthMode::Chatgpt), None)
+    let mut startup_account = if workload_identity_selected {
+        None
     } else {
         let Some(active_app_server) = app_server.as_mut() else {
             unreachable!("app server should exist when auth is required");
         };
-        let login_status = startup_draft
-            .run_until(&mut tui, get_login_status(active_app_server))
+        let account = startup_draft
+            .run_until(&mut tui, active_app_server.read_account())
             .await;
-        match login_status {
-            Ok(Ok((login_status, account))) => (login_status, Some(account)),
+        match account {
+            Ok(Ok(account)) => Some(account),
             Ok(Err(err)) => {
                 shutdown_startup_session(app_server.take(), &mut terminal_restore_guard).await;
                 return Err(err);
@@ -1295,119 +1288,7 @@ async fn run_ratatui_app(
             }
         }
     };
-    // Workload identity bypasses interactive login; every other provider uses account/read.
-    let requires_openai_auth = startup_account
-        .as_ref()
-        .is_some_and(|account| account.requires_openai_auth);
-    let should_show_onboarding = should_show_onboarding(
-        login_status,
-        requires_openai_auth,
-        should_show_trust_screen_flag,
-    );
-
-    let mut config = if should_show_onboarding {
-        if let Err(err) = startup_draft.flush_pending_events(&mut tui).await {
-            shutdown_startup_session(app_server.take(), &mut terminal_restore_guard).await;
-            return Err(err.into());
-        }
-        // Authentication can change while any interactive onboarding screen is open.
-        startup_account = None;
-        let show_login_screen = should_show_login_screen(login_status, requires_openai_auth);
-        let bedrock_setup_enabled = should_show_bedrock_setup_wizard(
-            login_status,
-            requires_openai_auth,
-            &initial_config,
-            &app_server_target,
-        );
-        let onboarding_result = run_onboarding_app(
-            OnboardingScreenArgs {
-                show_login_screen,
-                bedrock_setup_enabled,
-                show_trust_screen: should_show_trust_screen_flag,
-                remote_project_trust: None,
-                login_status,
-                app_server_target: app_server_target.clone(),
-                app_server_request_handle: app_server
-                    .as_ref()
-                    .map(AppServerSession::request_handle),
-                config: initial_config.clone(),
-            },
-            if show_login_screen {
-                app_server.as_mut()
-            } else {
-                None
-            },
-            &mut tui,
-        )
-        .await;
-        let onboarding_result = match onboarding_result {
-            Ok(onboarding_result) => onboarding_result,
-            Err(err) => {
-                shutdown_startup_session(app_server.take(), &mut terminal_restore_guard).await;
-                return Err(err);
-            }
-        };
-        if onboarding_result.should_exit {
-            shutdown_startup_session(app_server.take(), &mut terminal_restore_guard).await;
-            let _ = tui.terminal.clear();
-            return Ok(AppExitInfo {
-                token_usage: crate::token_usage::TokenUsage::default(),
-                thread_id: None,
-                resume_hint: None,
-                disconnect_info: None,
-                update_action: None,
-                exit_reason: ExitReason::UserRequested,
-            });
-        }
-        #[cfg(target_os = "windows")]
-        {
-            trust_decision_was_made =
-                !uses_remote_workspace && onboarding_result.directory_trust_persisted;
-        }
-        let reloaded_config = startup_draft
-            .run_until(&mut tui, async {
-                // If this onboarding run included the login step, always refresh the cloud config
-                // bundle and rebuild config. This avoids missing newly available cloud-managed
-                // policy due to login status detection edge cases.
-                if show_login_screen && !uses_remote_workspace && !workload_identity_selected {
-                    cloud_config_bundle = cloud_config_bundle_loader_for_storage(
-                        embedded_network_policy.bind_bootstrap_auth(initial_config.auth_config()),
-                        /*enable_codex_api_key_env*/ false,
-                    )
-                    .await?;
-                }
-
-                // Reload config when persisted trust or auth changes alter the current process.
-                Ok::<_, std::io::Error>(
-                    if !uses_remote_workspace
-                        && (onboarding_result.directory_trust_persisted || show_login_screen)
-                    {
-                        load_config_or_exit_with_fallback_cwd(
-                            cli_kv_overrides.clone(),
-                            overrides.clone(),
-                            loader_overrides.clone(),
-                            cloud_config_bundle.clone(),
-                            strict_config,
-                            /*fallback_cwd*/ None,
-                            managed_worktree.as_ref(),
-                        )
-                        .await
-                    } else {
-                        initial_config
-                    },
-                )
-            })
-            .await;
-        match reloaded_config {
-            Ok(Ok(config)) => config,
-            Ok(Err(err)) | Err(err) => {
-                shutdown_startup_session(app_server.take(), &mut terminal_restore_guard).await;
-                return Err(err.into());
-            }
-        }
-    } else {
-        initial_config
-    };
+    let mut config = initial_config;
     if app_server_target.uses_embedded_network_policy() {
         embedded_network_policy.bind_config(&mut config);
     }
@@ -2188,25 +2069,6 @@ fn determine_alt_screen_mode(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoginStatus {
-    AuthMode(AuthMode),
-    NotAuthenticated,
-}
-
-/// Reads the account once to determine login status and preserve the response for bootstrap.
-async fn get_login_status(
-    app_server: &mut AppServerSession,
-) -> color_eyre::Result<(LoginStatus, GetAccountResponse)> {
-    let account = app_server.read_account().await?;
-    let login_status = match &account.account {
-        Some(AppServerAccount::ApiKey {}) => LoginStatus::AuthMode(AuthMode::ApiKey),
-        Some(AppServerAccount::Chatgpt { .. }) => LoginStatus::AuthMode(AuthMode::Chatgpt),
-        Some(AppServerAccount::AmazonBedrock { .. }) | None => LoginStatus::NotAuthenticated,
-    };
-    Ok((login_status, account))
-}
-
 async fn load_config_or_exit(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     overrides: ConfigOverrides,
@@ -2335,48 +2197,6 @@ async fn load_bootstrap_config_or_exit(
     }
 }
 
-fn should_show_onboarding(
-    login_status: LoginStatus,
-    requires_openai_auth: bool,
-    show_trust_screen: bool,
-) -> bool {
-    if show_trust_screen {
-        return true;
-    }
-
-    should_show_login_screen(login_status, requires_openai_auth)
-}
-
-fn should_show_login_screen(login_status: LoginStatus, requires_openai_auth: bool) -> bool {
-    // Only show the login screen for providers that actually require OpenAI auth
-    // (OpenAI or equivalents). For OSS/other providers, skip login entirely.
-    if !requires_openai_auth {
-        return false;
-    }
-
-    login_status == LoginStatus::NotAuthenticated
-}
-
-fn should_show_bedrock_setup_wizard(
-    login_status: LoginStatus,
-    requires_openai_auth: bool,
-    config: &Config,
-    app_server_target: &AppServerTarget,
-) -> bool {
-    matches!(app_server_target, AppServerTarget::Embedded)
-        && should_show_login_screen(login_status, requires_openai_auth)
-        && config.features.enabled(Feature::BedrockSetupWizard)
-        && config.model_provider_id == "openai"
-        && config
-            .config_layer_stack
-            .effective_config()
-            .get("model_provider")
-            .is_none()
-        && config
-            .auth_config()
-            .is_login_method_allowed(ForcedLoginMethod::Api)
-}
-
 mod daemon_recovery;
 mod daemon_startup;
 mod daemon_telemetry;
@@ -2422,122 +2242,11 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn server_account_requirement_controls_login_screen() -> color_eyre::Result<()> {
-        for requires_openai_auth in [false, true] {
-            let home = TempDir::new()?;
-            std::fs::write(
-                home.path().join("config.toml"),
-                format!(
-                    r#"
-model_provider = "test-provider"
-[model_providers.test-provider]
-name = "Test provider"
-base_url = "http://example.test/v1"
-wire_api = "responses"
-requires_openai_auth = {requires_openai_auth}
-"#
-                ),
-            )?;
-            let server_config = build_config(&home).await?;
-            let mut server = AppServerSession::new(
-                AppServerClient::InProcess(start_test_embedded_app_server(server_config).await?),
-                ThreadParamsMode::Embedded,
-            );
-            let (login_status, account) = get_login_status(&mut server).await?;
-            assert_eq!(account.requires_openai_auth, requires_openai_auth);
-            assert_eq!(
-                should_show_login_screen(login_status, account.requires_openai_auth),
-                requires_openai_auth
-            );
-            assert!(!should_show_login_screen(
-                LoginStatus::AuthMode(AuthMode::Chatgpt),
-                account.requires_openai_auth
-            ));
-            server.shutdown().await?;
-        }
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn bedrock_setup_wizard_requires_eligible_onboarding() -> color_eyre::Result<()> {
-        let shared_endpoint = RemoteAppServerEndpoint::WebSocket {
-            websocket_url: "ws://127.0.0.1:4500/".to_string(),
-            auth_token: None,
-        };
-        let enabled = "[features]\nbedrock_setup_wizard = true\n";
-
-        for (label, config_toml, login_status, target, expected) in [
-            (
-                "disabled by default",
-                "",
-                LoginStatus::NotAuthenticated,
-                AppServerTarget::Embedded,
-                false,
-            ),
-            (
-                "enabled for the default provider",
-                enabled,
-                LoginStatus::NotAuthenticated,
-                AppServerTarget::Embedded,
-                true,
-            ),
-            (
-                "explicit provider",
-                "model_provider = \"openai\"\n[features]\nbedrock_setup_wizard = true\n",
-                LoginStatus::NotAuthenticated,
-                AppServerTarget::Embedded,
-                false,
-            ),
-            (
-                "forced ChatGPT login",
-                "forced_login_method = \"chatgpt\"\n[features]\nbedrock_setup_wizard = true\n",
-                LoginStatus::NotAuthenticated,
-                AppServerTarget::Embedded,
-                false,
-            ),
-            (
-                "existing authentication",
-                enabled,
-                LoginStatus::AuthMode(AuthMode::Chatgpt),
-                AppServerTarget::Embedded,
-                false,
-            ),
-            (
-                "shared local daemon",
-                enabled,
-                LoginStatus::NotAuthenticated,
-                AppServerTarget::LocalDaemon {
-                    allow_embedded_fallback: true,
-                    endpoint: shared_endpoint.clone(),
-                },
-                false,
-            ),
-            (
-                "remote app server",
-                enabled,
-                LoginStatus::NotAuthenticated,
-                AppServerTarget::Remote {
-                    endpoint: shared_endpoint,
-                },
-                false,
-            ),
-        ] {
-            let codex_home = TempDir::new()?;
-            std::fs::write(codex_home.path().join("config.toml"), config_toml)?;
-            let config = build_config(&codex_home).await?;
-
-            assert_eq!(
-                should_show_bedrock_setup_wizard(
-                    login_status,
-                    /*requires_openai_auth*/ true,
-                    &config,
-                    &target
-                ),
-                expected,
-                "{label}"
-            );
-        }
-
+    async fn new_users_default_to_rcp_without_login() -> std::io::Result<()> {
+        let home = TempDir::new()?;
+        let config = build_config(&home).await?;
+        assert_eq!(config.model_provider_id, "rcp");
+        assert!(!config.model_provider.requires_openai_auth);
         Ok(())
     }
 

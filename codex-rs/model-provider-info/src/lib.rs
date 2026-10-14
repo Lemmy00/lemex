@@ -85,7 +85,7 @@ pub const DEFAULT_LEMEX_BASE_URL: &str = "https://inference.rcp.epfl.ch/v1";
 pub const LEMEX_BASE_URL_ENV_VAR: &str = "LEMEX_BASE_URL";
 /// Environment variable that provides the API key for the built-in `rcp` provider.
 pub const LEMEX_API_KEY_ENV_VAR: &str = "LEMEX_API_KEY";
-const RCP_PROVIDER_NAME: &str = "RCP";
+pub const RCP_PROVIDER_NAME: &str = "RCP";
 pub const RCP_PROVIDER_ID: &str = "rcp";
 const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
 pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
@@ -583,7 +583,7 @@ other non-default provider fields are not supported"
             base_url: Some(base_url),
             model_catalog_url: None,
             env_key: Some(LEMEX_API_KEY_ENV_VAR.to_string()),
-            env_key_instructions: None,
+            env_key_instructions: Some("Run `lemex setup` or set LEMEX_API_KEY.".to_string()),
             experimental_bearer_token: None,
             auth: None,
             gateway_oauth: None,
@@ -713,16 +713,13 @@ pub fn resolve_openai_base_url(configured: Option<String>) -> Option<String> {
 }
 
 /// Resolves the base URL for the built-in `rcp` provider: a non-empty
-/// configured value wins, then the `LEMEX_BASE_URL` environment variable.
+/// `LEMEX_BASE_URL` environment variable wins, then the configured value.
 /// Falls back to [`DEFAULT_LEMEX_BASE_URL`] when neither is set.
 pub fn resolve_rcp_base_url(configured: Option<String>) -> Option<String> {
-    configured
+    std::env::var(LEMEX_BASE_URL_ENV_VAR)
+        .ok()
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            std::env::var(LEMEX_BASE_URL_ENV_VAR)
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        })
+        .or_else(|| configured.filter(|value| !value.trim().is_empty()))
         .or(Some(DEFAULT_LEMEX_BASE_URL.to_string()))
 }
 
@@ -773,7 +770,13 @@ pub fn merge_configured_model_providers(
     configured_model_providers: HashMap<String, ModelProviderInfo>,
 ) -> Result<HashMap<String, ModelProviderInfo>, String> {
     for (key, mut provider) in configured_model_providers {
-        if matches!(
+        if key == RCP_PROVIDER_ID {
+            if let Some(base_url) = provider.base_url.filter(|url| !url.trim().is_empty()) {
+                if let Some(built_in_provider) = model_providers.get_mut(&key) {
+                    built_in_provider.base_url = resolve_rcp_base_url(Some(base_url));
+                }
+            }
+        } else if matches!(
             key.as_str(),
             AMAZON_BEDROCK_PROVIDER_ID | AMAZON_BEDROCK_RUNTIME_PROVIDER_ID
         ) {

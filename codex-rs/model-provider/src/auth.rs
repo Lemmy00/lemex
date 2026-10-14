@@ -198,6 +198,15 @@ pub(crate) fn resolve_provider_auth(
     auth: Option<&CodexAuth>,
     provider: &ModelProviderInfo,
 ) -> codex_protocol::error::Result<SharedAuthProvider> {
+    // The built-in RCP provider accepts the saved API key from `lemex setup`.
+    // Environment credentials take precedence; account tokens never supply an API key.
+    if provider.name == codex_model_provider_info::RCP_PROVIDER_NAME
+        && provider.env_key.as_deref() == Some(codex_model_provider_info::LEMEX_API_KEY_ENV_VAR)
+        && provider.api_key().is_err()
+        && let Some(auth @ CodexAuth::ApiKey(_)) = auth
+    {
+        return Ok(auth_provider_from_auth(auth));
+    }
     if let Some(auth) = bearer_auth_for_provider(provider)? {
         return Ok(Arc::new(auth));
     }

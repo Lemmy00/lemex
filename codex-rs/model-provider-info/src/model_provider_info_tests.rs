@@ -882,3 +882,26 @@ model_catalog_url = "https://gateway.example/codex/catalog?token=catalog-secret"
         "https://gateway.example/v1"
     );
 }
+
+#[test]
+fn rcp_endpoint_configuration_preserves_api_only_transport() {
+    let configured = ModelProviderInfo {
+        name: "RCP".to_string(),
+        base_url: Some("https://custom.example/v1".to_string()),
+        ..Default::default()
+    };
+    let providers = merge_configured_model_providers(
+        built_in_model_providers(None),
+        HashMap::from([(RCP_PROVIDER_ID.to_string(), configured)]),
+    )
+    .unwrap();
+    let rcp = &providers[RCP_PROVIDER_ID];
+    assert_eq!(
+        rcp.base_url,
+        resolve_rcp_base_url(Some("https://custom.example/v1".to_string()))
+    );
+    assert_eq!(rcp.env_key.as_deref(), Some(LEMEX_API_KEY_ENV_VAR));
+    assert!(!rcp.requires_openai_auth);
+    assert!(!rcp.supports_websockets);
+    assert!(!rcp.include_internal_metadata);
+}
