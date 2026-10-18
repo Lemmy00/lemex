@@ -73,7 +73,9 @@ jobs:
       - name: Test npm release and installation
         run: python3 -m unittest discover -s scripts -p 'test_npm_release.py'
       - name: Test GitHub release helpers
-        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+        run: |
+          python3 -m pip install --disable-pip-version-check packaging==26.2
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - uses: ./.github/actions/check-clean-worktree
 
   installers:
