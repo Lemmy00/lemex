@@ -43,6 +43,8 @@ lemex exec "Explain this codebase"
 
 Outside a Git repository, add `--skip-git-repo-check`.
 
+Interactive chats receive titles that identify the task and its specific subject. Use `/rename` for an editable suggestion based on the original request and recent conversation, or `/rename <title>` to set your own name.
+
 ## Models
 
 Lemex discovers model candidates using your provider's API key. Reasoning choices follow the provider's advertised settings or verified RCP profiles; when unknown, Lemex uses the provider default.

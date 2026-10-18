@@ -4,6 +4,7 @@ use super::THREAD_TITLE_RECENT_MESSAGES;
 use super::parse_thread_title;
 use super::recent_conversation_messages;
 use super::recent_conversation_thread_title_prompt;
+use super::thread_title_instructions;
 use super::thread_title_prompt;
 use crate::app::session_lifecycle::ThreadAttachPresentation;
 use crate::app::test_support::make_test_app;
@@ -35,22 +36,16 @@ use tempfile::tempdir;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
-const EXPECTED_THREAD_TITLE_INSTRUCTIONS: &str = concat!(
-    "Generate a concise, single-line task title of at most 36 characters ",
-    "and under five words where possible. Start with an imperative verb. ",
-    "Capitalize only the first word unless the user's language, proper nouns, ",
-    "acronyms, or code terms require otherwise. Preserve ticket references ",
-    "exactly. Write in the user's language. Do not use quotes, markdown, ",
-    "or trailing punctuation. Do not answer the request."
-);
-
 #[test]
 fn trims_user_message_in_title_prompt() {
     let prompt = thread_title_prompt("  Fix the login form  \n");
 
     assert_eq!(
         prompt,
-        format!("{EXPECTED_THREAD_TITLE_INSTRUCTIONS}\n\nUser prompt:\nFix the login form")
+        format!(
+            "{}\n\nUser prompt:\nFix the login form",
+            thread_title_instructions()
+        )
     );
 }
 
@@ -58,15 +53,49 @@ fn trims_user_message_in_title_prompt() {
 fn truncates_title_prompt_without_splitting_unicode() {
     let user_message = "🚀".repeat(THREAD_TITLE_PROMPT_MAX_BYTES);
     let prompt = thread_title_prompt(&user_message);
-    let expected_instructions = format!("{EXPECTED_THREAD_TITLE_INSTRUCTIONS}\n\n");
+    let expected_instructions = format!("{}\n\n", thread_title_instructions());
     let prefix = format!("{expected_instructions}User prompt:\n");
-    let available_bytes = THREAD_TITLE_PROMPT_MAX_BYTES - prefix.len();
-    let expected = "🚀".repeat(available_bytes / '🚀'.len_utf8());
+    let marker = "\n[... omitted ...]\n";
+    let excerpt = prompt.strip_prefix(&prefix).expect("title prompt prefix");
+    let (head, tail) = excerpt.split_once(marker).expect("omission marker");
 
-    assert_eq!(
-        prompt.rsplit_once("User prompt:\n"),
-        Some((expected_instructions.as_str(), expected.as_str()))
+    assert!(!head.is_empty());
+    assert!(!tail.is_empty());
+    assert!(
+        head.chars()
+            .chain(tail.chars())
+            .all(|character| character == '🚀')
     );
+    assert!(prompt.len() <= THREAD_TITLE_PROMPT_MAX_BYTES);
+}
+
+#[test]
+fn title_prompt_preserves_specific_task_details_after_a_long_introduction() {
+    let message = format!(
+        "Investigate Lemex model discovery. {}\nFocus on Qwen3.8-Flash-Next missing from /model.",
+        "Background details about the setup. ".repeat(50)
+    );
+    let prompt = thread_title_prompt(&message);
+
+    assert!(prompt.ends_with(&message));
+    assert!(prompt.len() <= THREAD_TITLE_PROMPT_MAX_BYTES);
+}
+
+#[test]
+fn long_title_prompt_preserves_opening_context_and_final_request() {
+    let message = format!(
+        "Investigate Lemex model discovery. {}\nExplain why Qwen3.8-Flash-Next is missing from /model; do not change code.",
+        "漢🚀".repeat(THREAD_TITLE_PROMPT_MAX_BYTES)
+    );
+    let prompt = thread_title_prompt(&message);
+
+    assert!(prompt.contains("User prompt:\nInvestigate Lemex model discovery."));
+    assert!(
+        prompt.ends_with(
+            "Explain why Qwen3.8-Flash-Next is missing from /model; do not change code."
+        )
+    );
+    assert!(prompt.contains("\n[... omitted ...]\n"));
     assert!(prompt.len() <= THREAD_TITLE_PROMPT_MAX_BYTES);
 }
 
@@ -552,7 +581,7 @@ fn recent_conversation_messages_strip_ide_context_before_escaping() {
 }
 
 #[test]
-fn recent_conversation_messages_keep_only_the_latest_substantive_items() {
+fn recent_conversation_messages_keep_opening_request_and_latest_substantive_items() {
     let items = (0..THREAD_TITLE_RECENT_MESSAGES + 2)
         .map(|index| title_user_message(&index.to_string(), &format!("message-{index}")))
         .collect::<Vec<_>>();
@@ -565,9 +594,38 @@ fn recent_conversation_messages_keep_only_the_latest_substantive_items() {
     assert_eq!(
         recent_conversation_messages(&items),
         Some(format!(
-            "<conversation>\n{expected_messages}\n</conversation>"
+            "<conversation>\n<message role=\"user\">message-0</message>\n{expected_messages}\n</conversation>"
         ))
     );
+}
+
+#[test]
+fn recent_conversation_keeps_task_context_when_followups_are_acknowledgments() {
+    let mut items = vec![
+        title_agent_message("greeting", "How can I help?", None),
+        title_user_message(
+            "original-request",
+            "Investigate Qwen3.8-Flash-Next missing from the Lemex /model picker",
+        ),
+        title_agent_message("old-answer", "I will inspect model discovery", None),
+    ];
+    items.extend(
+        (0..THREAD_TITLE_RECENT_MESSAGES)
+            .map(|index| title_user_message(&format!("followup-{index}"), "continue")),
+    );
+    let conversation = recent_conversation_messages(&items).expect("substantive conversation");
+    let prompt = recent_conversation_thread_title_prompt(&conversation);
+
+    assert!(prompt.contains(
+        "<message role=\"user\">Investigate Qwen3.8-Flash-Next missing from the Lemex /model picker</message>"
+    ));
+    assert_eq!(
+        prompt.matches(">continue</message>").count(),
+        THREAD_TITLE_RECENT_MESSAGES
+    );
+    assert!(!prompt.contains("How can I help?"));
+    assert!(!prompt.contains("I will inspect model discovery"));
+    assert!(prompt.len() <= THREAD_TITLE_PROMPT_MAX_BYTES);
 }
 
 #[test]
@@ -591,7 +649,10 @@ fn recent_conversation_prompt_trims_messages_and_prioritizes_latest_request() {
     assert_eq!(
         prompt,
         format!(
-            "{EXPECTED_THREAD_TITLE_INSTRUCTIONS}\nPrioritize the current task and latest substantive user request.\n\nRecent conversation messages:\nUser: Fix login\nAssistant: Investigating the auth flow"
+            "{}\nPrioritize the current task and latest substantive user request. \
+Use earlier messages to resolve vague follow-ups such as 'yes' or 'continue'; \
+if the user changes tasks, name the new task.\n\nRecent conversation messages:\nUser: Fix login\nAssistant: Investigating the auth flow",
+            thread_title_instructions()
         )
     );
 }
@@ -600,16 +661,16 @@ fn recent_conversation_prompt_trims_messages_and_prioritizes_latest_request() {
 fn recent_conversation_prompt_keeps_latest_unicode_characters() {
     let conversation = format!("discarded-{}x", "🚀".repeat(THREAD_TITLE_PROMPT_MAX_BYTES));
     let prompt = recent_conversation_thread_title_prompt(&conversation);
-    let expected_instructions = format!(
-        "{EXPECTED_THREAD_TITLE_INSTRUCTIONS}\nPrioritize the current task and latest substantive user request.\n\n"
-    );
-    let prefix = format!("{expected_instructions}Recent conversation messages:\n");
+    let prefix = recent_conversation_thread_title_prompt("");
+    let expected_instructions = prefix
+        .strip_suffix("Recent conversation messages:\n")
+        .expect("conversation prompt prefix");
     let remaining_bytes = THREAD_TITLE_PROMPT_MAX_BYTES - prefix.len();
     let expected = format!("{}x", "🚀".repeat((remaining_bytes - 1) / '🚀'.len_utf8()));
 
     assert_eq!(
         prompt.rsplit_once("Recent conversation messages:\n"),
-        Some((expected_instructions.as_str(), expected.as_str()))
+        Some((expected_instructions, expected.as_str()))
     );
     assert!(prompt.len() <= THREAD_TITLE_PROMPT_MAX_BYTES);
 }
@@ -667,6 +728,14 @@ fn normalizes_generated_title_whitespace() {
         parse_thread_title(r#"{"title":"  Fix  \n\t login   errors  "}"#),
         Some("Fix login errors".to_string())
     );
+}
+
+#[test]
+fn preserves_specific_generated_titles_longer_than_the_old_display_limit() {
+    let title = "Investigate Qwen3.8-Flash-Next missing from Lemex /model";
+    let response = serde_json::json!({ "title": title }).to_string();
+
+    assert_eq!(parse_thread_title(&response).as_deref(), Some(title));
 }
 
 #[test]
