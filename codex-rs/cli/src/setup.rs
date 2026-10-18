@@ -95,8 +95,11 @@ pub(crate) async fn run(command: SetupCommand) -> anyhow::Result<()> {
         std::io::stdin().read_to_string(&mut value)?;
         Some(validate_key(&value)?)
     } else if interactive {
-        read_hidden_key(has_saved_key || environment_key.is_some())?
-            .or_else(|| environment_key.clone())
+        match read_hidden_key(has_saved_key || environment_key.is_some())? {
+            Some(key) => Some(key),
+            None if has_saved_key => None,
+            None => environment_key.as_deref().map(validate_key).transpose()?,
+        }
     } else if let Some(key) = environment_key.as_deref() {
         Some(validate_key(key)?)
     } else if has_saved_key {
@@ -131,24 +134,46 @@ pub(crate) async fn run(command: SetupCommand) -> anyhow::Result<()> {
         edits = edits.set_model(Some(model), None);
     }
     edits.apply().await?;
-    if let Some(api_key) = api_key {
+    if let Some(api_key) = api_key.as_deref() {
         login_with_api_key(
             &home,
-            &api_key,
+            api_key,
             existing_config.cli_auth_credentials_store_mode,
             existing_config.auth_keyring_backend_kind(),
         )
         .context("Could not save the API key")?;
     }
+    let selected_api_key = api_key
+        .as_deref()
+        .or_else(|| {
+            stored
+                .as_ref()
+                .filter(|_| has_saved_key)
+                .and_then(|auth| auth.openai_api_key.as_deref())
+        })
+        .context("No API key is available after setup")?;
     eprintln!("API setup saved. Run `lemex` to start, or `lemex doctor` to check your setup.");
     if std::env::var(LEMEX_BASE_URL_ENV_VAR).is_ok_and(|value| !value.trim().is_empty()) {
         eprintln!("LEMEX_BASE_URL overrides the saved URL while it is set.");
     }
-    if environment_key.is_some() {
-        eprintln!("LEMEX_API_KEY overrides the saved key while it is set.");
+    if environment_key
+        .as_deref()
+        .is_some_and(|key| key != selected_api_key)
+    {
+        let clear_command = if cfg!(windows) {
+            "Remove-Item Env:LEMEX_API_KEY"
+        } else {
+            "unset LEMEX_API_KEY"
+        };
+        eprintln!(
+            "A different LEMEX_API_KEY overrides the saved key in this terminal. Run `{clear_command}` before starting Lemex."
+        );
+        eprintln!("Setup will use the saved key for model selection below.");
     }
     if interactive && command.model.is_none() {
-        if let Err(error) = crate::models::select_interactively(&command.config_overrides).await {
+        if let Err(error) =
+            crate::models::select_interactively(&command.config_overrides, selected_api_key).await
+        {
             eprintln!("Model selection could not complete: {error}");
             eprintln!(
                 "Your API setup is saved. Run `lemex models` or `lemex model` to choose a model."

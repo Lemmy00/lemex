@@ -252,6 +252,10 @@ pub(crate) async fn list(command: ModelsCommand) -> anyhow::Result<()> {
 
 pub(crate) async fn select(command: ModelCommand) -> anyhow::Result<()> {
     let config = load(&command.config_overrides).await?;
+    select_with_config(command, config).await
+}
+
+async fn select_with_config(command: ModelCommand, config: Config) -> anyhow::Result<()> {
     if command.model.is_none() && command.reasoning.is_none() && !std::io::stdin().is_terminal() {
         println!(
             "Model: {}",
@@ -305,13 +309,24 @@ pub(crate) async fn select(command: ModelCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) async fn select_interactively(overrides: &CliConfigOverrides) -> anyhow::Result<()> {
-    select(ModelCommand {
-        config_overrides: overrides.clone(),
-        model: None,
-        reasoning: None,
-        offline: false,
-    })
+pub(crate) async fn select_interactively(
+    overrides: &CliConfigOverrides,
+    api_key: &str,
+) -> anyhow::Result<()> {
+    let mut config = load(overrides).await?;
+    // Setup must discover models with the key it saved, even if the parent
+    // terminal still exports another key. This override is never persisted.
+    config.model_provider.env_key = None;
+    config.model_provider.experimental_bearer_token = Some(api_key.to_string().into());
+    select_with_config(
+        ModelCommand {
+            config_overrides: overrides.clone(),
+            model: None,
+            reasoning: None,
+            offline: false,
+        },
+        config,
+    )
     .await
 }
 

@@ -102,6 +102,36 @@ fn setup_saves_key_and_rcp_defaults_without_exposing_secret() -> Result<()> {
 }
 
 #[test]
+fn setup_preserves_replacement_key_and_explains_a_different_environment_key() -> Result<()> {
+    let home = TempDir::new()?;
+    let output = command(home.path())?
+        .env("LEMEX_API_KEY", "old-environment-secret")
+        .args(["setup", "--with-api-key"])
+        .write_stdin("replacement-secret\n")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("different LEMEX_API_KEY"));
+    assert!(stderr.contains(if cfg!(windows) {
+        "Remove-Item Env:LEMEX_API_KEY"
+    } else {
+        "unset LEMEX_API_KEY"
+    }));
+    let config = std::fs::read_to_string(home.path().join("config.toml"))?;
+    for secret in ["old-environment-secret", "replacement-secret"] {
+        assert!(!stderr.contains(secret));
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(secret));
+        assert!(!config.contains(secret));
+    }
+    let auth: Value =
+        serde_json::from_str(&std::fs::read_to_string(home.path().join("auth.json"))?)?;
+    assert_eq!(auth["LEMEX_API_KEY"], "replacement-secret");
+    Ok(())
+}
+
+#[test]
 fn setup_updates_url_and_preserves_key_and_other_settings() -> Result<()> {
     let home = TempDir::new()?;
     std::fs::write(

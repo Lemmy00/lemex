@@ -30,6 +30,8 @@ The endpoint must support the Responses API. Use `lemex models` to see its curre
 
 For environment-only use, set `LEMEX_API_KEY`. It takes precedence over the saved key. `LEMEX_BASE_URL` overrides the saved endpoint while set. Custom providers use their configured `env_key`.
 
+If you replace a saved key while an older `LEMEX_API_KEY` is exported, run `unset LEMEX_API_KEY` before starting Lemex (`Remove-Item Env:LEMEX_API_KEY` in PowerShell). Setup's model selection uses the key it just saved; pressing Enter at the hidden key prompt keeps the saved key when one exists.
+
 Run `lemex doctor` to check configuration and credentials. To verify a model request:
 
 ```sh
