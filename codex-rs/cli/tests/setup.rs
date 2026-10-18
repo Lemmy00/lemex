@@ -163,6 +163,102 @@ fn invalid_inputs_do_not_create_config_or_credentials() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn model_commands_use_live_ids_and_validate_each_models_reasoning() -> Result<()> {
+    let server = MockServer::start().await;
+    let home = TempDir::new()?;
+    command(home.path())?
+        .args([
+            "setup",
+            "--with-api-key",
+            "--base-url",
+            &format!("{}/v1", server.uri()),
+        ])
+        .write_stdin("model-selection-secret\n")
+        .assert()
+        .success();
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(header("authorization", "Bearer model-selection-secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data":[
+            {"id":"deepseek-ai/DeepSeek-V4.1-Flash-1017"}, {"id":"Qwen/Qwen3.5-397B-A17B"},
+            {"id":"Qwen/Qwen3-Embedding-8B"}
+        ]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/model/info"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data":[
+            {"model_name":"Qwen/Qwen3-Embedding-8B","model_info":{"mode":"embedding"}}
+        ]})))
+        .mount(&server)
+        .await;
+    let output = command(home.path())?
+        .args(["models", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("model-selection-secret"));
+    let listing: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(listing["source"], "live");
+    assert_eq!(listing["models"].as_array().unwrap().len(), 2);
+    let deepseek = listing["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["id"] == "deepseek-ai/DeepSeek-V4.1-Flash-1017")
+        .unwrap();
+    assert_eq!(deepseek["default_reasoning_effort"], "max");
+    assert_eq!(
+        deepseek["reasoning_efforts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["effort"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["none", "low", "high", "xhigh", "max"]
+    );
+    let before = std::fs::read(home.path().join("config.toml"))?;
+    command(home.path())?
+        .args([
+            "model",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            "--reasoning",
+            "medium",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("is not supported"));
+    assert_eq!(std::fs::read(home.path().join("config.toml"))?, before);
+    command(home.path())?
+        .args(["model", "removed/model", "--reasoning", "high"])
+        .assert()
+        .failure()
+        .stderr(contains("not listed"));
+    command(home.path())?
+        .args([
+            "model",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            "--reasoning",
+            "max",
+        ])
+        .assert()
+        .success();
+    let config: toml::Value =
+        toml::from_str(&std::fs::read_to_string(home.path().join("config.toml"))?)?;
+    assert_eq!(config["model_reasoning_effort"].as_str(), Some("max"));
+    command(home.path())?
+        .args(["model", "Qwen/Qwen3.5-397B-A17B"])
+        .assert()
+        .success();
+    let config: toml::Value =
+        toml::from_str(&std::fs::read_to_string(home.path().join("config.toml"))?)?;
+    assert_eq!(config["model"].as_str(), Some("Qwen/Qwen3.5-397B-A17B"));
+    assert!(config.get("model_reasoning_effort").is_none());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn saved_key_reaches_responses_api_and_environment_overrides_work() -> Result<()> {
     for override_environment in [false, true] {
         let server = MockServer::start().await;

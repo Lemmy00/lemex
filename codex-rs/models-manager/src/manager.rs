@@ -258,12 +258,13 @@ pub type ModelsManagerFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a
 /// Shared model manager handle used across runtime services.
 pub type SharedModelsManager = Arc<dyn ModelsManager>;
 
-/// Only explicit catalogs serialize refresh and suppress bundled fallback. Auth and discovery
-/// settings are still evaluated when models are requested.
+/// Provider catalogs serialize refresh and suppress the first-party bundled fallback.
+/// A provider may supply its own offline seed. Auth is evaluated for every refresh.
 #[derive(Debug)]
 enum CatalogSource {
     Default,
     ExplicitProvider(Mutex<()>),
+    ProviderFallback(Vec<ModelInfo>, Mutex<()>),
 }
 
 impl CatalogSource {
@@ -271,6 +272,7 @@ impl CatalogSource {
         match self {
             Self::Default => Some(load_remote_models_from_file().unwrap_or_default()),
             Self::ExplicitProvider(_) => None,
+            Self::ProviderFallback(models, _) => Some(models.clone()),
         }
     }
 
@@ -278,6 +280,7 @@ impl CatalogSource {
         match self {
             Self::Default => None,
             Self::ExplicitProvider(lock) => Some(lock.lock().await),
+            Self::ProviderFallback(_, lock) => Some(lock.lock().await),
         }
     }
 }
@@ -364,6 +367,13 @@ impl OpenAiModelsManager {
     pub fn with_provider_catalog(mut self) -> Self {
         self.catalog_source = CatalogSource::ExplicitProvider(Mutex::new(()));
         self.remote_models.get_mut().models.clear();
+        self
+    }
+
+    /// Use provider-owned metadata offline while refreshing live availability.
+    pub fn with_fallback_catalog(mut self, catalog: ModelsResponse) -> Self {
+        self.remote_models.get_mut().models = catalog.models.clone();
+        self.catalog_source = CatalogSource::ProviderFallback(catalog.models, Mutex::new(()));
         self
     }
 }
@@ -470,11 +480,13 @@ impl ModelsManager for OpenAiModelsManager {
                 CatalogSource::Default => {
                     construct_model_info_from_candidates(model, &models, config)
                 }
-                CatalogSource::ExplicitProvider(_) => construct_model_info(
-                    model,
-                    models.into_iter().find(|candidate| candidate.slug == model),
-                    config,
-                ),
+                CatalogSource::ExplicitProvider(_) | CatalogSource::ProviderFallback(_, _) => {
+                    construct_model_info(
+                        model,
+                        models.into_iter().find(|candidate| candidate.slug == model),
+                        config,
+                    )
+                }
             }
         })
     }

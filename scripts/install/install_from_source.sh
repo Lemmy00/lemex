@@ -351,7 +351,8 @@ Set up your API key once and start Lemex:
   lemex setup
   lemex
 
-Setup defaults to RCP and lets you change the API URL. No OpenAI login is needed.
+Setup defaults to RCP. To change the endpoint, use 'lemex setup --base-url URL'.
+Use 'lemex models' to list models or 'lemex model' to choose a model and reasoning.
 For environment-only use, set LEMEX_API_KEY and optionally LEMEX_BASE_URL.
 If you kept or imported a custom provider, set the key named by its env_key.
 Run 'lemex doctor' to check your setup.

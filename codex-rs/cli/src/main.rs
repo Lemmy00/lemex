@@ -63,6 +63,7 @@ mod marketplace_cmd;
 mod mcp_cmd;
 mod mcp_login;
 mod migrate_rollouts;
+mod models;
 mod plugin_cmd;
 mod queue_cmd;
 mod remote_control_cmd;
@@ -154,6 +155,12 @@ enum Subcommand {
 
     /// Set up an API key and endpoint (RCP by default).
     Setup(setup::SetupCommand),
+
+    /// List live model availability and supported reasoning efforts.
+    Models(models::ModelsCommand),
+
+    /// Choose a default model and reasoning effort.
+    Model(models::ModelCommand),
 
     // Reserve legacy command words so they cannot accidentally become prompts.
     #[clap(name = "login", hide = true)]
@@ -1464,6 +1471,24 @@ async fn cli_main(
             );
             setup::run(setup_cli).await?;
         }
+        Some(Subcommand::Models(mut command)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "models",
+            )?;
+            prepend_config_flags(&mut command.config_overrides, root_config_overrides.clone());
+            models::list(command).await?;
+        }
+        Some(Subcommand::Model(mut command)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "model",
+            )?;
+            prepend_config_flags(&mut command.config_overrides, root_config_overrides.clone());
+            models::select(command).await?;
+        }
         Some(Subcommand::RemovedLogin(_) | Subcommand::RemovedLogout(_)) => {
             anyhow::bail!(
                 "Account login and logout have been removed. Run `lemex setup` or set LEMEX_API_KEY."
@@ -2120,6 +2145,8 @@ fn unsupported_subcommand_name_for_strict_config(
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         Some(Subcommand::App(_)) => Some("app"),
         Some(Subcommand::Setup(_)) => Some("setup"),
+        Some(Subcommand::Models(_)) => Some("models"),
+        Some(Subcommand::Model(_)) => Some("model"),
         Some(Subcommand::RemovedLogin(_)) => Some("login"),
         Some(Subcommand::RemovedLogout(_)) => Some("logout"),
         Some(Subcommand::Completion(_)) => Some("completion"),

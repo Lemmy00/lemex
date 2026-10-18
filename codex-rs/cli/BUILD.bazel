@@ -6,6 +6,12 @@ load("//bazel/rules:runtime_package.bzl", "release_binary")
 codex_rust_crate(
     name = "cli",
     binaries_with_build_commit = ["lemex"],
+    binary_compile_data_extra = {
+        "lemex": [
+            "//config:config.toml",
+            "//config:models.json",
+        ],
+    },
     crate_name = "codex_cli",
     extra_binaries = [
         "//codex-rs/bwrap:bwrap",

@@ -31,6 +31,7 @@ use codex_models_manager::manager::ModelsEndpointResponse;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CoreResult;
+use codex_protocol::openai_models::ModelsResponse;
 use codex_response_debug_context::extract_response_debug_context;
 use codex_response_debug_context::telemetry_transport_error_message;
 use http::HeaderMap;
@@ -53,6 +54,7 @@ pub(crate) struct OpenAiModelsEndpoint {
     auth_manager: Option<Arc<AuthManager>>,
     gateway_auth_manager: Option<Result<Arc<GatewayAuthManager>, String>>,
     transport_builder: Arc<dyn ModelsTransportBuilder>,
+    rcp_catalog: Option<ModelsResponse>,
 }
 
 impl OpenAiModelsEndpoint {
@@ -61,7 +63,8 @@ impl OpenAiModelsEndpoint {
         auth_manager: Option<Arc<AuthManager>>,
         gateway_auth_manager: Option<Result<Arc<GatewayAuthManager>, String>>,
     ) -> Self {
-        let redirect_policy = if provider_info.model_catalog_url.is_some() {
+        let redirect_policy = if provider_info.model_catalog_url.is_some() || provider_info.is_rcp()
+        {
             ClientRedirectPolicy::Reject
         } else {
             ClientRedirectPolicy::Default
@@ -71,7 +74,13 @@ impl OpenAiModelsEndpoint {
             auth_manager,
             gateway_auth_manager,
             transport_builder: Arc::new(RouteAwareModelsTransportBuilder { redirect_policy }),
+            rcp_catalog: None,
         }
+    }
+
+    pub(crate) fn with_rcp_catalog(mut self, catalog: Option<ModelsResponse>) -> Self {
+        self.rcp_catalog = catalog;
+        self
     }
 
     async fn auth(&self) -> Option<CodexAuth> {
@@ -141,7 +150,8 @@ impl OpenAiModelsEndpoint {
             None
         };
         let request_telemetry: Arc<dyn RequestTelemetry> = Arc::new(ModelsRequestTelemetry {
-            include_response_debug: self.provider_info.model_catalog_url.is_none(),
+            include_response_debug: self.provider_info.model_catalog_url.is_none()
+                && !self.provider_info.is_rcp(),
             auth_mode: auth_mode.map(|mode| TelemetryAuthMode::from(mode).to_string()),
             auth_header_attached: auth_telemetry.attached,
             auth_header_name: auth_telemetry.name,
@@ -155,6 +165,40 @@ impl OpenAiModelsEndpoint {
                 .await?;
             let client = ModelsClient::new(transport, api_provider, api_auth)
                 .with_telemetry(Some(request_telemetry));
+            if self.provider_info.is_rcp() && self.provider_info.model_catalog_url.is_none() {
+                let (body, etag) = client
+                    .list_models_raw(
+                        request_url.clone(),
+                        HeaderMap::new(),
+                        Some(MAX_MODEL_CATALOG_BYTES),
+                    )
+                    .await
+                    .map_err(sanitized_catalog_error)?;
+                let mut metadata_url = url::Url::parse(&request_url).map_err(|_| {
+                    CodexErr::InvalidRequest("Invalid RCP model endpoint".to_string())
+                })?;
+                let prefix = metadata_url.path().trim_end_matches("/models").to_string();
+                metadata_url.set_path(&format!("{prefix}/model/info"));
+                let metadata = timeout(
+                    Duration::from_secs(1),
+                    client.list_models_raw(
+                        metadata_url.into(),
+                        HeaderMap::new(),
+                        Some(MAX_MODEL_CATALOG_BYTES),
+                    ),
+                )
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .and_then(|(body, _)| serde_json::from_slice(&body).ok());
+                let fallback = self
+                    .rcp_catalog
+                    .clone()
+                    .unwrap_or_else(crate::rcp_models::bundled_catalog);
+                let models = crate::rcp_models::decode_catalog(&body, metadata.as_ref(), &fallback)
+                    .map_err(CodexErr::InvalidRequest)?;
+                return Ok((models, etag));
+            }
             let response_body_limit_bytes = self
                 .provider_info
                 .model_catalog_url
@@ -211,7 +255,8 @@ impl OpenAiModelsEndpoint {
 
 impl ModelsEndpointClient for OpenAiModelsEndpoint {
     fn supports_api_key_models(&self) -> bool {
-        self.provider_info.model_catalog_url.is_some()
+        self.provider_info.is_rcp()
+            || self.provider_info.model_catalog_url.is_some()
             || (self.provider_info.is_openai() && self.provider_info.base_url.is_none())
     }
 
@@ -247,6 +292,35 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
             http_client_factory,
         ))
     }
+}
+
+fn sanitized_catalog_error(mut error: codex_api::ApiError) -> CodexErr {
+    if let codex_api::ApiError::Transport(TransportError::Http {
+        url, headers, body, ..
+    }) = &mut error
+    {
+        *url = None;
+        *headers = None;
+        *body = None;
+    }
+    map_api_error(error)
+}
+
+/// Fetch a provider catalog with errors preserved for explicit CLI commands.
+pub async fn discover_model_catalog(
+    provider_info: ModelProviderInfo,
+    auth_manager: Option<Arc<AuthManager>>,
+    seed: Option<ModelsResponse>,
+    http_client_factory: HttpClientFactory,
+) -> CoreResult<ModelsResponse> {
+    let endpoint =
+        OpenAiModelsEndpoint::new(provider_info, auth_manager, None).with_rcp_catalog(seed);
+    let response = endpoint
+        .list_models(env!("CARGO_PKG_VERSION"), http_client_factory)
+        .await?;
+    Ok(ModelsResponse {
+        models: response.models,
+    })
 }
 
 type ModelsTransportFuture<'a> =
@@ -461,6 +535,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rcp_discovery_errors_do_not_echo_credentials() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("rcp-discovery-secret"))
+            .mount(&server)
+            .await;
+        let endpoint = OpenAiModelsEndpoint::new(
+            ModelProviderInfo {
+                env_key: None,
+                experimental_bearer_token: Some("rcp-discovery-secret".into()),
+                ..ModelProviderInfo::create_rcp_provider(Some(format!("{}/v1", server.uri())))
+            },
+            None,
+            None,
+        );
+        let error = endpoint
+            .list_models(
+                "0.0.0",
+                HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            )
+            .await
+            .unwrap_err();
+        assert!(!format!("{error:?}").contains("rcp-discovery-secret"));
+    }
+
+    #[tokio::test]
+    async fn rcp_live_catalog_replaces_stale_local_availability() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", "Bearer rcp-test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"data":[{"id":"deepseek-ai/DeepSeek-V4.1-Flash-1017"}]}),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/model/info"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let info = ModelProviderInfo {
+            env_key: None,
+            experimental_bearer_token: Some("rcp-test-key".into()),
+            ..ModelProviderInfo::create_rcp_provider(Some(format!("{}/v1", server.uri())))
+        };
+        let provider = crate::create_model_provider(info, None);
+        let seed = ModelsResponse {
+            models: vec![model_info_from_slug("removed/model")],
+        };
+        let manager = provider.models_manager_without_cache(Some(seed));
+        manager.set_api_key_model_discovery_enabled(true);
+        let catalog = manager
+            .raw_model_catalog(
+                RefreshStrategy::Online,
+                HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            )
+            .await;
+        assert_eq!(catalog.models.len(), 1);
+        assert_eq!(
+            catalog.models[0].slug,
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+        );
+        assert_eq!(
+            catalog.models[0]
+                .default_reasoning_level
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            "max"
+        );
+        server.verify().await;
+    }
+
+    #[tokio::test]
     async fn api_key_discovery_respects_provider_routing() {
         let client_version = codex_models_manager::client_version_to_whole();
         for (name, base_url, models_url, inference_url) in [
@@ -493,6 +644,7 @@ mod tests {
                 auth_manager: Some(auth.clone()),
                 gateway_auth_manager: None,
                 transport_builder: capture.clone(),
+                rcp_catalog: None,
             });
             let manager = OpenAiModelsManager::new_without_cache(endpoint.clone(), Some(auth));
             manager.set_api_key_model_discovery_enabled(/*enabled*/ true);
@@ -533,6 +685,7 @@ mod tests {
                 auth_manager: auth_manager.clone(),
                 gateway_auth_manager: None,
                 transport_builder: capture.clone(),
+                rcp_catalog: None,
             });
             let manager = OpenAiModelsManager::new_without_cache(endpoint, auth_manager);
             manager.set_api_key_model_discovery_enabled(/*enabled*/ true);
@@ -612,6 +765,7 @@ mod tests {
             transport_builder: Arc::new(RecordingTransportBuilder {
                 observed_request: Arc::clone(&observed_request),
             }),
+            rcp_catalog: None,
         };
 
         endpoint
@@ -658,6 +812,7 @@ mod tests {
             transport_builder: Arc::new(RecordingTransportBuilder {
                 observed_request: Arc::new(Mutex::new(None)),
             }),
+            rcp_catalog: None,
         };
 
         set_default_client_residency_requirement(Some(ResidencyRequirement::Us));

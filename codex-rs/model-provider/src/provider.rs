@@ -390,17 +390,22 @@ impl ConfiguredModelProvider {
         config_model_catalog: Option<ModelsResponse>,
         cache: ModelsCacheConfig,
     ) -> SharedModelsManager {
-        if let Some(model_catalog) = config_model_catalog {
+        if !self.info.is_rcp()
+            && let Some(model_catalog) = config_model_catalog.clone()
+        {
             return Arc::new(StaticModelsManager::new(
                 self.auth_manager.clone(),
                 model_catalog,
             ));
         }
-        let endpoint = Arc::new(OpenAiModelsEndpoint::new(
-            self.info.clone(),
-            self.auth_manager.clone(),
-            self.gateway_auth_manager.clone(),
-        ));
+        let endpoint = Arc::new(
+            OpenAiModelsEndpoint::new(
+                self.info.clone(),
+                self.auth_manager.clone(),
+                self.gateway_auth_manager.clone(),
+            )
+            .with_rcp_catalog(config_model_catalog.clone()),
+        );
         let auth_manager = self.auth_manager.clone();
         let manager = match cache {
             ModelsCacheConfig::Disk { codex_home } => {
@@ -413,6 +418,11 @@ impl ConfiguredModelProvider {
                 OpenAiModelsManager::new_with_cache(cache, endpoint, auth_manager)
             }
         };
+        if self.info.is_rcp() && self.info.model_catalog_url.is_none() {
+            return Arc::new(manager.with_fallback_catalog(
+                config_model_catalog.unwrap_or_else(crate::rcp_models::bundled_catalog),
+            ));
+        }
         match &self.info.model_catalog_url {
             Some(_) => Arc::new(manager.with_provider_catalog()),
             None => Arc::new(manager),

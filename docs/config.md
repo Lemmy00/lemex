@@ -81,7 +81,9 @@ Set `MY_PROVIDER_API_KEY` in your environment and adapt `models.json` to match t
 
 To add a model, copy a suitable entry in `models.json` and update its `slug`, display name, reasoning levels, context limits, and capabilities to match the deployment. The default `model` must match a catalog entry. Lemex limits `model_context_window` to the catalog's `max_context_window`.
 
-The RCP catalog was checked on 2026-10-18:
+Use `lemex models` for current endpoint availability and `lemex model` to choose a default interactively. `lemex model MODEL --reasoning EFFORT` validates the model and its effort before saving; omitting `--reasoning` clears the previous model's override. The in-app `/model` picker uses the same live catalog. The bundled catalog supplies verified reasoning profiles and an offline fallback.
+
+The bundled RCP catalog was checked on 2026-10-18:
 
 | Model ID | Reasoning efforts | Catalog default |
 | --- | --- | --- |
