@@ -66,7 +66,11 @@ LEMEX_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
 }
 
 PACKAGE_EXPANSIONS: dict[str, list[str]] = {
-    "lemex": ["lemex", *LEMEX_PLATFORM_PACKAGES],
+    # Native Windows releases are not supported yet; use the Linux package in WSL2.
+    "lemex": [
+        "lemex",
+        *(name for name, spec in LEMEX_PLATFORM_PACKAGES.items() if spec["os"] != "win32"),
+    ],
 }
 
 PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
@@ -238,7 +242,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         bin_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(CODEX_CLI_ROOT / "bin" / "lemex.js", bin_dir / "lemex.js")
 
-        readme_src = REPO_ROOT / "README.md"
+        readme_src = CODEX_CLI_ROOT / "README.md"
         if readme_src.exists():
             shutil.copy2(readme_src, staging_dir / "README.md")
 
@@ -248,7 +252,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         platform_npm_tag = platform_package["npm_tag"]
         platform_version = compute_platform_package_version(version, platform_npm_tag)
 
-        readme_src = REPO_ROOT / "README.md"
+        readme_src = CODEX_CLI_ROOT / "README.md"
         if readme_src.exists():
             shutil.copy2(readme_src, staging_dir / "README.md")
 
@@ -298,6 +302,8 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
 
     if package == "lemex":
         package_json["files"] = ["bin/lemex.js"]
+        package_json["os"] = ["darwin", "linux"]
+        package_json["cpu"] = ["x64", "arm64"]
         package_json["optionalDependencies"] = {
             LEMEX_PLATFORM_PACKAGES[platform_package]["npm_name"]: (
                 f"npm:{LEMEX_NPM_NAME}@"
@@ -317,6 +323,20 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
             dependencies = {}
         dependencies[LEMEX_NPM_NAME] = version
         package_json["dependencies"] = dependencies
+
+    # The checkout itself is private to prevent publishing a launcher without
+    # its native dependencies. Only staged release packages are publishable.
+    package_json.pop("private", None)
+    if package == "lemex" or package in LEMEX_PLATFORM_PACKAGES:
+        package_json["publishConfig"] = {
+            "access": "public",
+            "registry": "https://registry.npmjs.org/",
+        }
+        for name in ("LICENSE", "NOTICE"):
+            source = REPO_ROOT / name
+            if source.exists():
+                shutil.copy2(source, staging_dir / name)
+        package_json["files"] += ["LICENSE", "NOTICE"]
 
     with open(staging_dir / "package.json", "w", encoding="utf-8") as out:
         json.dump(package_json, out, indent=2)

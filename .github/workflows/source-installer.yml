@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - scripts/install/**
+      - codex-cli/**
+      - scripts/*npm_release.py
       - scripts/codex_package/**
       - codex-rs/cli/Cargo.toml
       - codex-rs/http-client/Cargo.toml
@@ -12,6 +14,8 @@ on:
     branches: [main]
     paths:
       - scripts/install/**
+      - codex-cli/**
+      - scripts/*npm_release.py
       - scripts/codex_package/**
       - codex-rs/cli/Cargo.toml
       - codex-rs/http-client/Cargo.toml
@@ -33,11 +37,12 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: '3.11'
+          python-version: "3.11"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '22'
+          node-version: "22"
       - name: Check Bash syntax and run installer regression tests
         run: |
           bash -n scripts/install/install_from_source.sh
           python3 -m unittest discover -s scripts/install -p 'test_source*.py'
+          python3 -m unittest discover -s scripts -p 'test_npm_release.py'

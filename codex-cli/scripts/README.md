@@ -1,5 +1,11 @@
 # npm releases
 
+For Lemex CLI releases, use the dedicated [npm release workflow](../../docs/npm-release.md).
+It builds and tests macOS and Linux packages without upstream signing services.
+
+The older multi-package staging helper below is retained for upstream tooling;
+it depends on `rust-release` artifacts and is not the Lemex CLI release path.
+
 Use the staging helper in the repo root to generate npm tarballs for a release. For
 example, to stage the CLI, responses proxy, and SDK packages for version `0.6.0`:
 

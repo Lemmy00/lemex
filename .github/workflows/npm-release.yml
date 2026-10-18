@@ -1,0 +1,156 @@
+name: Lemex npm release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: npm version to build (for example 0.1.0)
+        required: true
+        default: "0.1.0"
+      publish:
+        description: Publish using the npm trusted publisher (after the first release)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lemex-npm-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - run: python3 -m unittest discover -s scripts -p 'test_npm_release.py'
+      - name: Validate release version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: python3 scripts/npm_release.py set-version --version "$RELEASE_VERSION"
+
+  build:
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            package: lemex-linux-x64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            package: lemex-linux-arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            package: lemex-darwin-x64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            package: lemex-darwin-arm64
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      CARGO_BUILD_JOBS: "3"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Set native release version
+        run: python3 scripts/npm_release.py set-version --version "$RELEASE_VERSION"
+      - uses: ./.github/actions/build-cargo-package-binaries
+        with:
+          target: ${{ matrix.target }}
+          binaries: lemex lemex-code-mode-host
+      - name: Pack native runtime and launcher
+        env:
+          PACKAGE: ${{ matrix.package }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          python3 scripts/npm_release.py pack-runtime \
+            --version "$RELEASE_VERSION" --package "$PACKAGE" \
+            --binaries-dir "$CARGO_TARGET_DIR/$TARGET/release" --output-dir dist/npm
+          python3 codex-cli/scripts/build_npm_package.py --package lemex \
+            --version "$RELEASE_VERSION" --pack-output "$RUNNER_TEMP/lemex.tgz"
+          python3 scripts/smoke_npm_release.py --launcher "$RUNNER_TEMP/lemex.tgz" \
+            --native "dist/npm/$PACKAGE.tgz"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: npm-${{ matrix.package }}
+          path: dist/npm/*.tgz
+          if-no-files-found: error
+          compression-level: 0
+
+  assemble:
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: npm-lemex-*
+          merge-multiple: true
+          path: dist/npm
+      - name: Assemble and validate complete npm release
+        run: |
+          python3 codex-cli/scripts/build_npm_package.py --package lemex \
+            --version "$RELEASE_VERSION" --pack-output dist/npm/lemex.tgz
+          python3 scripts/npm_release.py publish --version "$RELEASE_VERSION" \
+            --dist-dir dist/npm --dry-run
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: lemex-npm-release
+          path: dist/npm/*.tgz
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: assemble
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@11.11.1 --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lemex-npm-release
+          path: dist/npm
+      - name: Publish native variants, then launcher
+        run: python3 scripts/npm_release.py publish --version "$RELEASE_VERSION" --dist-dir dist/npm
