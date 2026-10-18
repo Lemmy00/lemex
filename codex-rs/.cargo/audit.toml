@@ -1,6 +1,11 @@
 [advisories]
 # Reviewed 2026-07-02. Keep this list in sync with ../deny.toml.
 ignore = [
+    # Reviewed 2026-10-18: maintenance notices; keep aligned with deny.toml.
+    "RUSTSEC-2024-0449", # unsafe-libyaml via serde_yaml; remove after YAML parser migration
+    "RUSTSEC-2026-0370", # zvariant via Linux notifications; remove after zbus 6 migration
+    "RUSTSEC-2026-0371", # zbus_names via Linux notifications; remove after zbus 6 migration
+    "RUSTSEC-2026-0372", # zvariant_derive via Linux notifications; remove after zbus 6 migration
     "RUSTSEC-2024-0388", # derivative 2.2.0 via starlark/starlark_syntax; upstream crate is unmaintained
     "RUSTSEC-2025-0057", # fxhash 0.2.1 via starlark_map/bm25; upstream crate is unmaintained
     "RUSTSEC-2024-0436", # paste 1.0.15 via starlark/v8; upstream crate is unmaintained

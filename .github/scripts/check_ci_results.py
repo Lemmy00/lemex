@@ -15,10 +15,16 @@ def main() -> None:
     # Keep result policy in one script so blocking-ci and postmerge-ci cannot
     # drift in how they interpret dependency conclusions.
     needs = json.loads(os.environ["NEEDS"])
+    # Forks select their applicable suite explicitly. Unselected upstream jobs
+    # may be skipped, but every selected job must exist and succeed.
+    selected = os.environ.get("REQUIRED_JOBS")
+    required = selected.split(",") if selected is not None else list(needs)
+    if not required or any(not name.strip() for name in required):
+        raise SystemExit("At least one required CI job must be selected")
     failures = sorted(
-        (name, dependency["result"])
-        for name, dependency in needs.items()
-        if dependency["result"] != "success"
+        (name, needs.get(name, {}).get("result", "missing"))
+        for name in required
+        if needs.get(name, {}).get("result") != "success"
     )
 
     if failures:

@@ -2,10 +2,11 @@
 use crate::approvals::NetworkApprovalProtocol;
 use crate::models::AdditionalPermissionProfile;
 use crate::models::SandboxPermissions;
-use crate::protocol::{
-    GuardianAssessmentOutcome, GuardianCommandSource, GuardianRiskLevel, GuardianUserAuthorization,
-    TokenUsage,
-};
+use crate::protocol::GuardianAssessmentOutcome;
+use crate::protocol::GuardianCommandSource;
+use crate::protocol::GuardianRiskLevel;
+use crate::protocol::GuardianUserAuthorization;
+use crate::protocol::TokenUsage;
 use serde::Serialize;
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]

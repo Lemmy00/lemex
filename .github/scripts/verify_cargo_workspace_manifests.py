@@ -20,13 +20,16 @@ ROOT = Path(__file__).resolve().parents[2]
 CARGO_RS_ROOT = ROOT / "codex-rs"
 WORKSPACE_PACKAGE_FIELDS = ("version", "edition", "license")
 TOP_LEVEL_NAME_EXCEPTIONS = {
+    "code-mode-host": "lemex-code-mode-host",
     "windows-sandbox-rs": "codex-windows-sandbox",
 }
 UTILITY_NAME_EXCEPTIONS = {
     "path-utils": "codex-utils-path",
 }
 MANIFEST_FEATURE_EXCEPTIONS = {
-    "codex-rs/code-mode/Cargo.toml": {"sandbox": ("v8/v8_enable_sandbox",)},
+    # Source installation without system OpenSSL uses these explicit features.
+    "codex-rs/cli/Cargo.toml": {"vendored-openssl": ("codex-http-client/vendored-openssl",)},
+    "codex-rs/http-client/Cargo.toml": {"vendored-openssl": ("native-tls/vendored",)},
     "codex-rs/v8-poc/Cargo.toml": {"sandbox": ("v8/v8_enable_sandbox",)},
 }
 OPTIONAL_DEPENDENCY_EXCEPTIONS = set()

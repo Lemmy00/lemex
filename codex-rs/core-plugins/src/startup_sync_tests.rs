@@ -1381,6 +1381,36 @@ fn read_extracted_backup_archive_git_sha_rejects_path_traversal_ref() {
     assert!(err.contains("invalid path components"));
 }
 
+#[cfg(unix)]
+#[test]
+fn extract_zipball_preserves_executable_bits_without_privileged_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut writer = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    writer
+        .start_file(
+            "repo/tool.sh",
+            SimpleFileOptions::default().unix_permissions(0o755),
+        )
+        .expect("start executable entry");
+    writer.write_all(b"#!/bin/sh\n").expect("write script");
+    let mut bytes = writer.finish().expect("finish archive").into_inner();
+    // Encode hostile Unix attributes directly because the writer sanitizes
+    // permission arguments. The central directory stores them at offset 38.
+    let central = bytes
+        .windows(4)
+        .position(|window| window == b"PK\x01\x02")
+        .expect("central directory");
+    bytes[central + 38..central + 42].copy_from_slice(&((0o107755_u32) << 16).to_le_bytes());
+    let output = tempdir().expect("extraction root");
+    extract_zipball_to_dir(&bytes, output.path()).expect("extract archive");
+    let mode = std::fs::metadata(output.path().join("tool.sh"))
+        .expect("script metadata")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o7777, 0o755);
+}
+
 fn curated_repo_zipball_bytes(sha: &str) -> Vec<u8> {
     let cursor = std::io::Cursor::new(Vec::new());
     let mut writer = ZipWriter::new(cursor);

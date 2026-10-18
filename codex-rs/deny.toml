@@ -70,6 +70,11 @@ feature-depth = 1
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
+    # Reviewed 2026-10-18: maintenance notices only, not vulnerability bypasses.
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml remains via serde_yaml in skills, plugin manifests, and external-agent migration; remove when YAML parsing migrates to a maintained replacement" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant 4 remains via Linux desktop notifications (zbus 4); crate moved into zbus 6; remove when notification integration migrates to zbus 6" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names 3 remains via Linux desktop notifications (zbus 4); crate moved into zbus 6; remove when notification integration migrates to zbus 6" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 4 remains via Linux desktop notifications (zbus 4); crate moved into zbus 6; remove when notification integration migrates to zbus 6" },
     # Reviewed 2026-07-02. Keep this list in sync with .cargo/audit.toml.
     # Each exception must identify the dependency path and removal condition.
     { id = "RUSTSEC-2024-0388", reason = "derivative is unmaintained; pulled in via starlark/starlark_syntax v0.14.2 used by execpolicy/cli/core; no fixed starlark release yet" },

@@ -1,25 +1,7 @@
 name: Source installer
 
 on:
-  pull_request:
-    paths:
-      - scripts/install/**
-      - codex-cli/**
-      - scripts/*npm_release.py
-      - scripts/codex_package/**
-      - codex-rs/cli/Cargo.toml
-      - codex-rs/http-client/Cargo.toml
-      - .github/workflows/source-installer.yml
-  push:
-    branches: [main]
-    paths:
-      - scripts/install/**
-      - codex-cli/**
-      - scripts/*npm_release.py
-      - scripts/codex_package/**
-      - codex-rs/cli/Cargo.toml
-      - codex-rs/http-client/Cargo.toml
-      - .github/workflows/source-installer.yml
+  workflow_call:
   workflow_dispatch:
 
 permissions:

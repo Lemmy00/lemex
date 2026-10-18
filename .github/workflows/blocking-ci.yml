@@ -7,10 +7,19 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: blocking-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Keep reusable workflow calls alphabetized. The `required` job below is the
   # version-controlled list that the main-branch ruleset should require.
   bazel:
+    if: github.repository == 'openai/codex'
     name: Bazel
     uses: ./.github/workflows/bazel.yml
     secrets: inherit
@@ -31,19 +40,27 @@ jobs:
     secrets: inherit
 
   repo-checks:
+    if: github.repository == 'openai/codex'
     name: repo-checks
     uses: ./.github/workflows/repo-checks.yml
     secrets: inherit
 
   rust-ci:
+    if: github.repository == 'openai/codex'
     name: rust-ci
     uses: ./.github/workflows/rust-ci.yml
     secrets: inherit
 
   sdk:
+    if: github.repository == 'openai/codex'
     name: sdk
     uses: ./.github/workflows/sdk.yml
     secrets: inherit
+
+  lemex:
+    name: Lemex
+    if: github.repository != 'openai/codex'
+    uses: ./.github/workflows/lemex-ci.yml
 
   required:
     name: CI required
@@ -58,6 +75,7 @@ jobs:
       - repo-checks
       - rust-ci
       - sdk
+      - lemex
     runs-on: ubuntu-24.04
     steps:
       # Keep the helper on the same combined revision as the child workflows so
@@ -69,4 +87,5 @@ jobs:
       - name: Require successful dependencies
         env:
           NEEDS: ${{ toJSON(needs) }}
+          REQUIRED_JOBS: ${{ github.repository == 'openai/codex' && 'bazel,blob-size-policy,cargo-deny,codespell,repo-checks,rust-ci,sdk' || 'blob-size-policy,cargo-deny,codespell,lemex' }}
         run: python3 .github/scripts/check_ci_results.py

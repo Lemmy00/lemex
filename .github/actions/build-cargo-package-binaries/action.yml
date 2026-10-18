@@ -104,7 +104,7 @@ runs:
         TARGET: ${{ inputs.target }}
       run: |
         set -euo pipefail
-        cargo build --target "${TARGET}" --release --timings --bin bwrap
+        cargo build --locked --target "${TARGET}" --release --timings --bin bwrap
 
         bwrap_path="${CARGO_TARGET_DIR}/${TARGET}/release/bwrap"
         # Codex embeds this digest at build time and verifies the packaged
@@ -132,4 +132,4 @@ runs:
         fi
         STABLE_GIT_COMMIT="$(git rev-parse HEAD)"
         export STABLE_GIT_COMMIT
-        cargo build --target "${TARGET}" --release --timings "${build_args[@]}"
+        cargo build --locked --target "${TARGET}" --release --timings "${build_args[@]}"

@@ -1,0 +1,101 @@
+name: Lemex checks
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metadata-and-packaging:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CODEX_REPO_ROOT: ${{ github.workspace }}
+    outputs:
+      rust_required: ${{ steps.changes.outputs.rust_required }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Detect Rust and runtime changes
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == workflow_dispatch || -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
+            echo "rust_required=true" >> "$GITHUB_OUTPUT"
+          else
+            git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/lemex-changed-files"
+            if grep -Eq '^(codex-rs/|config/|third_party/|\.github/workflows/lemex-ci.yml|\.github/actions/setup-rusty-v8/)' "$RUNNER_TEMP/lemex-changed-files"; then
+              echo "rust_required=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "rust_required=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          components: rustfmt
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: actionlint@1.7.12
+      - name: Validate active Lemex workflows
+        run: |
+          actionlint -shellcheck= -pyflakes= .github/workflows/blocking-ci.yml \
+            .github/workflows/lemex-ci.yml .github/workflows/npm-release.yml \
+            .github/workflows/source-installer.yml .github/workflows/cargo-deny.yml \
+            .github/workflows/codespell.yml .github/workflows/blob-size-policy.yml
+      - name: Verify workspace metadata and architecture
+        run: |
+          python3 .github/scripts/verify_cargo_workspace_manifests.py
+          python3 .github/scripts/verify_tui_core_boundary.py
+          python3 .github/scripts/verify_bazel_clippy_lints.py
+      - name: Check Rust formatting
+        working-directory: codex-rs
+        run: cargo fmt --all -- --check
+      - name: Test CI result policy
+        run: python3 -m unittest discover -s .github/scripts -p 'test_check_ci_results.py'
+      - name: Test native package builder
+        run: python3 -m unittest discover -s scripts/codex_package -p 'test_*.py'
+      - name: Test npm release and installation
+        run: python3 -m unittest discover -s scripts -p 'test_npm_release.py'
+      - name: Test GitHub release helpers
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+      - uses: ./.github/actions/check-clean-worktree
+
+  installers:
+    uses: ./.github/workflows/source-installer.yml
+
+  rust-check:
+    needs: metadata-and-packaging
+    if: needs.metadata-and-packaging.outputs.rust_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config perl libssl-dev libcap-dev
+      - uses: ./.github/actions/setup-rusty-v8
+        with:
+          target: x86_64-unknown-linux-gnu
+      - name: Type-check Lemex and its code-mode host
+        working-directory: codex-rs
+        run: cargo check --locked --bin lemex --bin lemex-code-mode-host
