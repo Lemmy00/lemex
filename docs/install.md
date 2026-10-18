@@ -2,7 +2,38 @@
 
 ## Requirements
 
-Use macOS, Linux, or Windows through WSL2. Source installation needs:
+Use Node.js 22+ and npm on macOS or Linux (x64 or ARM64). On Windows, install Node.js inside WSL2 and run Lemex there.
+
+## Install from npm
+
+> The first npm release is being built. Until it is published, use [installation from source](#install-from-source).
+
+```sh
+npm install -g lemex
+lemex setup
+lemex
+```
+
+npm downloads the precompiled runtime for your platform, including the code-mode host, ripgrep, and the Linux sandbox helper. Rust, Python, a compiler, and a source checkout are not required. `lemex setup` installs the bundled provider settings and model catalog in `${LEMEX_HOME:-$HOME/.lemex}`, preserving existing files, then helps configure your API key and model.
+
+To update:
+
+```sh
+npm install -g lemex@latest
+```
+
+If your npm global installation directory is not writable, use a user-owned prefix:
+
+```sh
+npm install -g lemex --prefix "$HOME/.local"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add that PATH setting to your shell profile to keep it for future terminals. See [API setup](authentication.md) for providers and credentials.
+
+## Source build requirements
+
+Building from source additionally needs:
 
 - Git, curl, Node.js/npm, and Python 3.11+.
 - A C/C++ compiler and platform build dependencies.
@@ -30,7 +61,7 @@ The installer builds the CLI and its helpers, downloads verified V8 artifacts, a
 
 On Windows, run the source installer in WSL2 (install it with `wsl --install` in PowerShell). Git Bash, MSYS, and Cygwin are detected early and directed to WSL2.
 
-Source builds compile the Rust workspace locally, so they take longer than installing a precompiled CLI such as Codex. Lemex's release installers (`scripts/install/install.sh` and `scripts/install/install.ps1`) are for published binary releases; until Lemex publishes those assets, use the source installer. A shallow clone avoids downloading the full upstream Git history.
+Source builds compile the Rust workspace locally and take longer than the npm installation. Lemex's release installers (`scripts/install/install.sh` and `scripts/install/install.ps1`) expect separate GitHub binary-release assets; use npm or the source installer for the supported installation paths. A shallow clone avoids downloading the full upstream Git history.
 
 Missing `config.toml` and `models.json` files are copied from `config/` into `${LEMEX_HOME:-$HOME/.lemex}`. Existing files are left in place. Run `lemex setup` to save your API key and endpoint before starting Lemex; see [API setup](authentication.md).
 
@@ -40,16 +71,16 @@ To update a source installation, pull the latest changes and run the installer a
 
 No build environment variables are required. Common overrides are:
 
-| Variable                  | Purpose                                                                       |
-| ------------------------- | ----------------------------------------------------------------------------- |
-| `LEMEX_BUILD`             | `release` (default) or `debug`.                                               |
-| `LEMEX_PYTHON`            | Select a Python 3.11+ executable; supported versions are detected automatically. |
-| `LEMEX_INSTALL_PREFIX`    | Override npm's global installation prefix; add its `bin` directory to `PATH`. |
-| `CARGO_BUILD_JOBS`        | Build concurrency; defaults to `4`. Lower it if memory is limited.            |
-| `CARGO_TARGET_DIR`        | Reuse a build directory between installs.                                     |
-| `LEMEX_KEEP_BUILD`        | Set to `1` to retain the generated temporary build directory.                 |
-| `LEMEX_SKIP_RUST_INSTALL` | Set to `1` to require an existing Rust installation.                          |
-| `LEMEX_INSTALL_DEPS`      | Set to `0` to check dependencies without installing or downloading missing ones. |
+| Variable                  | Purpose                                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `LEMEX_BUILD`             | `release` (default) or `debug`.                                                           |
+| `LEMEX_PYTHON`            | Select a Python 3.11+ executable; supported versions are detected automatically.          |
+| `LEMEX_INSTALL_PREFIX`    | Override npm's global installation prefix; add its `bin` directory to `PATH`.             |
+| `CARGO_BUILD_JOBS`        | Build concurrency; defaults to `4`. Lower it if memory is limited.                        |
+| `CARGO_TARGET_DIR`        | Reuse a build directory between installs.                                                 |
+| `LEMEX_KEEP_BUILD`        | Set to `1` to retain the generated temporary build directory.                             |
+| `LEMEX_SKIP_RUST_INSTALL` | Set to `1` to require an existing Rust installation.                                      |
+| `LEMEX_INSTALL_DEPS`      | Set to `0` to check dependencies without installing or downloading missing ones.          |
 | `LEMEX_DEPS_DIR`          | Override the native dependency cache (default: `${XDG_CACHE_HOME:-~/.cache}/lemex/deps`). |
 
 Source installs disable incremental compilation and release debug symbols to reduce disk usage. Build artifacts, runtime staging, tarballs, and the install's npm cache are temporary and removed on success, failure, or interruption. The installed runtime and reusable dependency caches are retained; Cargo's shared dependency downloads remain available for other Rust projects. An explicitly supplied `CARGO_TARGET_DIR` is always retained:

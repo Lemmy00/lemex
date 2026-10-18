@@ -10,15 +10,17 @@ Normal sessions use the embedded backend. The persistent background daemon is op
 
 ## Install
 
-On macOS, Linux, or Windows through WSL2, install Git, curl, Node.js/npm, Python 3.11+, and a C/C++ toolchain (Xcode Command Line Tools on macOS). The installer prepares the [remaining build dependencies](docs/install.md#requirements), including a user-cache fallback on Linux without sudo. Run:
+> The first npm release is being built. Until it is published, use [installation from source](docs/install.md#install-from-source).
+
+With Node.js 22 or later on macOS, Linux, or Windows through WSL2:
 
 ```sh
-git clone --depth 1 https://github.com/Lemmy00/lemex.git
-cd lemex
-./scripts/install/install_from_source.sh
+npm install -g lemex
 ```
 
-The installer builds and installs `lemex` globally, installs Rust if needed, and copies the bundled configuration and model catalog into `~/.lemex`. Existing configuration files are preserved. Temporary build and packaging caches are removed automatically, including after a failed or interrupted install.
+npm installs the precompiled runtime for your computer (x64 or ARM64), including its helper tools. Rust, Python, and a compiler are not required. Run `lemex setup` to configure your provider; existing settings in `~/.lemex` are preserved. Update with `npm install -g lemex@latest`.
+
+For development or other build options, see [installation from source](docs/install.md#install-from-source).
 
 Fresh installations use RCP's `deepseek-ai/DeepSeek-V4.1-Flash-1017` with `max` reasoning, a 240k-token context, and compaction at 220k. The bundled catalog includes DeepSeek V4.1, Qwen 3.8, GLM 5.3 Flash, and Leanstral; see [available models and reasoning efforts](docs/config.md#model-catalog-and-tools).
 
@@ -82,10 +84,10 @@ Edit `~/.lemex/config.toml` to change the provider, context limits, reasoning di
 
 Optional environment variables:
 
-| Variable         | Purpose                                                                                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `LEMEX_HOME`     | Configuration and state directory; defaults to `~/.lemex`. Set it before installation to use a different directory. |
-| `LEMEX_BASE_URL` | Override the default RCP endpoint (`https://inference.rcp.epfl.ch/v1`).                                             |
+| Variable         | Purpose                                                                                                              |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `LEMEX_HOME`     | Configuration and state directory; defaults to `~/.lemex`. Set it before `lemex setup` to use a different directory. |
+| `LEMEX_BASE_URL` | Override the default RCP endpoint (`https://inference.rcp.epfl.ch/v1`).                                              |
 
 See [Configuration](docs/config.md) for provider setup and catalog customization, and [Installation](docs/install.md) for build options and config import.
 
