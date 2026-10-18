@@ -8,10 +8,10 @@ Normal sessions use the embedded backend. The persistent background daemon is op
 
 ## Install
 
-On macOS, Linux, or Windows through WSL2, install Git, Node.js/npm, Python 3.11+, ripgrep, and the [platform build dependencies](docs/install.md#requirements). Then run:
+On macOS, Linux, or Windows through WSL2, install Git, curl, Node.js/npm, Python 3.11+, and a C/C++ toolchain (Xcode Command Line Tools on macOS). The installer prepares the [remaining build dependencies](docs/install.md#requirements), including a user-cache fallback on Linux without sudo. Run:
 
 ```sh
-git clone https://github.com/Lemmy00/lemex.git
+git clone --depth 1 https://github.com/Lemmy00/lemex.git
 cd lemex
 ./scripts/install/install_from_source.sh
 ```

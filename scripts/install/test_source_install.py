@@ -274,6 +274,11 @@ fi
         self.assertEqual(observed["codegen"], "")
         self.assertFalse(Path(observed["target"]).exists())
 
+    def test_missing_system_openssl_enables_vendored_feature(self):
+        result, _, observed = self.run_build({"LEMEX_VENDORED_OPENSSL": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--features codex-cli/vendored-openssl", observed["args"])
+
     def test_keep_build_retains_cache_on_success_and_failure(self):
         for fail in (False, True):
             with self.subTest(fail=fail):
