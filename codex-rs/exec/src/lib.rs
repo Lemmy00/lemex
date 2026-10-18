@@ -1331,8 +1331,21 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             maybe_event = client.next_event() => maybe_event,
         };
 
-        let Some(server_event) = server_event else {
-            break;
+        let server_event = match require_running_turn_event(
+            server_event,
+            &primary_thread_id_for_requests,
+            &task_id,
+        ) {
+            Ok(event) => event,
+            Err(notification) => {
+                // Normal completion exits below via InitiateShutdown. EOF here
+                // leaves the turn indeterminate: expose it, but do not invent a
+                // terminal turn/failed event that could authorize a retry.
+                error_seen = true;
+                event_processor
+                    .process_server_notification(ServerNotification::Error(*notification));
+                break;
+            }
         };
 
         match server_event {
@@ -1407,6 +1420,28 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn require_running_turn_event(
+    event: Option<InProcessServerEvent>,
+    thread_id: &str,
+    turn_id: &str,
+) -> Result<InProcessServerEvent, Box<codex_app_server_protocol::ErrorNotification>> {
+    event.ok_or_else(|| {
+        Box::new(codex_app_server_protocol::ErrorNotification {
+            thread_id: thread_id.to_string(),
+            turn_id: turn_id.to_string(),
+            will_retry: false,
+            error: codex_app_server_protocol::TurnError {
+                message:
+                    "In-process app-server event stream closed before the active turn completed"
+                        .to_string(),
+                codex_error_info: None,
+                additional_details: None,
+                misalignment: None,
+            },
+        })
+    })
 }
 
 async fn start_thread(

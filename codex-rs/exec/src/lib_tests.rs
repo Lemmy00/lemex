@@ -18,6 +18,43 @@ use std::sync::Mutex;
 use tempfile::tempdir;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+#[tokio::test]
+async fn closed_running_turn_stream_reports_error_without_inventing_completion() {
+    let (sender, mut receiver) = mpsc::unbounded_channel::<InProcessServerEvent>();
+    drop(sender);
+    let error = require_running_turn_event(receiver.recv().await, "thread-eof", "turn-eof")
+        .expect_err("an interrupted event stream must not be accepted as success");
+    assert_eq!(error.thread_id, "thread-eof");
+    assert_eq!(error.turn_id, "turn-eof");
+    assert!(!error.will_retry);
+    let mut processor = EventProcessorWithJsonOutput::new(None);
+    let collected = processor.collect_thread_events(ServerNotification::Error(*error));
+    assert_eq!(collected.status, CodexStatus::Running);
+    let events: Vec<Value> = collected
+        .events
+        .into_iter()
+        .map(|event| serde_json::to_value(event).expect("serialize event"))
+        .collect();
+    assert_eq!(
+        events,
+        vec![serde_json::json!({
+            "type": "error",
+            "message": "In-process app-server event stream closed before the active turn completed"
+        })]
+    );
+}
+
+#[test]
+fn running_turn_stream_keeps_live_events_unchanged() {
+    let event = require_running_turn_event(
+        Some(InProcessServerEvent::Lagged { skipped: 7 }),
+        "thread-live",
+        "turn-live",
+    )
+    .expect("an existing event is not EOF");
+    assert!(matches!(event, InProcessServerEvent::Lagged { skipped: 7 }));
+}
+
 fn test_tracing_subscriber() -> impl tracing::Subscriber + Send + Sync {
     let provider = SdkTracerProvider::builder().build();
     let tracer = provider.tracer("codex-exec-tests");
