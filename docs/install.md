@@ -6,8 +6,6 @@ Use Node.js 22+ and npm on macOS or Linux (x64 or ARM64). On Windows, install No
 
 ## Install from npm
 
-> The first npm release is being prepared. Until it is published, use [installation from source](#install-from-source).
-
 ```sh
 npm install -g @lemmy00/lemex
 lemex setup

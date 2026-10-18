@@ -10,8 +10,6 @@ Normal sessions use the embedded backend. The persistent background daemon is op
 
 ## Install
 
-> The first npm release is being prepared. Until it is published, use [installation from source](docs/install.md#install-from-source).
-
 With Node.js 22 or later on macOS, Linux, or Windows through WSL2:
 
 ```sh
@@ -20,7 +18,15 @@ npm install -g @lemmy00/lemex
 
 npm installs the precompiled runtime for your computer (x64 or ARM64), including its helper tools. Rust, Python, and a compiler are not required. Run `lemex setup` to configure your provider; existing settings in `~/.lemex` are preserved. Update with `npm install -g @lemmy00/lemex@latest`.
 
-For development or other build options, see [installation from source](docs/install.md#install-from-source).
+Alternatively, build from source with Git, Python 3.11+, and a C/C++ toolchain:
+
+```sh
+git clone --depth 1 https://github.com/Lemmy00/lemex.git
+cd lemex
+./scripts/install/install_from_source.sh
+```
+
+See the [source installation guide](docs/install.md#source-build-requirements) for platform prerequisites and build options. Rust is installed automatically if needed.
 
 Fresh installations use RCP's `deepseek-ai/DeepSeek-V4.1-Flash-1017` with `max` reasoning, a 240k-token context, and compaction at 220k. The bundled catalog includes DeepSeek V4.1, Qwen 3.8, GLM 5.3 Flash, and Leanstral; see [available models and reasoning efforts](docs/config.md#model-catalog-and-tools).
 
