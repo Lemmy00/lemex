@@ -49,9 +49,8 @@ in the CLI and installed by `lemex setup`.
    /tmp/lemex-npm-check/node_modules/.bin/lemex setup --help
    ```
 
-5. Once the first release is live, update the main README and installation guide
-   to lead with `npm install -g lemex`. Until then, retain their working source
-   installation instructions.
+5. Once the first release is live and its public registry installation is verified,
+   remove any first-release pending notice from the README and installation guide.
 
 ## Following releases
 
@@ -67,6 +66,16 @@ Then launch the workflow with the new version and `publish=true`:
 ```sh
 gh workflow run npm-release.yml --ref main -f version=0.1.1 -f publish=true
 ```
+
+To publish the exact tarballs from an already successful build, supply its run ID:
+
+```sh
+gh workflow run npm-release.yml --ref main -f version=0.1.0 -f publish=true -f reuse_run_id=RUN_ID
+```
+
+Reuse requires a successful run of this workflow on the same repository and
+branch, with unchanged runtime and packaging source. The workflow audits
+dependencies again and validates all five original tarballs before publishing.
 
 This uses npm's OIDC trusted publishing, with no npm token stored in GitHub.
 Configure it when ready to publish: npm currently requires a new trusted

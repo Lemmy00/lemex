@@ -8,12 +8,17 @@ on:
         required: true
         default: "0.1.0"
       publish:
-        description: Publish using the npm trusted publisher (after the first release)
+        description: Publish using the configured npm trusted publisher
         type: boolean
         default: false
+      reuse_run_id:
+        description: Reuse artifacts from a successful release run instead of rebuilding
+        required: false
+        default: ""
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: lemex-npm-release
@@ -33,16 +38,28 @@ jobs:
         with:
           node-version: "24"
       - run: python3 -m unittest discover -s scripts -p 'test_npm_release.py'
+      - run: python3 -m unittest discover -s .github/scripts -p 'test_check_npm_release_reuse.py'
       - name: Validate release version
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: python3 scripts/npm_release.py set-version --version "$RELEASE_VERSION"
+
+      - name: Validate reusable release artifacts
+        if: inputs.reuse_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.reuse_run_id }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          python3 .github/scripts/check_npm_release_reuse.py
 
   security:
     uses: ./.github/workflows/cargo-deny.yml
 
   build:
     needs: [check, security]
+    if: inputs.reuse_run_id == ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -104,7 +121,11 @@ jobs:
           compression-level: 0
 
   assemble:
-    needs: build
+    needs: [check, security, build]
+    if: >-
+      always() && needs.check.result == 'success' && needs.security.result == 'success' &&
+      (needs.build.result == 'success' ||
+       (needs.build.result == 'skipped' && inputs.reuse_run_id != ''))
     runs-on: ubuntu-24.04
     env:
       RELEASE_VERSION: ${{ inputs.version }}
@@ -116,14 +137,27 @@ jobs:
         with:
           node-version: "24"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: inputs.reuse_run_id == ''
         with:
           pattern: npm-lemex-*
           merge-multiple: true
           path: dist/npm
+      - name: Download verified existing release
+        if: inputs.reuse_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.reuse_run_id }}
+          name: lemex-npm-release
+          path: dist/npm
       - name: Assemble and validate complete npm release
+        env:
+          SOURCE_RUN_ID: ${{ inputs.reuse_run_id }}
         run: |
-          python3 codex-cli/scripts/build_npm_package.py --package lemex \
-            --version "$RELEASE_VERSION" --pack-output dist/npm/lemex.tgz
+          if [[ -z "$SOURCE_RUN_ID" ]]; then
+            python3 codex-cli/scripts/build_npm_package.py --package lemex \
+              --version "$RELEASE_VERSION" --pack-output dist/npm/lemex.tgz
+          fi
           python3 scripts/npm_release.py publish --version "$RELEASE_VERSION" \
             --dist-dir dist/npm --dry-run
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
