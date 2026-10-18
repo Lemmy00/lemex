@@ -12,6 +12,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const lemexPackageRoot = realpathSync(path.join(__dirname, ".."));
+const lemexPackageName = JSON.parse(
+  readFileSync(path.join(lemexPackageRoot, "package.json"), "utf8"),
+).name;
 
 const PLATFORM_PACKAGE_BY_TARGET = {
   "x86_64-unknown-linux-musl": "lemex-linux-x64",
@@ -104,12 +107,12 @@ function findLemexExecutable() {
   const packageManager = detectPackageManager();
   const updateCommand =
     packageManager === "bun"
-      ? "bun install -g lemex@latest"
+      ? "bun install -g @lemmy00/lemex@latest"
       : packageManager === "pnpm"
-        ? "pnpm add -g lemex@latest"
+        ? "pnpm add -g @lemmy00/lemex@latest"
         : packageManager === "vite-plus"
-          ? "vp install -g lemex@latest"
-          : "npm install -g lemex@latest";
+          ? "vp install -g @lemmy00/lemex@latest"
+          : "npm install -g @lemmy00/lemex@latest";
   throw new Error(
     `Missing optional dependency ${platformPackage}. Reinstall Lemex: ${updateCommand}`,
   );
@@ -129,10 +132,12 @@ function isPnpmOwnedLemexInstall(nodeModulesDir) {
   }
 
   try {
-    return (
-      realpathSync(path.join(nodeModulesDir, "lemex")) ===
-      lemexPackageRoot
-    );
+    return [lemexPackageName].some((name) => {
+      const candidate = path.join(nodeModulesDir, name);
+      return (
+        existsSync(candidate) && realpathSync(candidate) === lemexPackageRoot
+      );
+    });
   } catch {
     return false;
   }
@@ -145,9 +150,9 @@ function isVitePlusOwnedCodexInstall(packagesDir) {
 
   try {
     const metadata = JSON.parse(
-      readFileSync(path.join(packagesDir, "lemex.json"), "utf8"),
+      readFileSync(path.join(packagesDir, `${lemexPackageName}.json`), "utf8"),
     );
-    if (metadata.name !== "lemex") {
+    if (metadata.name !== lemexPackageName) {
       return false;
     }
 
@@ -156,13 +161,13 @@ function isVitePlusOwnedCodexInstall(packagesDir) {
     // newer installs put the ID in a subdirectory of the package prefix.
     const installId = metadata.installId || "";
     const installDir = installId.startsWith("#")
-      ? path.join(packagesDir, `lemex${installId}`)
-      : path.join(packagesDir, "lemex", installId);
+      ? path.join(packagesDir, `${lemexPackageName}${installId}`)
+      : path.join(packagesDir, lemexPackageName, installId);
     for (const nodeModulesDir of [
       path.join(installDir, "lib", "node_modules"),
       path.join(installDir, "node_modules"),
     ]) {
-      const packageRoot = path.join(nodeModulesDir, "lemex");
+      const packageRoot = path.join(nodeModulesDir, lemexPackageName);
       if (
         existsSync(packageRoot) &&
         realpathSync(packageRoot) === lemexPackageRoot

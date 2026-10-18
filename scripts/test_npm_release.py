@@ -33,7 +33,8 @@ class NpmReleaseTests(unittest.TestCase):
                 archive.addfile(info, io.BytesIO(payload))
         return archive_path
 
-    def release_archives(self):
+    def release_archives(self, package_name=None):
+        package_name = package_name or release.NPM_NAME
         for name, spec in release.PLATFORMS.items():
             prefix = f"vendor/{spec['target_triple']}"
             files = {f"{prefix}/{filename}": "fixture" for filename in (
@@ -41,13 +42,14 @@ class NpmReleaseTests(unittest.TestCase):
             )}
             if spec["os"] == "linux":
                 files[f"{prefix}/codex-resources/bwrap"] = "fixture"
-            self.archive(name, {"name": "lemex", "version": f"0.1.0-{spec['npm_tag']}"}, {
+            files[f"{prefix}/codex-package.json"] = json.dumps({"version": "0.1.0", "target": spec["target_triple"]})
+            self.archive(name, {"name": package_name, "version": f"0.1.0-{spec['npm_tag']}"}, {
                 **files, "LICENSE": "license", "NOTICE": "notice"
             })
         self.archive("lemex", {
-            "name": "lemex", "version": "0.1.0",
+            "name": package_name, "version": "0.1.0",
             "optionalDependencies": {
-                key: f"npm:lemex@0.1.0-{spec['npm_tag']}" for key, spec in release.PLATFORMS.items()
+                key: f"npm:{package_name}@0.1.0-{spec['npm_tag']}" for key, spec in release.PLATFORMS.items()
             },
         }, {"bin/lemex.js": "fixture", "LICENSE": "license", "NOTICE": "notice"})
 
@@ -68,8 +70,9 @@ class NpmReleaseTests(unittest.TestCase):
         manifest = json.loads((self.root / "package.json").read_text())
         self.assertNotIn("private", manifest)
         self.assertNotIn("scripts", manifest)
+        self.assertEqual(manifest["name"], "@lemmy00/lemex")
         self.assertEqual(set(manifest["optionalDependencies"]), set(release.PLATFORMS))
-        self.assertEqual(manifest["optionalDependencies"]["lemex-linux-x64"], "npm:lemex@0.1.0-linux-x64")
+        self.assertEqual(manifest["optionalDependencies"]["lemex-linux-x64"], f"npm:{release.NPM_NAME}@0.1.0-linux-x64")
         self.assertEqual(manifest["os"], ["darwin", "linux"])
         for name in ("LICENSE", "NOTICE", "README.md"):
             self.assertTrue((self.root / name).is_file(), name)
@@ -84,7 +87,7 @@ class NpmReleaseTests(unittest.TestCase):
 
     def test_native_payload_is_required(self):
         self.release_archives()
-        self.archive("lemex-linux-x64", {"name": "lemex", "version": "0.1.0-linux-x64"}, {
+        self.archive("lemex-linux-x64", {"name": release.NPM_NAME, "version": "0.1.0-linux-x64"}, {
             "LICENSE": "license", "NOTICE": "notice"
         })
         with self.assertRaisesRegex(RuntimeError, "Incomplete runtime"):
@@ -117,6 +120,34 @@ class NpmReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "different bytes"):
                 release.publish(self.root, "0.1.0", False)
         self.assertEqual(run.call_count, 1)
+
+    @unittest.skipUnless(shutil.which("npm"), "npm required")
+    def test_repackage_legacy_artifacts_preserves_every_native_file(self):
+        self.release_archives("lemex")
+        output = self.root / "scoped"
+        release.repackage_release(self.root, output, "0.1.0")
+        release.release_tarballs(output, "0.1.0")
+        for name in release.PLATFORMS:
+            with tarfile.open(self.root / f"{name}.tgz") as original, tarfile.open(output / f"{name}.tgz") as repackaged:
+                self.assertEqual(json.load(repackaged.extractfile("package/package.json"))["name"], "@lemmy00/lemex")
+                for member in original.getmembers():
+                    if member.isfile() and member.name.startswith("package/vendor/"):
+                        self.assertEqual(original.extractfile(member).read(), repackaged.extractfile(member.name).read())
+
+    def test_repackage_rejects_linked_runtime_members(self):
+        self.release_archives("lemex")
+        path = self.root / "lemex-linux-x64.tgz"
+        with tarfile.open(path, "w:gz") as archive:
+            manifest = json.dumps({"name": "lemex", "version": "0.1.0-linux-x64"}).encode()
+            member = tarfile.TarInfo("package/package.json")
+            member.size = len(manifest)
+            archive.addfile(member, io.BytesIO(manifest))
+            link = tarfile.TarInfo("package/vendor/x86_64-unknown-linux-musl/bin/lemex")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "/unexpected"
+            archive.addfile(link)
+        with self.assertRaisesRegex(RuntimeError, "regular file"):
+            release.repackage_release(self.root, self.root / "scoped", "0.1.0")
 
     @unittest.skipUnless(shutil.which("npm"), "npm required")
     def test_linux_runtime_preserves_sandbox_bytes_and_native_version(self):
@@ -155,7 +186,7 @@ class NpmReleaseTests(unittest.TestCase):
         # A tiny executable makes this a portable npm/launcher integration test.
         # CI repeats the same install test with the actual compiled CLI.
         native = self.archive(name, {
-            "name": "lemex", "version": f"0.1.0-{spec['npm_tag']}",
+            "name": release.NPM_NAME, "version": f"0.1.0-{spec['npm_tag']}",
             "os": [spec["os"]], "cpu": [spec["cpu"]],
         }, {f"vendor/{spec['target_triple']}/bin/lemex": '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "lemex 0.1.0"; fi\n'})
         smoke(launcher, native)

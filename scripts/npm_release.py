@@ -39,6 +39,7 @@ PLATFORMS = {
     if name != "lemex"
 }
 REGISTRY = "https://registry.npmjs.org/"
+NPM_NAME = npm.LEMEX_NPM_NAME
 
 
 def release_version(value: str) -> str:
@@ -107,6 +108,45 @@ def read_manifest(tarball: Path) -> dict:
         return json.load(archive.extractfile("package/package.json"))
 
 
+def repackage_release(source: Path, output: Path, version: str) -> None:
+    """Restage package metadata and the launcher while preserving native bytes."""
+    if source.resolve() == output.resolve():
+        raise RuntimeError("Use a separate output directory for repackaged artifacts")
+    for name, spec in PLATFORMS.items():
+        with tempfile.TemporaryDirectory(prefix="lemex-repackage-") as temporary:
+            staging = Path(temporary)
+            vendor = staging / "vendor" / spec["target_triple"]
+            with tarfile.open(source / f"{name}.tgz", "r:gz") as archive:
+                manifest = json.load(archive.extractfile("package/package.json"))
+                if manifest.get("name") not in {"lemex", NPM_NAME} or manifest.get("version") != f"{version}-{spec['npm_tag']}":
+                    raise RuntimeError(f"Unexpected source package: {name}")
+                entries = ["bin/lemex", "bin/lemex-code-mode-host", "codex-path/rg", "codex-package.json"]
+                if spec["os"] == "linux":
+                    entries.append("codex-resources/bwrap")
+                for entry in entries:
+                    member = archive.getmember(f"package/vendor/{spec['target_triple']}/{entry}")
+                    if not member.isfile():
+                        raise RuntimeError(f"Runtime member must be a regular file: {entry}")
+                    destination = vendor / entry
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.extractfile(member) as original, destination.open("wb") as copied:
+                        shutil.copyfileobj(original, copied)
+                    destination.chmod(member.mode & 0o777)
+            metadata = json.loads((vendor / "codex-package.json").read_text())
+            if metadata.get("version") != version or metadata.get("target") != spec["target_triple"]:
+                raise RuntimeError(f"Unexpected native runtime metadata: {name}")
+            package_dir = staging / "package"
+            package_dir.mkdir()
+            npm.stage_sources(package_dir, version, name)
+            npm.copy_native_binaries(staging / "vendor", package_dir, [npm.LEMEX_PACKAGE_COMPONENT], {spec["target_triple"]})
+            npm.run_npm_pack(package_dir, output / f"{name}.tgz")
+    with tempfile.TemporaryDirectory(prefix="lemex-launcher-") as temporary:
+        package_dir = Path(temporary)
+        npm.stage_sources(package_dir, version, "lemex")
+        npm.run_npm_pack(package_dir, output / "lemex.tgz")
+    release_tarballs(output, version)
+
+
 def release_tarballs(directory: Path, version: str) -> list[tuple[Path, str]]:
     """Require every platform before allowing any registry mutation."""
     packages = [(name, f"{version}-{spec['npm_tag']}") for name, spec in PLATFORMS.items()]
@@ -115,7 +155,7 @@ def release_tarballs(directory: Path, version: str) -> list[tuple[Path, str]]:
     for name, expected_version in packages:
         tarball = directory / f"{name}.tgz"
         manifest = read_manifest(tarball)
-        if manifest["name"] != "lemex" or manifest["version"] != expected_version:
+        if manifest["name"] != NPM_NAME or manifest["version"] != expected_version:
             raise RuntimeError(f"Unexpected package identity in {tarball}")
         with tarfile.open(tarball, "r:gz") as archive:
             files = set(archive.getnames())
@@ -123,7 +163,7 @@ def release_tarballs(directory: Path, version: str) -> list[tuple[Path, str]]:
                 raise RuntimeError(f"Missing license or notices in {tarball}")
             if name == "lemex":
                 expected_dependencies = {
-                    key: f"npm:lemex@{version}-{spec['npm_tag']}"
+                    key: f"npm:{NPM_NAME}@{version}-{spec['npm_tag']}"
                     for key, spec in PLATFORMS.items()
                 }
                 if manifest.get("optionalDependencies") != expected_dependencies:
@@ -153,14 +193,14 @@ def publish(directory: Path, version: str, dry_run: bool) -> None:
         package_tag = tag if package_version == version else f"release-{version}"
         if not dry_run:
             existing = subprocess.run(
-                ["npm", "view", f"lemex@{package_version}", "dist.integrity", "--json", f"--registry={REGISTRY}"],
+                ["npm", "view", f"{NPM_NAME}@{package_version}", "dist.integrity", "--json", f"--registry={REGISTRY}"],
                 capture_output=True, text=True,
             )
             if existing.returncode == 0:
                 integrity = "sha512-" + base64.b64encode(hashlib.sha512(tarball.read_bytes()).digest()).decode()
                 if json.loads(existing.stdout) != integrity:
-                    raise RuntimeError(f"lemex@{package_version} already exists with different bytes")
-                print(f"Already published lemex@{package_version}; verified integrity", flush=True)
+                    raise RuntimeError(f"{NPM_NAME}@{package_version} already exists with different bytes")
+                print(f"Already published {NPM_NAME}@{package_version}; verified integrity", flush=True)
                 continue
             error = json.loads(existing.stdout or "{}")
             if error.get("error", {}).get("code") != "E404":
@@ -174,7 +214,7 @@ def publish(directory: Path, version: str, dry_run: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("set-version", "pack-runtime", "publish"):
+    for name in ("set-version", "pack-runtime", "repackage", "publish"):
         command = commands.add_parser(name)
         command.add_argument("--version", required=True, type=release_version)
         if name == "pack-runtime":
@@ -184,11 +224,16 @@ def main() -> None:
         if name == "publish":
             command.add_argument("--dist-dir", required=True, type=Path)
             command.add_argument("--dry-run", action="store_true")
+        if name == "repackage":
+            command.add_argument("--source-dir", required=True, type=Path)
+            command.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args()
     if args.command == "set-version":
         set_version(args.version)
     elif args.command == "pack-runtime":
         print(pack_runtime(args.package, args.version, args.binaries_dir, args.output_dir))
+    elif args.command == "repackage":
+        repackage_release(args.source_dir, args.output_dir, args.version)
     else:
         publish(args.dist_dir, args.version, args.dry_run)
 

@@ -15,11 +15,11 @@ CODEX_CLI_ROOT = SCRIPT_DIR.parent
 REPO_ROOT = CODEX_CLI_ROOT.parent
 RESPONSES_API_PROXY_NPM_ROOT = REPO_ROOT / "codex-rs" / "responses-api-proxy" / "npm"
 CODEX_SDK_ROOT = REPO_ROOT / "sdk" / "typescript"
-LEMEX_NPM_NAME = "lemex"
+LEMEX_NPM_NAME = "@lemmy00/lemex"
 LEMEX_PACKAGE_COMPONENT = "lemex-package"
 
 # `npm_name` is the local optional-dependency alias consumed by `bin/lemex.js`.
-# The underlying package published to npm is always `lemex`.
+# The underlying package published to npm is always `@lemmy00/lemex`.
 LEMEX_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
     "lemex-linux-x64": {
         "npm_name": "lemex-linux-x64",
@@ -301,6 +301,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         package_json["version"] = version
 
     if package == "lemex":
+        package_json["name"] = LEMEX_NPM_NAME
         package_json["files"] = ["bin/lemex.js"]
         package_json["os"] = ["darwin", "linux"]
         package_json["cpu"] = ["x64", "arm64"]

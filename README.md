@@ -10,15 +10,15 @@ Normal sessions use the embedded backend. The persistent background daemon is op
 
 ## Install
 
-> The first npm release is being built. Until it is published, use [installation from source](docs/install.md#install-from-source).
+> The first npm release is being prepared. Until it is published, use [installation from source](docs/install.md#install-from-source).
 
 With Node.js 22 or later on macOS, Linux, or Windows through WSL2:
 
 ```sh
-npm install -g lemex
+npm install -g @lemmy00/lemex
 ```
 
-npm installs the precompiled runtime for your computer (x64 or ARM64), including its helper tools. Rust, Python, and a compiler are not required. Run `lemex setup` to configure your provider; existing settings in `~/.lemex` are preserved. Update with `npm install -g lemex@latest`.
+npm installs the precompiled runtime for your computer (x64 or ARM64), including its helper tools. Rust, Python, and a compiler are not required. Run `lemex setup` to configure your provider; existing settings in `~/.lemex` are preserved. Update with `npm install -g @lemmy00/lemex@latest`.
 
 For development or other build options, see [installation from source](docs/install.md#install-from-source).
 

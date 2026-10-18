@@ -4,7 +4,7 @@ The `Lemex npm release` workflow builds precompiled CLI packages for macOS and
 Linux on x64 and ARM64. Windows users install the Linux package inside WSL2.
 End users need Node.js 22+ and npm; they do not need Rust, Python, or a compiler.
 
-All five tarballs use the single npm package name `lemex`. The four native
+All five tarballs use the single npm package name `@lemmy00/lemex`. The four native
 versions have suffixes such as `0.1.0-linux-x64`; the launcher at `0.1.0` selects
 the correct native version using npm's optional dependencies and OS/CPU filters.
 Each native package includes the CLI, code-mode host, ripgrep, runtime metadata,
@@ -44,7 +44,7 @@ in the CLI and installed by `lemex setup`.
 4. Verify an installation from the public registry in a fresh directory:
 
    ```sh
-   npm install --prefix /tmp/lemex-npm-check --registry=https://registry.npmjs.org/ lemex@0.1.0
+   npm install --prefix /tmp/lemex-npm-check --registry=https://registry.npmjs.org/ @lemmy00/lemex@0.1.0
    /tmp/lemex-npm-check/node_modules/.bin/lemex --version
    /tmp/lemex-npm-check/node_modules/.bin/lemex setup --help
    ```
@@ -54,7 +54,7 @@ in the CLI and installed by `lemex setup`.
 
 ## Following releases
 
-In the `lemex` package's npm settings, add a GitHub Actions trusted publisher:
+In the `@lemmy00/lemex` package's npm settings, add a GitHub Actions trusted publisher:
 
 - Organization or user: `Lemmy00`
 - Repository: `lemex`
@@ -74,8 +74,9 @@ gh workflow run npm-release.yml --ref main -f version=0.1.0 -f publish=true -f r
 ```
 
 Reuse requires a successful run of this workflow on the same repository and
-branch, with unchanged runtime and packaging source. The workflow audits
-dependencies again and validates all five original tarballs before publishing.
+branch, with unchanged native build inputs. The workflow preserves the original native
+binaries, restages package metadata and the launcher from the current checkout,
+audits dependencies again, and validates all five tarballs before publishing.
 
 This uses npm's OIDC trusted publishing, with no npm token stored in GitHub.
 Configure it when ready to publish: npm currently requires a new trusted

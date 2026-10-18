@@ -6,26 +6,28 @@ Use Node.js 22+ and npm on macOS or Linux (x64 or ARM64). On Windows, install No
 
 ## Install from npm
 
-> The first npm release is being built. Until it is published, use [installation from source](#install-from-source).
+> The first npm release is being prepared. Until it is published, use [installation from source](#install-from-source).
 
 ```sh
-npm install -g lemex
+npm install -g @lemmy00/lemex
 lemex setup
 lemex
 ```
 
 npm downloads the precompiled runtime for your platform, including the code-mode host, ripgrep, and the Linux sandbox helper. Rust, Python, a compiler, and a source checkout are not required. `lemex setup` installs the bundled provider settings and model catalog in `${LEMEX_HOME:-$HOME/.lemex}`, preserving existing files, then helps configure your API key and model.
 
+If you previously installed the unscoped `lemex` package from source, remove it with `npm uninstall -g lemex` before installing `@lemmy00/lemex`. Your settings in `~/.lemex` are retained.
+
 To update:
 
 ```sh
-npm install -g lemex@latest
+npm install -g @lemmy00/lemex@latest
 ```
 
 If your npm global installation directory is not writable, use a user-owned prefix:
 
 ```sh
-npm install -g lemex --prefix "$HOME/.local"
+npm install -g @lemmy00/lemex --prefix "$HOME/.local"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 

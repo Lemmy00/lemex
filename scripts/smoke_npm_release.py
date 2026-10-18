@@ -34,14 +34,14 @@ def smoke(launcher: Path, native: Path) -> None:
                 for spec in PLATFORMS.values():
                     platform_version = npm.compute_platform_package_version(version, spec["npm_tag"])
                     versions[platform_version] = {
-                        "name": "lemex", "version": platform_version,
+                        "name": launcher_manifest["name"], "version": platform_version,
                         "os": [spec["os"]], "cpu": [spec["cpu"]],
                         "dist": {
                             "tarball": f"http://127.0.0.1:{self.server.server_port}/lemex/-/{platform_version}.tgz",
                             "integrity": "sha512-" + base64.b64encode(hashlib.sha512(payload).digest()).decode(),
                         },
                     }
-                body = json.dumps({"name": "lemex", "versions": versions}).encode()
+                body = json.dumps({"name": launcher_manifest["name"], "versions": versions}).encode()
                 content_type = "application/json"
             self.send_response(200)
             self.send_header("Content-Type", content_type)

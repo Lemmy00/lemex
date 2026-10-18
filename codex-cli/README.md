@@ -7,7 +7,7 @@ Lemex is a local coding agent based on OpenAI Codex. It runs as `lemex` and stor
 With Node.js 22 or later:
 
 ```sh
-npm install -g lemex
+npm install -g @lemmy00/lemex
 lemex setup
 lemex
 ```
@@ -26,7 +26,7 @@ To run a single task from your project:
 lemex exec "Explain this codebase"
 ```
 
-Update with `npm install -g lemex@latest`. Check your setup with `lemex doctor`.
+Update with `npm install -g @lemmy00/lemex@latest`. Check your setup with `lemex doctor`.
 
 See the [installation guide](https://github.com/Lemmy00/lemex/blob/main/docs/install.md) and [configuration guide](https://github.com/Lemmy00/lemex/blob/main/docs/config.md).
 

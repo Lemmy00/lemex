@@ -390,10 +390,10 @@ fn push_cached_version_details(details: &mut Vec<String>, version_file: &Path) {
 
 fn update_action_label(context: &InstallContext) -> &'static str {
     match &context.method {
-        InstallMethod::Npm => "npm install -g lemex",
-        InstallMethod::Bun => "bun install -g lemex",
-        InstallMethod::VitePlus => "vp install -g @openai/codex",
-        InstallMethod::Pnpm => "pnpm add -g lemex",
+        InstallMethod::Npm => "npm install -g @lemmy00/lemex",
+        InstallMethod::Bun => "bun install -g @lemmy00/lemex",
+        InstallMethod::VitePlus => "vp install -g @lemmy00/lemex",
+        InstallMethod::Pnpm => "pnpm add -g @lemmy00/lemex",
         InstallMethod::Brew => "brew upgrade --cask lemex",
         InstallMethod::Standalone { .. } => "standalone installer",
         InstallMethod::Other => "manual or unknown",
@@ -406,13 +406,24 @@ async fn fetch_latest_version(
 ) -> Result<String, String> {
     match &context.method {
         InstallMethod::Brew => fetch_homebrew_cask_version(client).await,
-        InstallMethod::Npm
-        | InstallMethod::Bun
-        | InstallMethod::VitePlus
-        | InstallMethod::Pnpm
-        | InstallMethod::Standalone { .. }
-        | InstallMethod::Other => fetch_latest_github_release_version(client).await,
+        InstallMethod::Npm | InstallMethod::Bun | InstallMethod::VitePlus | InstallMethod::Pnpm => {
+            fetch_latest_npm_version(client).await
+        }
+        InstallMethod::Standalone { .. } | InstallMethod::Other => {
+            fetch_latest_github_release_version(client).await
+        }
     }
+}
+
+async fn fetch_latest_npm_version(client: &RouteAwareClientPool) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct NpmVersion {
+        version: String,
+    }
+
+    http_get_json::<NpmVersion>(client, "https://registry.npmjs.org/@lemmy00%2flemex/latest")
+        .await
+        .map(|info| info.version)
 }
 
 async fn fetch_latest_github_release_version(
@@ -692,14 +703,14 @@ mod tests {
                 method: InstallMethod::Npm,
                 package_layout: None,
             }),
-            "npm install -g lemex"
+            "npm install -g @lemmy00/lemex"
         );
         assert_eq!(
             update_action_label(&InstallContext {
                 method: InstallMethod::Pnpm,
                 package_layout: None,
             }),
-            "pnpm add -g lemex"
+            "pnpm add -g @lemmy00/lemex"
         );
         assert_eq!(
             update_action_label(&InstallContext {

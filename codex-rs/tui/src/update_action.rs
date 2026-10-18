@@ -10,13 +10,13 @@ use codex_install_context::StandalonePlatform;
 pub enum UpdateAction {
     /// Replace the local daemon after restoring the terminal.
     Daemon(DaemonUpdateSource),
-    /// Update via `npm install -g lemex@latest`.
+    /// Update via `npm install -g @lemmy00/lemex@latest`.
     NpmGlobalLatest,
-    /// Update via `bun install -g lemex@latest`.
+    /// Update via `bun install -g @lemmy00/lemex@latest`.
     BunGlobalLatest,
-    /// Update via `vp install -g lemex@latest`.
+    /// Update via `vp install -g @lemmy00/lemex@latest`.
     VitePlusGlobalLatest,
-    /// Update via `pnpm add -g lemex@latest`.
+    /// Update via `pnpm add -g @lemmy00/lemex@latest`.
     PnpmGlobalLatest,
     /// Update via `brew upgrade lemex`.
     BrewUpgrade,
@@ -47,10 +47,10 @@ impl UpdateAction {
     pub fn command_args(self) -> (&'static str, &'static [&'static str]) {
         match self {
             UpdateAction::Daemon(source) => ("lemex", source.command_args()),
-            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "lemex"]),
-            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "lemex"]),
-            UpdateAction::VitePlusGlobalLatest => ("vp", &["install", "-g", "lemex"]),
-            UpdateAction::PnpmGlobalLatest => ("pnpm", &["add", "-g", "lemex"]),
+            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "@lemmy00/lemex"]),
+            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "@lemmy00/lemex"]),
+            UpdateAction::VitePlusGlobalLatest => ("vp", &["install", "-g", "@lemmy00/lemex"]),
+            UpdateAction::PnpmGlobalLatest => ("pnpm", &["add", "-g", "@lemmy00/lemex"]),
             UpdateAction::BrewUpgrade => ("brew", &["upgrade", "--cask", "lemex"]),
             UpdateAction::StandaloneUnix => (
                 "sh",
@@ -153,6 +153,21 @@ mod tests {
             }),
             Some(UpdateAction::StandaloneWindows)
         );
+    }
+
+    #[test]
+    fn package_manager_updates_use_the_published_scoped_package() {
+        for (action, program, verb) in [
+            (UpdateAction::NpmGlobalLatest, "npm", "install"),
+            (UpdateAction::BunGlobalLatest, "bun", "install"),
+            (UpdateAction::VitePlusGlobalLatest, "vp", "install"),
+            (UpdateAction::PnpmGlobalLatest, "pnpm", "add"),
+        ] {
+            assert_eq!(
+                action.command_args(),
+                (program, &[verb, "-g", "@lemmy00/lemex"][..])
+            );
+        }
     }
 
     #[test]

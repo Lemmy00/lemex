@@ -7,7 +7,8 @@ import subprocess
 
 
 RUNTIME_PATHS = [
-    "codex-rs", "codex-cli", "config", "third_party", "scripts", ".github/actions",
+    "codex-rs", "config", "third_party", "scripts/codex_package",
+    "scripts/install/prepare_source_package.py", ".github/actions",
     ".github/scripts/install-musl-build-tools.sh", ".github/scripts/macos-signing",
 ]
 
