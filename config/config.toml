@@ -1,11 +1,12 @@
 model_provider = "rcp"
 # Run lemex setup to save a key and URL; LEMEX_API_KEY and LEMEX_BASE_URL override them.
-model = "moonshotai/Kimi-K2.7-Code"
+model = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
 model_catalog_json = "models.json"
+model_reasoning_effort = "max"
 # Use a 200k context window and compact at 90% to leave headroom.
 model_context_window = 200000
 model_auto_compact_token_limit = 180000
-# Use each model's catalog default; RCP models accept different effort values.
+# DeepSeek 1017 defaults to max; the model picker uses each model's supported efforts.
 show_raw_agent_reasoning = true
 # RCP does not provide OpenAI's hosted web search; use the Exa MCP tools below.
 web_search = "disabled"

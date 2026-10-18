@@ -18,6 +18,8 @@ cd lemex
 
 The installer builds and installs `lemex` globally, installs Rust if needed, and copies the bundled configuration and model catalog into `~/.lemex`. Existing configuration files are preserved. Temporary build and packaging caches are removed automatically, including after a failed or interrupted install.
 
+Fresh installations default to RCP's `deepseek-ai/DeepSeek-V4.1-Flash-1017` with `max` reasoning. The bundled catalog includes DeepSeek V4.1, Qwen 3.8, GLM 5.3 Flash, and Leanstral; see [available models and reasoning efforts](docs/config.md#model-catalog-and-tools).
+
 ## Run
 
 Set up your API key once, then start Lemex:

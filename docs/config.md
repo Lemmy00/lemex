@@ -36,6 +36,15 @@ lemex -m "<model-id>"
 lemex -c show_raw_agent_reasoning=false
 ```
 
+The default is `deepseek-ai/DeepSeek-V4.1-Flash-1017` with `max` reasoning.
+When overriding the model on the command line, also select an effort that the
+new model supports, since `-m` alone retains the configured reasoning effort:
+
+```sh
+lemex -m "mistralai/Leanstral-2603" -c model_reasoning_effort="high"
+lemex -m "Qwen/Qwen3.8-Flash-Next" -c model_reasoning_effort="xhigh"
+```
+
 ## Change provider
 
 To point the built-in RCP provider at another Responses API endpoint:
@@ -71,6 +80,35 @@ Set `MY_PROVIDER_API_KEY` in your environment and adapt `models.json` to match t
 ## Model catalog and tools
 
 To add a model, copy a suitable entry in `models.json` and update its `slug`, display name, reasoning levels, context limits, and capabilities to match the deployment. The default `model` must match a catalog entry. Lemex limits `model_context_window` to the catalog's `max_context_window`.
+
+The RCP catalog was checked on 2026-10-18:
+
+| Model ID | Reasoning efforts | Catalog default |
+| --- | --- | --- |
+| `deepseek-ai/DeepSeek-V4.1-Flash-1017` | `none`, `low`, `high`, `xhigh`, `max` | `max` |
+| `deepseek-ai/DeepSeek-V4.1-Flash` | `none`, `low`, `high`, `xhigh`, `max` | `high` |
+| `Qwen/Qwen3.8-Flash-Next` | `none`, `low`, `medium`, `xhigh` | `medium` |
+| `Qwen/Qwen3.8-27B` | `none`, `low`, `medium`, `xhigh` | `medium` |
+| `zai-org/GLM-5.3-Flash` | `low`, `high`, `max` | `max` |
+| `mistralai/Leanstral-2603` | `none`, `high` | `high` |
+
+`none` disables reasoning where supported. DeepSeek V4.1 rejects `minimal` and
+`medium`; Qwen 3.8 rejects `minimal`, `high`, and `max`.
+[Qwen's template](https://huggingface.co/Qwen/Qwen3.8-27B/blob/main/chat_template.jinja)
+defines its three reasoning levels.
+[GLM's model card](https://huggingface.co/zai-org/GLM-5.3-Flash/blob/main/README.md)
+specifies `low`, `high`, and `max`: other strings silently select `max`, so HTTP
+acceptance alone does not establish a distinct reasoning level.
+[Leanstral's template](https://huggingface.co/mistralai/Leanstral-2603/blob/main/chat_template.jinja)
+permits only `none` and `high`.
+
+All listed DeepSeek, Qwen, and GLM effort values were accepted by live RCP
+Responses API probes. Leanstral's values are verified against its official
+template; RCP listed the model but inference still timed out after a five-minute
+attempt, so live Leanstral availability was not confirmed. Qwen 3.8 27B also
+initially timed out, then responded after about three minutes and passed the
+effort checks. The configured DeepSeek 1017 / `max` default passed an ephemeral
+Lemex CLI request.
 
 The bundled config uses MCP tools for web search and sets `web_search = "disabled"` for the provider's hosted search. Manage servers with `lemex mcp` and inspect connected tools with `/mcp`. Enable hosted search only if your provider supports it.
 
