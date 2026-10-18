@@ -1043,6 +1043,9 @@ pub struct Config {
     /// When set, this replaces the bundled catalog for the current process.
     pub model_catalog: Option<ModelsResponse>,
 
+    /// Saved model IDs for the main picker; None shows the provider's full catalog.
+    pub model_picker_models: Option<Vec<String>>,
+
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
 
@@ -4128,6 +4131,15 @@ impl Config {
 
         let check_for_update_on_startup = cfg.check_for_update_on_startup.unwrap_or(true);
         let model_catalog = load_model_catalog(cfg.model_catalog_json.clone())?;
+        let model_picker_models = cfg.model_picker_models.clone().or_else(|| {
+            model_provider.is_rcp().then(|| {
+                codex_model_provider::bundled_rcp_model_catalog()
+                    .models
+                    .into_iter()
+                    .map(|model| model.slug)
+                    .collect()
+            })
+        });
 
         let log_dir = cfg
             .log_dir
@@ -4478,6 +4490,7 @@ impl Config {
             plan_mode_reasoning_effort: cfg.plan_mode_reasoning_effort,
             model_reasoning_summary: cfg.model_reasoning_summary,
             model_catalog,
+            model_picker_models,
             model_verbosity: cfg.model_verbosity,
             chatgpt_base_url: cfg
                 .chatgpt_base_url

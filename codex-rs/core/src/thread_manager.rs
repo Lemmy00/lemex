@@ -453,7 +453,7 @@ pub fn build_models_manager(
         config.model_catalog.clone(),
     );
     manager.set_api_key_model_discovery_enabled(
-        config.features.enabled(Feature::ApiKeyModelDiscovery),
+        config.model_provider.is_rcp() || config.features.enabled(Feature::ApiKeyModelDiscovery),
     );
     manager
 }

@@ -326,8 +326,7 @@ fn prepare_path_entry_for_codex_aliases(
 
     std::fs::create_dir_all(&codex_home)?;
     // Use a LEMEX_HOME-scoped temp root to avoid cluttering the top-level directory.
-    let temp_root = codex_home.join("tmp").join("arg0");
-    std::fs::create_dir_all(&temp_root)?;
+    let temp_root = prepare_home_temp_root(&codex_home)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -405,6 +404,25 @@ fn prepare_path_entry_for_codex_aliases(
         Arg0PathEntryGuard::new(temp_dir, lock_file, paths),
         updated_path_env_var,
     ))
+}
+
+fn prepare_home_temp_root(codex_home: &Path) -> std::io::Result<PathBuf> {
+    let temporary = codex_home.join("tmp");
+    // Users often relocate this directory to /tmp or scratch storage. Recreate
+    // a missing target after a reboot instead of failing on its existing link.
+    if let Ok(target) = std::fs::read_link(&temporary)
+        && !temporary.exists()
+    {
+        let target = if target.is_absolute() {
+            target
+        } else {
+            codex_home.join(target)
+        };
+        std::fs::create_dir_all(target)?;
+    }
+    let root = temporary.join("arg0");
+    std::fs::create_dir_all(&root)?;
+    Ok(root)
 }
 
 #[cfg(windows)]
@@ -592,6 +610,21 @@ mod tests {
             .output()?;
 
         assert_eq!(output.status.code(), Some(37));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recreates_a_removed_temporary_symlink_target() -> anyhow::Result<()> {
+        let directory = TempDir::new()?;
+        let home = directory.path().join("lemex-home");
+        fs::create_dir(&home)?;
+        let target = directory.path().join("removed-scratch");
+        std::os::unix::fs::symlink(&target, home.join("tmp"))?;
+        let root = super::prepare_home_temp_root(&home)?;
+        assert!(root.is_dir());
+        assert!(home.join("tmp").is_symlink());
+        assert!(target.join("arg0").is_dir());
         Ok(())
     }
 

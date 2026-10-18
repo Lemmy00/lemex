@@ -74,40 +74,36 @@ pub(crate) async fn run(command: SetupCommand) -> anyhow::Result<()> {
         .get(codex_model_provider_info::RCP_PROVIDER_ID)
         .and_then(|provider| provider.base_url.as_deref())
         .unwrap_or(DEFAULT_LEMEX_BASE_URL);
-    let url = match command.base_url {
-        Some(url) => validate_url(&url)?,
-        None if interactive => {
-            eprint!("API URL [{saved_url}]: ");
-            std::io::stderr().flush()?;
-            let mut value = String::new();
-            std::io::stdin().read_line(&mut value)?;
-            validate_url(if value.trim().is_empty() {
-                saved_url
-            } else {
-                value.trim()
-            })?
-        }
-        None => validate_url(saved_url)?,
-    };
-    let api_key = if command.with_api_key {
-        let mut value = String::new();
-        std::io::stdin().read_to_string(&mut value)?;
-        Some(validate_key(&value)?)
-    } else if let Ok(key) = std::env::var(LEMEX_API_KEY_ENV_VAR)
-        && !key.trim().is_empty()
-    {
-        Some(validate_key(&key)?)
-    } else if stored.as_ref().is_some_and(|auth| {
+    let url = validate_url(command.base_url.as_deref().unwrap_or(saved_url))?;
+    if interactive {
+        eprintln!("API endpoint: {url}");
+        eprintln!("To change the endpoint, use `lemex setup --base-url https://your-server/v1`.");
+    }
+    let environment_key = std::env::var(LEMEX_API_KEY_ENV_VAR)
+        .ok()
+        .filter(|key| !key.trim().is_empty());
+    let has_saved_key = stored.as_ref().is_some_and(|auth| {
         auth.auth_mode
             .is_none_or(|mode| mode == codex_protocol::auth::AuthMode::ApiKey)
             && auth
                 .openai_api_key
                 .as_ref()
                 .is_some_and(|key| !key.trim().is_empty())
-    }) {
-        None
+    });
+    let api_key = if command.with_api_key {
+        let mut value = String::new();
+        std::io::stdin().read_to_string(&mut value)?;
+        Some(validate_key(&value)?)
     } else if interactive {
-        Some(read_hidden_key()?)
+        match read_hidden_key(has_saved_key || environment_key.is_some())? {
+            Some(key) => Some(key),
+            None if has_saved_key => None,
+            None => environment_key.as_deref().map(validate_key).transpose()?,
+        }
+    } else if let Some(key) = environment_key.as_deref() {
+        Some(validate_key(key)?)
+    } else if has_saved_key {
+        None
     } else {
         bail!("Run `lemex setup` in a terminal, or pipe a key to `lemex setup --with-api-key`.");
     };
@@ -138,18 +134,51 @@ pub(crate) async fn run(command: SetupCommand) -> anyhow::Result<()> {
         edits = edits.set_model(Some(model), None);
     }
     edits.apply().await?;
-    if let Some(api_key) = api_key {
+    if let Some(api_key) = api_key.as_deref() {
         login_with_api_key(
             &home,
-            &api_key,
+            api_key,
             existing_config.cli_auth_credentials_store_mode,
             existing_config.auth_keyring_backend_kind(),
         )
         .context("Could not save the API key")?;
     }
+    let selected_api_key = api_key
+        .as_deref()
+        .or_else(|| {
+            stored
+                .as_ref()
+                .filter(|_| has_saved_key)
+                .and_then(|auth| auth.openai_api_key.as_deref())
+        })
+        .context("No API key is available after setup")?;
     eprintln!("API setup saved. Run `lemex` to start, or `lemex doctor` to check your setup.");
     if std::env::var(LEMEX_BASE_URL_ENV_VAR).is_ok_and(|value| !value.trim().is_empty()) {
         eprintln!("LEMEX_BASE_URL overrides the saved URL while it is set.");
+    }
+    if environment_key
+        .as_deref()
+        .is_some_and(|key| key != selected_api_key)
+    {
+        let clear_command = if cfg!(windows) {
+            "Remove-Item Env:LEMEX_API_KEY"
+        } else {
+            "unset LEMEX_API_KEY"
+        };
+        eprintln!(
+            "A different LEMEX_API_KEY overrides the saved key in this terminal. Run `{clear_command}` before starting Lemex."
+        );
+        eprintln!("Setup will use the saved key for model selection below.");
+    }
+    if interactive && command.model.is_none() {
+        if let Err(error) =
+            crate::models::select_interactively(&command.config_overrides, selected_api_key).await
+        {
+            eprintln!("Model selection could not complete: {error}");
+            eprintln!(
+                "Your API setup is saved. Run `lemex models` or `lemex model` to choose a model."
+            );
+        }
     }
     Ok(())
 }
@@ -190,13 +219,18 @@ fn validate_url(value: &str) -> anyhow::Result<String> {
 
 fn validate_key(value: &str) -> anyhow::Result<String> {
     let key = value.trim();
+    if key.starts_with("http://") || key.starts_with("https://") {
+        bail!(
+            "This looks like an API URL. Set the endpoint with --base-url and enter your API key at the hidden key prompt."
+        );
+    }
     if key.is_empty() || key.chars().any(char::is_whitespace) || key.chars().any(char::is_control) {
         bail!("Provide one non-empty API key.");
     }
     Ok(key.to_string())
 }
 
-fn read_hidden_key() -> anyhow::Result<String> {
+fn read_hidden_key(can_keep_key: bool) -> anyhow::Result<Option<String>> {
     struct TerminalGuard;
     impl Drop for TerminalGuard {
         fn drop(&mut self) {
@@ -207,13 +241,18 @@ fn read_hidden_key() -> anyhow::Result<String> {
     crossterm::terminal::enable_raw_mode()?;
     let guard = TerminalGuard;
     crossterm::execute!(std::io::stderr(), crossterm::event::EnableBracketedPaste)?;
-    eprint!("API key (hidden): ");
+    if can_keep_key {
+        eprint!("API key (hidden; Enter keeps the existing key): ");
+    } else {
+        eprint!("API key (hidden): ");
+    }
     std::io::stderr().flush()?;
     let mut value = String::new();
     let result = loop {
         match crossterm::event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                KeyCode::Enter => break validate_key(&value),
+                KeyCode::Enter if can_keep_key && value.trim().is_empty() => break Ok(None),
+                KeyCode::Enter => break validate_key(&value).map(Some),
                 KeyCode::Esc => break Err(anyhow::anyhow!("Setup cancelled.")),
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     break Err(anyhow::anyhow!("Setup cancelled."));
@@ -268,7 +307,14 @@ mod tests {
     #[test]
     fn rejects_empty_or_multiple_keys() {
         assert_eq!(validate_key("test-key\n").unwrap(), "test-key");
-        for key in ["", " \n", "key one", "one\ntwo", "key\0"] {
+        for key in [
+            "",
+            " \n",
+            "key one",
+            "one\ntwo",
+            "key\0",
+            "https://example.com/v1",
+        ] {
             assert!(validate_key(key).is_err());
         }
     }

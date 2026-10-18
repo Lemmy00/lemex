@@ -63,11 +63,14 @@ pub(crate) fn identity(
         ) && auth.get_account_id().is_some()
             && (auth.get_chatgpt_user_id().is_some() || auth.get_account_email().is_some())
     });
-    let explicit_bearer =
-        provider_info.api_key()?.is_some() || provider_info.experimental_bearer_token.is_some();
     // Command auth also returns opaque API keys. A changed key may belong to a
     // different account, so only credentials with stable owner metadata can be reused.
-    if !has_stable_account || explicit_bearer {
+    // Resolve API-key credentials through the shared auth path, which also accepts
+    // the saved RCP key when its environment variable is absent.
+    if !has_stable_account
+        || provider_info.api_key()?.is_some()
+        || provider_info.experimental_bearer_token.is_some()
+    {
         let headers = resolve_provider_auth(auth, provider_info)?.to_auth_headers();
         api_provider.headers.extend(headers);
     }

@@ -71,14 +71,31 @@ impl App {
     pub(super) async fn persist_model_defaults(
         &mut self,
         request_handle: AppServerRequestHandle,
-        edits: Vec<ConfigEdit>,
+        mut edits: Vec<ConfigEdit>,
         setting: &str,
     ) -> Result<()> {
+        let mut saved_models = self.config.model_picker_models.clone();
+        if let Some(models) = saved_models.as_mut()
+            && let Some(model) = edits
+                .iter()
+                .find(|edit| edit.key_path == "model")
+                .and_then(|edit| edit.value.as_str())
+            && !models.iter().any(|id| id == model)
+        {
+            models.push(model.to_string());
+            edits.push(crate::config_update::replace_config_value(
+                "model_picker_models",
+                serde_json::json!(models),
+            ));
+        }
         let response = crate::config_update::write_config_batch(request_handle, edits).await?;
         if response.status == WriteStatus::OkOverridden {
             self.chat_widget.add_warning_message(format!(
                 "Saved {setting}, but a higher-priority configuration layer overrides the saved value."
             ));
+        } else if let Some(models) = saved_models {
+            self.config.model_picker_models = Some(models.clone());
+            self.chat_widget.set_model_picker_models(models);
         }
         Ok(())
     }

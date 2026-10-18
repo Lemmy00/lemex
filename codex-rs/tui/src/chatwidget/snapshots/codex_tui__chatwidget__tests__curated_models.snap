@@ -1,0 +1,17 @@
+---
+source: tui/src/chatwidget/tests/model_picker_tests.rs
+expression: popup
+---
+  Your models
+  Select a model, then choose its reasoning level.
+
+
+› 1. DeepSeek V4.1 Flash 1017 (current)  Available · max
+  2. DeepSeek V4.1 Flash                 Available · high
+  3. Qwen 3.8 Flash Next                 Available · medium
+  4. Qwen 3.8 27B                        Available · medium
+  5. GLM 5.3 Flash                       Available · max
+     Leanstral 2603                      Not listed for this key
+  6. Add model…                          Search models available to your key
+
+  enter select · esc back

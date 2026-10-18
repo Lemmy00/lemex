@@ -45,7 +45,9 @@ Outside a Git repository, add `--skip-git-repo-check`.
 
 ## Customize
 
-Edit `~/.lemex/config.toml` to change the default model, provider, context limits, reasoning display, or MCP servers. The installed `models.json` contains the model catalog; use `/model` in Lemex to choose a model, or `lemex -m "<model-id>"` for one launch.
+Edit `~/.lemex/config.toml` to change the default model, provider, context limits, reasoning display, or MCP servers. Lemex refreshes RCP's model list; the installed `models.json` supplies metadata and an offline fallback. Use `/model` in Lemex to choose a model, or `lemex -m "<model-id>"` for one launch.
+
+The default `/model` picker shows the six curated models and their availability. Choose **Add model…** to search models available to your key and add one to the saved list. In the terminal, use `lemex models --search QUERY`, `lemex models add MODEL_ID`, and `lemex model`. See [model selection](docs/authentication.md#model-selection) for reasoning settings and list management.
 
 Optional environment variables:
 

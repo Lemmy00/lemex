@@ -7764,6 +7764,13 @@
       ],
       "description": "Optional path to a file containing model instructions that will override the built-in instructions for the selected model. Users are STRONGLY DISCOURAGED from using this field, as deviating from the instructions sanctioned by Codex will likely degrade model performance."
     },
+    "model_picker_models": {
+      "description": "Saved model IDs shown in the main picker. RCP defaults to the bundled curated list. Other models available to the API key can be searched and added separately.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "model_post_turn_compact_threshold_percent": {
       "description": "Percentage of the usable context window that triggers compaction after a final response. Existing auto-compaction limits still apply. Omitted or zero disables turn-end compaction; valid values are 0–100.",
       "format": "uint8",

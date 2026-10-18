@@ -102,6 +102,36 @@ fn setup_saves_key_and_rcp_defaults_without_exposing_secret() -> Result<()> {
 }
 
 #[test]
+fn setup_preserves_replacement_key_and_explains_a_different_environment_key() -> Result<()> {
+    let home = TempDir::new()?;
+    let output = command(home.path())?
+        .env("LEMEX_API_KEY", "old-environment-secret")
+        .args(["setup", "--with-api-key"])
+        .write_stdin("replacement-secret\n")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("different LEMEX_API_KEY"));
+    assert!(stderr.contains(if cfg!(windows) {
+        "Remove-Item Env:LEMEX_API_KEY"
+    } else {
+        "unset LEMEX_API_KEY"
+    }));
+    let config = std::fs::read_to_string(home.path().join("config.toml"))?;
+    for secret in ["old-environment-secret", "replacement-secret"] {
+        assert!(!stderr.contains(secret));
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(secret));
+        assert!(!config.contains(secret));
+    }
+    let auth: Value =
+        serde_json::from_str(&std::fs::read_to_string(home.path().join("auth.json"))?)?;
+    assert_eq!(auth["LEMEX_API_KEY"], "replacement-secret");
+    Ok(())
+}
+
+#[test]
 fn setup_updates_url_and_preserves_key_and_other_settings() -> Result<()> {
     let home = TempDir::new()?;
     std::fs::write(
@@ -159,6 +189,174 @@ fn invalid_inputs_do_not_create_config_or_credentials() -> Result<()> {
         assert!(!home.path().join("config.toml").exists());
         assert!(!home.path().join("auth.json").exists());
     }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn model_commands_use_live_ids_and_validate_each_models_reasoning() -> Result<()> {
+    let server = MockServer::start().await;
+    let home = TempDir::new()?;
+    command(home.path())?
+        .args([
+            "setup",
+            "--with-api-key",
+            "--base-url",
+            &format!("{}/v1", server.uri()),
+        ])
+        .write_stdin("model-selection-secret\n")
+        .assert()
+        .success();
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(header("authorization", "Bearer model-selection-secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data":[
+            {"id":"deepseek-ai/DeepSeek-V4.1-Flash-1017"}, {"id":"Qwen/Qwen3.5-397B-A17B"},
+            {"id":"Qwen/Qwen3-Embedding-8B"}
+        ]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/model/info"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data":[
+            {"model_name":"Qwen/Qwen3-Embedding-8B","model_info":{"mode":"embedding"}}
+        ]})))
+        .mount(&server)
+        .await;
+    let output = command(home.path())?
+        .args(["models", "--all", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("model-selection-secret"));
+    let listing: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(listing["source"], "live");
+    assert_eq!(listing["models"].as_array().unwrap().len(), 2);
+    let saved_listing = command(home.path())?
+        .args(["models", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let saved_listing: Value = serde_json::from_slice(&saved_listing)?;
+    assert_eq!(saved_listing["models"].as_array().unwrap().len(), 6);
+    assert!(
+        saved_listing["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|model| model["added"] == true)
+    );
+    assert!(
+        saved_listing["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["available"] == false)
+    );
+    assert!(
+        !saved_listing["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["id"] == "Qwen/Qwen3.5-397B-A17B")
+    );
+    let search = command(home.path())?
+        .args(["models", "--search", "QWEN3.5", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let search: Value = serde_json::from_slice(&search)?;
+    assert_eq!(search["models"].as_array().unwrap().len(), 1);
+    assert_eq!(search["models"][0]["added"], false);
+    let before_add: toml::Value =
+        toml::from_str(&std::fs::read_to_string(home.path().join("config.toml"))?)?;
+    for _ in 0..2 {
+        command(home.path())?
+            .args(["models", "add", "Qwen/Qwen3.5-397B-A17B"])
+            .assert()
+            .success();
+    }
+    let after_add: toml::Value =
+        toml::from_str(&std::fs::read_to_string(home.path().join("config.toml"))?)?;
+    assert_eq!(after_add["model"], before_add["model"]);
+    assert_eq!(
+        after_add["model_picker_models"].as_array().unwrap().len(),
+        7
+    );
+    command(home.path())?
+        .args(["models", "remove", "Qwen/Qwen3.5-397B-A17B"])
+        .assert()
+        .success();
+    command(home.path())?
+        .args(["models", "reset"])
+        .assert()
+        .success();
+    let deepseek = listing["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["id"] == "deepseek-ai/DeepSeek-V4.1-Flash-1017")
+        .unwrap();
+    assert_eq!(deepseek["default_reasoning_effort"], "max");
+    assert_eq!(
+        deepseek["reasoning_efforts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["effort"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["none", "low", "high", "xhigh", "max"]
+    );
+    let before = std::fs::read(home.path().join("config.toml"))?;
+    command(home.path())?
+        .args([
+            "model",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            "--reasoning",
+            "medium",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("is not supported"));
+    assert_eq!(std::fs::read(home.path().join("config.toml"))?, before);
+    command(home.path())?
+        .args(["model", "removed/model", "--reasoning", "high"])
+        .assert()
+        .failure()
+        .stderr(contains("not listed"));
+    command(home.path())?
+        .args([
+            "model",
+            "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            "--reasoning",
+            "max",
+        ])
+        .assert()
+        .success();
+    let config: toml::Value =
+        toml::from_str(&std::fs::read_to_string(home.path().join("config.toml"))?)?;
+    assert_eq!(config["model_reasoning_effort"].as_str(), Some("max"));
+    command(home.path())?
+        .args(["model", "Qwen/Qwen3.5-397B-A17B"])
+        .assert()
+        .success();
+    let config: toml::Value =
+        toml::from_str(&std::fs::read_to_string(home.path().join("config.toml"))?)?;
+    assert_eq!(config["model"].as_str(), Some("Qwen/Qwen3.5-397B-A17B"));
+    assert!(config.get("model_reasoning_effort").is_none());
+    assert_eq!(
+        config["model_picker_models"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .as_str(),
+        Some("Qwen/Qwen3.5-397B-A17B")
+    );
     Ok(())
 }
 
