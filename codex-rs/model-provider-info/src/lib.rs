@@ -445,6 +445,8 @@ other non-default provider fields are not supported"
             )
         ) {
             CHATGPT_CODEX_BASE_URL
+        } else if self.is_openai() {
+            "https://api.openai.com/v1"
         } else {
             DEFAULT_LEMEX_BASE_URL
         };
@@ -662,6 +664,25 @@ other non-default provider fields are not supported"
 
     pub fn is_rcp(&self) -> bool {
         self.name == RCP_PROVIDER_NAME
+    }
+
+    /// Whether API-key credentials are configured, including non-bearer headers.
+    pub fn has_api_key_configuration(&self) -> bool {
+        let key_header = |name: &str| {
+            name.eq_ignore_ascii_case("authorization")
+                || name.eq_ignore_ascii_case("api-key")
+                || name.eq_ignore_ascii_case("x-api-key")
+        };
+        self.env_key.is_some()
+            || self.experimental_bearer_token.is_some()
+            || self
+                .http_headers
+                .as_ref()
+                .is_some_and(|headers| headers.keys().any(|name| key_header(name)))
+            || self
+                .env_http_headers
+                .as_ref()
+                .is_some_and(|headers| headers.keys().any(|name| key_header(name)))
     }
 
     pub fn supports_codex_backend_routes(&self) -> bool {

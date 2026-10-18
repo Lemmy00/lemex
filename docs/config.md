@@ -66,7 +66,7 @@ For another provider that supports the Responses API, replace the provider selec
 # Top-level settings, before any tables.
 model_provider = "custom"
 model = "your-model-id"
-model_catalog_json = "models.json"
+model_picker_models = [] # Start with an empty shortlist.
 
 [model_providers.custom]
 name = "My provider"
@@ -76,15 +76,42 @@ wire_api = "responses"
 requires_openai_auth = false
 ```
 
-Set `MY_PROVIDER_API_KEY` in your environment and adapt `models.json` to match the new provider.
+Set `MY_PROVIDER_API_KEY` in your environment, then run `lemex models --all`.
+Lemex discovers models from the selected provider's authenticated `/models`
+endpoint. Both standard `data` lists and rich Lemex catalogs are accepted;
+a local `models.json` is optional. Existing local metadata is an offline fallback,
+and a successful live list determines which models are currently listed.
+
+Discovery excludes deployments explicitly advertised as incompatible with text,
+Responses, or tool calling. An ID-only listing remains a candidate: it does not
+verify inference access, deployment health, or tool calling. A provider offering
+only Chat Completions still needs a gateway that implements Responses for inference.
 
 ## Model catalog and tools
 
-To add a model, copy a suitable entry in `models.json` and update its `slug`, display name, reasoning levels, context limits, and capabilities to match the deployment. The default `model` must match a catalog entry. Lemex limits `model_context_window` to the catalog's `max_context_window`.
+For an online provider, use discovery and shortlist controls without editing a
+catalog. An optional local `models.json` supplies offline metadata; its entries
+can specify names, context limits, reasoning levels, and capabilities. Lemex
+limits `model_context_window` to an advertised `max_context_window`.
 
 Use `lemex models` for the saved list and current availability. `lemex models --all` browses everything available to your key, and `lemex models --search QUERY` searches names and IDs. Add an entry with `lemex models add MODEL_ID`, or choose **Add model…** in `/model` to search and add interactively. The default saved list contains only the six curated models below; `lemex models reset` restores it. The bundled catalog supplies verified reasoning profiles and an offline fallback.
 
+`lemex models shortlist` edits the shortlist interactively. Pass model IDs to
+replace it in one step (`lemex models shortlist MODEL_A MODEL_B`), or use
+`lemex models shortlist --clear` to empty it. Shortlist edits do not change the
+current session, default model, or reasoning preference. In `/model`, **Add
+model…** opens the same independent add/remove flow; return to **Your models**
+to select a default and its reasoning. Custom providers initially shortlist only
+the configured default, rather than every discovered model.
+
 `lemex model MODEL --reasoning EFFORT` validates the model and its effort before saving and adds it to the list. Omitting `--reasoning` clears the previous model's override. `lemex model` opens the saved-list and search flow in the terminal.
+
+Live, explicitly advertised reasoning values take priority. The verified bundled
+profiles below are used for the RCP provider only. Other providers do not inherit
+RCP effort values just because a model ID matches. A generic reasoning capability
+flag does not establish which effort strings work: unknown settings use the
+deployment default and omit an explicit effort. Lemex also omits an unadvertised
+effort left in configuration when sending a request to a third-party provider.
 
 The bundled RCP catalog was checked on 2026-10-18:
 

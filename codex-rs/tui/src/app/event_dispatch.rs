@@ -2420,6 +2420,11 @@ impl App {
                     let _ = (preset, mode, profile_selection);
                 }
             }
+            AppEvent::ToggleModelShortlist { model } => {
+                if let Err(error) = self.toggle_model_shortlist(app_server.request_handle(), model).await {
+                    self.chat_widget.add_error_message(format!("Failed to save shortlist: {}", format_config_error(&error)));
+                }
+            }
             AppEvent::PersistModelSelection { model, effort } => {
                 self.app_event_tx.send(AppEvent::FollowTranscript);
                 match self.persist_model_defaults(

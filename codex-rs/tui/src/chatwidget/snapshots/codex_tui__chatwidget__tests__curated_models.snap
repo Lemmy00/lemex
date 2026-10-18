@@ -6,12 +6,12 @@ expression: popup
   Select a model, then choose its reasoning level.
 
 
-› 1. DeepSeek V4.1 Flash 1017 (current)  Available · max
-  2. DeepSeek V4.1 Flash                 Available · high
-  3. Qwen 3.8 Flash Next                 Available · medium
-  4. Qwen 3.8 27B                        Available · medium
-  5. GLM 5.3 Flash                       Available · max
+› 1. DeepSeek V4.1 Flash 1017 (current)  Listed · max
+  2. DeepSeek V4.1 Flash                 Listed · high
+  3. Qwen 3.8 Flash Next                 Listed · medium
+  4. Qwen 3.8 27B                        Listed · medium
+  5. GLM 5.3 Flash                       Listed · max
      Leanstral 2603                      Not listed for this key
-  6. Add model…                          Search models available to your key
+  6. Add model…                          Search and edit your shortlist
 
   enter select · esc back

@@ -4132,13 +4132,23 @@ impl Config {
         let check_for_update_on_startup = cfg.check_for_update_on_startup.unwrap_or(true);
         let model_catalog = load_model_catalog(cfg.model_catalog_json.clone())?;
         let model_picker_models = cfg.model_picker_models.clone().or_else(|| {
-            model_provider.is_rcp().then(|| {
-                codex_model_provider::bundled_rcp_model_catalog()
-                    .models
-                    .into_iter()
-                    .map(|model| model.slug)
-                    .collect()
-            })
+            if model_provider.is_rcp() {
+                Some(
+                    codex_model_provider::bundled_rcp_model_catalog()
+                        .models
+                        .into_iter()
+                        .map(|model| model.slug)
+                        .collect(),
+                )
+            } else if !model_provider.is_openai()
+                && !model_provider.is_amazon_bedrock()
+                && !model_provider.is_amazon_bedrock_runtime()
+                && model_provider.base_url.is_some()
+            {
+                Some(model.iter().cloned().collect())
+            } else {
+                None
+            }
         });
 
         let log_dir = cfg

@@ -35,7 +35,7 @@ async fn curated_models_show_only_saved_models_and_key_availability() {
 }
 
 #[tokio::test]
-async fn model_discovery_search_survives_refresh_and_selects_the_matching_model() {
+async fn model_discovery_search_survives_refresh_and_shortlists_without_switching_model() {
     let (mut chat, mut events, _ops) = make_chatwidget_manual(None).await;
     let models = codex_model_provider::bundled_rcp_model_catalog().models;
     chat.config.model_picker_models = Some(models.iter().map(|model| model.slug.clone()).collect());
@@ -70,15 +70,10 @@ async fn model_discovery_search_survives_refresh_and_selects_the_matching_model(
     assert!(!refreshed.contains("DeepSeek V4.1 Flash"));
     assert_chatwidget_snapshot!("model_discovery_search", refreshed);
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-    let preset = match events.try_recv().unwrap() {
-        AppEvent::OpenReasoningPopup { model } => model,
-        event => panic!("expected matching model, got {event:?}"),
-    };
-    assert_eq!(preset.model, "provider/extra-model");
-    chat.open_reasoning_popup(preset);
-    assert_matches!(events.try_recv(), Ok(AppEvent::UpdateModel(model)) if model == "provider/extra-model");
-    assert_matches!(events.try_recv(), Ok(AppEvent::UpdateReasoningEffort(None)));
-    assert_matches!(events.try_recv(), Ok(AppEvent::PersistModelSelection { model, effort: None }) if model == "provider/extra-model");
+    assert_matches!(events.try_recv(), Ok(AppEvent::ToggleModelShortlist { model }) if model == "provider/extra-model");
+    assert!(events.try_recv().is_err());
+    assert_ne!(chat.current_model(), "provider/extra-model");
+    assert!(render_bottom_popup(&chat, 100).contains("Extra search model"));
 }
 
 #[tokio::test]

@@ -2,8 +2,8 @@
 source: tui/src/chatwidget/tests/model_picker_tests.rs
 expression: refreshed
 ---
-  Add a model
-  Search by model name or ID. Select to add and use it.
+  Edit shortlist
+  Select to add or remove. Your current model and default stay the same.
 
   EXTRA
 

@@ -1349,6 +1349,10 @@ pub(crate) enum AppEvent {
 
     /// Search the full model inventory available to the API key.
     OpenAddModelsPopup,
+    /// Change shortlist membership without selecting a model or changing its default.
+    ToggleModelShortlist {
+        model: String,
+    },
 
     /// Open the confirmation prompt before enabling full access mode.
     OpenFullAccessConfirmation {

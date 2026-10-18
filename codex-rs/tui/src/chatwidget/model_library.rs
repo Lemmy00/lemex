@@ -26,7 +26,11 @@ impl ChatWidget {
 
     pub(super) fn open_saved_models_popup(&mut self, available: Vec<ModelPreset>) {
         let saved = self.config.model_picker_models.clone().unwrap_or_default();
-        let bundled = bundled_rcp_model_catalog();
+        let bundled = if self.config.model_provider.is_rcp() {
+            bundled_rcp_model_catalog()
+        } else {
+            Default::default()
+        };
         let mut model_ids = Vec::new();
         let mut items = Vec::new();
         for id in saved {
@@ -58,7 +62,7 @@ impl ChatWidget {
             };
             let description = if listed.is_some() {
                 format!(
-                    "Available · {}",
+                    "Listed · {}",
                     effort
                         .as_ref()
                         .map_or("model default", ReasoningEffortConfig::as_str)
@@ -85,7 +89,7 @@ impl ChatWidget {
         }
         items.push(SelectionItem {
             name: "Add model…".to_string(),
-            description: Some("Search models available to your key".to_string()),
+            description: Some("Search and edit your shortlist".to_string()),
             actions: vec![Box::new(|tx| tx.send(AppEvent::OpenAddModelsPopup))],
             dismiss_on_select: true,
             ..Default::default()
@@ -113,7 +117,7 @@ impl ChatWidget {
         self.app_event_tx.send(AppEvent::FetchModels { request_id });
     }
 
-    pub(super) fn show_add_models_popup(&mut self) {
+    pub(crate) fn show_add_models_popup(&mut self) {
         let saved = self
             .config
             .model_picker_models
@@ -133,32 +137,26 @@ impl ChatWidget {
                     .collect::<Vec<_>>()
                     .join(", ")
             };
-            let direct = preset.supported_reasoning_efforts.len() <= 1
-                && !preset
-                    .supported_reasoning_efforts
-                    .iter()
-                    .any(|option| Self::is_advanced_reasoning_effort(&option.effort));
             let name = model_name(&preset);
             let search_value = format!("{name} {} {}", preset.display_name, preset.model);
-            let for_action = preset.clone();
+            let model_for_action = preset.model.clone();
             model_ids.push(preset.model.clone());
             items.push(SelectionItem {
                 name,
                 description: Some(if added {
-                    "Already added".to_string()
+                    "Shortlisted · select to remove".to_string()
                 } else {
-                    "Available to add".to_string()
+                    "Listed · select to shortlist".to_string()
                 }),
                 selected_description: Some(format!("{} · Reasoning: {efforts}", preset.model)),
                 search_value: Some(search_value),
                 is_current: self.current_model() == preset.model,
                 actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::OpenReasoningPopup {
-                        model: for_action.clone(),
+                    tx.send(AppEvent::ToggleModelShortlist {
+                        model: model_for_action.clone(),
                     })
                 })],
-                dismiss_on_select: direct,
-                dismiss_parent_on_child_accept: !direct,
+                dismiss_on_select: false,
                 ..Default::default()
             });
         }
@@ -167,8 +165,8 @@ impl ChatWidget {
             SelectionViewParams {
                 view_id: Some(ADD_MODELS_SELECTION_VIEW_ID),
                 header: self.model_menu_header(
-                    "Add a model",
-                    "Search by model name or ID. Select to add and use it.",
+                    "Edit shortlist",
+                    "Select to add or remove. Your current model and default stay the same.",
                 ),
                 items,
                 is_searchable: true,

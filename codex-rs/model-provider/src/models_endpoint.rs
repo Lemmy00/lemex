@@ -65,12 +65,7 @@ impl OpenAiModelsEndpoint {
         auth_manager: Option<Arc<AuthManager>>,
         gateway_auth_manager: Option<Result<Arc<GatewayAuthManager>, String>>,
     ) -> Self {
-        let redirect_policy = if provider_info.model_catalog_url.is_some() || provider_info.is_rcp()
-        {
-            ClientRedirectPolicy::Reject
-        } else {
-            ClientRedirectPolicy::Default
-        };
+        let redirect_policy = ClientRedirectPolicy::Reject;
         Self {
             provider_info,
             auth_manager,
@@ -143,7 +138,12 @@ impl OpenAiModelsEndpoint {
                 client_version,
             )
             .map_err(map_api_error)?,
-            None => ModelsClient::<ReqwestTransport>::request_url(&api_provider, client_version),
+            None if self.provider_info.supports_codex_backend_routes() => {
+                ModelsClient::<ReqwestTransport>::request_url(&api_provider, client_version)
+            }
+            // Generic provider APIs need only their own routing parameters.
+            // Strict APIs may reject the Codex-only client_version query.
+            None => api_provider.build_request(http::Method::GET, "models").url,
         };
         let auth_telemetry = auth_header_telemetry(api_auth.as_ref());
         let agent_identity_telemetry = if let Some(CodexAuth::AgentIdentity(auth)) = auth.as_ref() {
@@ -152,8 +152,7 @@ impl OpenAiModelsEndpoint {
             None
         };
         let request_telemetry: Arc<dyn RequestTelemetry> = Arc::new(ModelsRequestTelemetry {
-            include_response_debug: self.provider_info.model_catalog_url.is_none()
-                && !self.provider_info.is_rcp(),
+            include_response_debug: false,
             auth_mode: auth_mode.map(|mode| TelemetryAuthMode::from(mode).to_string()),
             auth_header_attached: auth_telemetry.attached,
             auth_header_name: auth_telemetry.name,
@@ -167,21 +166,21 @@ impl OpenAiModelsEndpoint {
                 .await?;
             let client = ModelsClient::new(transport, api_provider, api_auth)
                 .with_telemetry(Some(request_telemetry));
-            if self.provider_info.is_rcp() && self.provider_info.model_catalog_url.is_none() {
-                let (body, etag) = client
-                    .list_models_raw(
-                        request_url.clone(),
-                        HeaderMap::new(),
-                        Some(MAX_MODEL_CATALOG_BYTES),
-                    )
-                    .await
-                    .map_err(sanitized_catalog_error)?;
-                let mut metadata_url = url::Url::parse(&request_url).map_err(|_| {
-                    CodexErr::InvalidRequest("Invalid RCP model endpoint".to_string())
-                })?;
+            let (body, etag) = client
+                .list_models_raw(
+                    request_url.clone(),
+                    HeaderMap::new(),
+                    Some(MAX_MODEL_CATALOG_BYTES),
+                )
+                .await
+                .map_err(sanitized_catalog_error)?;
+            let rcp = self.provider_info.is_rcp() && self.provider_info.model_catalog_url.is_none();
+            let metadata = if rcp {
+                let mut metadata_url = url::Url::parse(&request_url)
+                    .map_err(|_| CodexErr::InvalidRequest("Invalid model endpoint".to_string()))?;
                 let prefix = metadata_url.path().trim_end_matches("/models").to_string();
                 metadata_url.set_path(&format!("{prefix}/model/info"));
-                let metadata = timeout(
+                timeout(
                     Duration::from_secs(1),
                     client.list_models_raw(
                         metadata_url.into(),
@@ -192,39 +191,25 @@ impl OpenAiModelsEndpoint {
                 .await
                 .ok()
                 .and_then(Result::ok)
-                .and_then(|(body, _)| serde_json::from_slice(&body).ok());
-                let fallback = self
-                    .rcp_catalog
-                    .clone()
-                    .unwrap_or_else(crate::rcp_models::bundled_catalog);
-                let models = crate::rcp_models::decode_catalog(&body, metadata.as_ref(), &fallback)
-                    .map_err(CodexErr::InvalidRequest)?;
-                return Ok((models, etag));
-            }
-            let response_body_limit_bytes = self
-                .provider_info
-                .model_catalog_url
-                .as_ref()
-                .map(|_| MAX_MODEL_CATALOG_BYTES);
-            client
-                .list_models(request_url, HeaderMap::new(), response_body_limit_bytes)
-                .await
-                .map_err(|mut error| {
-                    if self.provider_info.model_catalog_url.is_some()
-                        && let codex_api::ApiError::Transport(TransportError::Http {
-                            url,
-                            headers,
-                            body,
-                            ..
-                        }) = &mut error
-                    {
-                        // Provider diagnostics may echo URL credentials or other secrets.
-                        *url = None;
-                        *headers = None;
-                        *body = None;
-                    }
-                    map_api_error(error)
-                })
+                .and_then(|(body, _)| serde_json::from_slice(&body).ok())
+            } else {
+                None
+            };
+            let fallback = self.rcp_catalog.clone().unwrap_or_else(|| {
+                if rcp {
+                    crate::rcp_models::bundled_catalog()
+                } else {
+                    ModelsResponse::default()
+                }
+            });
+            let models = crate::rcp_models::decode_provider_catalog(
+                &body,
+                metadata.as_ref(),
+                &fallback,
+                rcp,
+            )
+            .map_err(CodexErr::InvalidRequest)?;
+            Ok::<_, CodexErr>((models, etag))
         })
         .await
         .map_err(|_| CodexErr::RequestTimeout)??;
@@ -257,14 +242,13 @@ impl OpenAiModelsEndpoint {
 
 impl ModelsEndpointClient for OpenAiModelsEndpoint {
     fn supports_api_key_models(&self) -> bool {
-        self.provider_info.is_rcp()
+        self.provider_info.base_url.is_some()
             || self.provider_info.model_catalog_url.is_some()
             || (self.provider_info.is_openai() && self.provider_info.base_url.is_none())
     }
 
     fn has_provider_api_key(&self) -> bool {
-        self.provider_info.env_key.is_some()
-            || self.provider_info.experimental_bearer_token.is_some()
+        self.provider_info.has_api_key_configuration()
     }
 
     fn identity(&self) -> Option<String> {
@@ -537,6 +521,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn custom_api_key_provider_refreshes_standard_models_over_a_local_seed() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", "Bearer custom-discovery-key"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": [
+                    {"id": "provider/chat", "supported_reasoning_efforts": ["low", "high"],
+                        "default_reasoning_effort": "high"}
+                ]})),
+            )
+            .expect(2)
+            .mount(&server)
+            .await;
+        let provider = crate::create_model_provider(
+            ModelProviderInfo {
+                name: "Custom provider".into(),
+                base_url: Some(format!("{}/v1", server.uri())),
+                experimental_bearer_token: Some("custom-discovery-key".into()),
+                ..Default::default()
+            },
+            None,
+        );
+        let manager = provider.models_manager_without_cache(Some(ModelsResponse {
+            models: vec![model_info_from_slug("stale/model")],
+        }));
+        let direct = crate::discover_model_catalog(
+            provider.info().clone(),
+            None,
+            None,
+            HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+        )
+        .await
+        .unwrap();
+        assert_eq!(direct.models[0].slug, "provider/chat");
+        manager.set_api_key_model_discovery_enabled(true);
+        let catalog = manager
+            .raw_model_catalog(
+                RefreshStrategy::Online,
+                HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            )
+            .await;
+        assert_eq!(catalog.models.len(), 1);
+        assert_eq!(catalog.models[0].slug, "provider/chat");
+        assert_eq!(
+            catalog.models[0]
+                .default_reasoning_level
+                .as_ref()
+                .unwrap()
+                .as_str(),
+            "high"
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .all(|request| request.url.path() == "/v1/models")
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .all(|request| request.url.query().is_none())
+        );
+        server.verify().await;
+        server.reset().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let empty = manager
+            .raw_model_catalog(
+                RefreshStrategy::Online,
+                HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            )
+            .await;
+        assert!(
+            empty.models.is_empty(),
+            "An empty live list must not restore stale offline models"
+        );
+        server.verify().await;
+    }
+
+    #[tokio::test]
     async fn rcp_discovery_errors_do_not_echo_credentials() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -667,13 +741,13 @@ mod tests {
             (
                 "OpenAI",
                 Some("https://example.com/codex"),
-                None,
+                Some("https://example.com/codex/models"),
                 "https://example.com/codex",
             ),
             (
                 "Azure",
                 Some("https://example.openai.azure.com/openai/v1"),
-                None,
+                Some("https://example.openai.azure.com/openai/v1/models"),
                 "https://example.openai.azure.com/openai/v1",
             ),
         ] {
@@ -699,7 +773,11 @@ mod tests {
                 .await;
             assert_eq!(
                 *capture.0.lock().unwrap(),
-                models_url.map(|url| format!("{url}?client_version={client_version}"))
+                models_url.map(|url| if base_url.is_none() {
+                    format!("{url}?client_version={client_version}")
+                } else {
+                    url.to_string()
+                })
             );
             assert_eq!(
                 endpoint
@@ -792,7 +870,6 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/models"))
-            .and(query_param("client_version", "0.0.0"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(ModelsResponse { models: Vec::new() }),
             )
@@ -825,7 +902,7 @@ mod tests {
                 .expect("observed request lock should not be poisoned"),
             Some((
                 OutboundProxyPolicy::RespectSystemProxy,
-                format!("{}/models?client_version=0.0.0", server.uri()),
+                format!("{}/models", server.uri()),
             ))
         );
     }

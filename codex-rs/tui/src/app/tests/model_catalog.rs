@@ -13,6 +13,45 @@ fn all_model_presets() -> Vec<ModelPreset> {
 }
 
 #[tokio::test]
+async fn editing_shortlist_preserves_session_model_and_saved_default() -> Result<()> {
+    let (mut app, _events, _ops) = Box::pin(make_test_app_with_channels()).await;
+    app.config.model_picker_models = Some(vec!["gpt-5.5".into()]);
+    app.chat_widget
+        .set_model_picker_models(vec!["gpt-5.5".into()]);
+    let current_model = app.chat_widget.current_model().to_string();
+    let current_effort = app
+        .chat_widget
+        .current_collaboration_mode()
+        .reasoning_effort();
+    let default_model = app.config.model.clone();
+    let server = Box::pin(start_config_write_test_app_server(&app)).await?;
+    let path = app.config.codex_home.join("config.toml");
+    let before: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap_or_default())?;
+    Box::pin(app.toggle_model_shortlist(server.request_handle(), "provider/new-model".into()))
+        .await?;
+    assert_eq!(app.config.model_picker_models.as_ref().unwrap().len(), 2);
+    assert_eq!(app.chat_widget.current_model(), current_model);
+    assert_eq!(
+        app.chat_widget
+            .current_collaboration_mode()
+            .reasoning_effort(),
+        current_effort
+    );
+    assert_eq!(app.config.model, default_model);
+    let after: toml::Value = toml::from_str(&std::fs::read_to_string(&path)?)?;
+    assert_eq!(after.get("model"), before.get("model"));
+    assert_eq!(
+        after.get("model_reasoning_effort"),
+        before.get("model_reasoning_effort")
+    );
+    Box::pin(app.toggle_model_shortlist(server.request_handle(), "provider/new-model".into()))
+        .await?;
+    assert_eq!(app.config.model_picker_models, Some(vec!["gpt-5.5".into()]));
+    server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn selecting_discovered_model_persists_it_in_the_saved_list_once() -> Result<()> {
     let (mut app, _events, _ops) = Box::pin(make_test_app_with_channels()).await;
     app.config.model_picker_models = Some(vec!["gpt-5.5".to_string()]);

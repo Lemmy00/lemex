@@ -391,6 +391,10 @@ impl ConfiguredModelProvider {
         cache: ModelsCacheConfig,
     ) -> SharedModelsManager {
         if !self.info.is_rcp()
+            && self.info.model_catalog_url.is_none()
+            && !self.info.has_api_key_configuration()
+            && !self.info.requires_openai_auth
+            && !self.info.has_command_auth()
             && let Some(model_catalog) = config_model_catalog.clone()
         {
             return Arc::new(StaticModelsManager::new(
@@ -418,7 +422,9 @@ impl ConfiguredModelProvider {
                 OpenAiModelsManager::new_with_cache(cache, endpoint, auth_manager)
             }
         };
-        if self.info.is_rcp() && self.info.model_catalog_url.is_none() {
+        if self.info.model_catalog_url.is_none()
+            && (self.info.is_rcp() || config_model_catalog.is_some())
+        {
             return Arc::new(manager.with_fallback_catalog(
                 config_model_catalog.unwrap_or_else(crate::rcp_models::bundled_catalog),
             ));

@@ -31,7 +31,7 @@ lemex setup
 lemex
 ```
 
-Setup shows the RCP endpoint (`https://inference.rcp.epfl.ch/v1`), asks for a hidden API key, then lets you choose a model and its supported reasoning level. Run it again to replace the key; Enter keeps the saved key. Keys stay in the credential store, outside `config.toml`; no OpenAI or ChatGPT login is needed.
+Setup asks for a hidden API key, discovers models, and lets you choose a shortlist, default model, and supported reasoning level. RCP (`https://inference.rcp.epfl.ch/v1`) is the default; you can use another Responses-compatible provider. Run setup again to replace the key; Enter keeps the saved key. Keys stay in the credential store, outside `config.toml`.
 
 For scripts, `LEMEX_API_KEY` overrides the saved key. After replacing a key, run `unset LEMEX_API_KEY` if your terminal still exports an old one. Change the endpoint with `lemex setup --base-url "https://api.example.com/v1"`.
 
@@ -45,36 +45,38 @@ Outside a Git repository, add `--skip-git-repo-check`.
 
 ## Models
 
-The `/model` picker starts with six curated models and shows availability for your key. To add another:
+Lemex discovers model candidates using your provider's API key. Reasoning choices follow the provider's advertised settings or verified RCP profiles; when unknown, Lemex uses the provider default.
+
+The `/model` picker shows your shortlist and availability. RCP starts with six curated models; custom providers start with the configured default. To customize it:
 
 1. Open `/model` and choose **Add model…**.
-2. Search by model name or ID.
-3. Select a result and choose its supported reasoning level. Lemex saves the model to your list and switches to it.
+2. Search by name or ID and select results to add or remove them without switching models.
+3. Press Esc to return to your shortlist, then choose your default model and reasoning.
 
 <details>
 <summary>See the model picker and search</summary>
 
-![Saved-model picker showing the six defaults, availability, and Add model option](docs/images/model-picker.png)
+![Model picker showing saved models, availability, and Add model option](docs/images/model-picker.png)
 
-![Searching Qwen 3.8 models, with an additional FP8 model and its supported reasoning levels selected](docs/images/add-model-search.png)
+![Search results for Qwen 3.8 models](docs/images/add-model-search.png)
 
 Available models depend on your API key.
 
 </details>
 
-Or use the terminal, replacing `MODEL_ID` with an exact ID from the search results:
+Or use the terminal:
 
 ```sh
 lemex models --search qwen
-lemex models add MODEL_ID   # Save without switching
-lemex model                # Choose a model and reasoning
+lemex models shortlist     # Edit your shortlist without switching
+lemex model                # Save a default model and reasoning
 ```
 
 See [model selection](docs/authentication.md#model-selection) for reasoning settings and removing or resetting saved models.
 
 ## Customize
 
-Edit `~/.lemex/config.toml` to change the default model, provider, context limits, reasoning display, or MCP servers. Lemex refreshes RCP's model list; the installed `models.json` supplies metadata and an offline fallback. Use `lemex -m "<model-id>"` for one launch.
+Edit `~/.lemex/config.toml` to change the provider, context limits, reasoning display, or MCP servers. An optional `models.json` supplies offline metadata. Use `lemex -m "<model-id>"` for one launch.
 
 Optional environment variables:
 

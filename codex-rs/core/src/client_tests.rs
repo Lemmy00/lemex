@@ -1237,7 +1237,9 @@ fn reasoning_effort_in_request(
     session_source: SessionSource,
     effort: ReasoningEffort,
 ) -> ReasoningEffort {
-    let client = test_model_client(session_source);
+    let mut client = test_model_client(session_source);
+    Arc::get_mut(&mut client.state).unwrap().provider =
+        create_model_provider(ModelProviderInfo::create_openai_provider(None), None);
     client
         .build_responses_request(
             &Prompt::default(),
@@ -1259,6 +1261,44 @@ fn reasoning_effort_in_request(
         .expect("request should include reasoning")
         .effort
         .expect("request should include reasoning effort")
+}
+
+#[test]
+fn custom_provider_omits_unadvertised_reasoning_and_preserves_supported_efforts() {
+    let client = test_model_client(SessionSource::Cli);
+    let mut model = test_model_info();
+    model.default_reasoning_level = None;
+    model.supported_reasoning_levels.clear();
+    let summary = codex_protocol::config_types::ReasoningSummary::None;
+    assert_eq!(
+        client
+            .build_reasoning(&model, Some(ReasoningEffort::Max), summary)
+            .effort,
+        None
+    );
+    model
+        .supported_reasoning_levels
+        .push(ReasoningEffortPreset {
+            effort: ReasoningEffort::High,
+            description: "Advertised by provider".into(),
+        });
+    model.default_reasoning_level = Some(ReasoningEffort::High);
+    assert_eq!(
+        client
+            .build_reasoning(&model, Some(ReasoningEffort::Max), summary)
+            .effort,
+        None
+    );
+    assert_eq!(
+        client
+            .build_reasoning(&model, Some(ReasoningEffort::High), summary)
+            .effort,
+        Some(ReasoningEffort::High)
+    );
+    assert_eq!(
+        client.build_reasoning(&model, None, summary).effort,
+        Some(ReasoningEffort::High)
+    );
 }
 
 #[test]

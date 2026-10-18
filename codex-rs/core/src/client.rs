@@ -925,10 +925,25 @@ impl ModelClient {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
     ) -> Reasoning {
+        let effort = effort
+            .or_else(|| model_info.default_reasoning_level.clone())
+            .map(|effort| model_info.resolve_reasoning_effort(effort));
+        let effort = if self.state.provider.info().is_openai() {
+            effort
+        } else {
+            effort.filter(|effort| {
+                let supported = model_info.supported_reasoning_levels
+                    .iter()
+                    .any(|option| &option.effort == effort);
+                if !supported {
+                    warn!(model = %model_info.slug, effort = %effort,
+                        "Reasoning effort is not advertised for this deployment; using its default");
+                }
+                supported
+            })
+        };
         Reasoning {
-            effort: effort
-                .or_else(|| model_info.default_reasoning_level.clone())
-                .map(|effort| model_info.resolve_reasoning_effort(effort)),
+            effort,
             summary: (model_info.supports_reasoning_summary_parameter
                 && summary != ReasoningSummaryConfig::None)
                 .then_some(summary),

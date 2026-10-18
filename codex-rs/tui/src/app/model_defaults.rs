@@ -13,6 +13,38 @@ use codex_protocol::openai_models::ReasoningEffort;
 use color_eyre::eyre::Result;
 
 impl App {
+    pub(super) async fn toggle_model_shortlist(
+        &mut self,
+        request_handle: AppServerRequestHandle,
+        model: String,
+    ) -> Result<()> {
+        let mut models = self.config.model_picker_models.clone().unwrap_or_default();
+        if models.contains(&model) {
+            models.retain(|id| id != &model);
+        } else {
+            models.push(model);
+        }
+        let response = crate::config_update::write_config_batch(
+            request_handle,
+            vec![crate::config_update::replace_config_value(
+                "model_picker_models",
+                serde_json::json!(&models),
+            )],
+        )
+        .await?;
+        if response.status == WriteStatus::OkOverridden {
+            self.chat_widget.add_warning_message(
+                "Saved shortlist, but a higher-priority configuration layer overrides it."
+                    .to_string(),
+            );
+        } else {
+            self.config.model_picker_models = Some(models.clone());
+            self.chat_widget.set_model_picker_models(models);
+        }
+        self.chat_widget.show_add_models_popup();
+        Ok(())
+    }
+
     pub(super) async fn select_session_model(
         &mut self,
         app_server: &mut AppServerSession,

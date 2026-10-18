@@ -696,12 +696,14 @@ impl OpenAiModelsManager {
         if entry.identity != self.endpoint_client.identity() {
             return false;
         }
-        let remote_only = entry
-            .models
-            .iter()
-            .any(|model| model.visibility == ModelVisibility::List)
-            && (self.supports_api_key_discovery()
-                || self.auth_manager.as_ref().is_some_and(|auth_manager| {
+        // A successful API-key listing is authoritative, including an empty
+        // list. Reintroducing offline models would invent access for this key.
+        let remote_only = self.supports_api_key_discovery()
+            || (entry
+                .models
+                .iter()
+                .any(|model| model.visibility == ModelVisibility::List)
+                && self.auth_manager.as_ref().is_some_and(|auth_manager| {
                     auth_manager
                         .auth_mode()
                         .is_some_and(AuthMode::has_chatgpt_account)

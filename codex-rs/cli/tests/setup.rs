@@ -361,6 +361,166 @@ async fn model_commands_use_live_ids_and_validate_each_models_reasoning() -> Res
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn custom_provider_discovery_shortlist_and_default_use_live_model_capabilities() -> Result<()>
+{
+    let server = MockServer::start().await;
+    let home = TempDir::new()?;
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+model_provider = "custom"
+model = "provider/chat-a"
+model_reasoning_effort = "max"
+model_catalog_json = "models.json"
+[model_providers.custom]
+name = "Custom provider"
+base_url = "{}/v1"
+env_key = "LEMEX_TEST_CUSTOM_PROVIDER_KEY"
+wire_api = "responses"
+"#,
+            server.uri()
+        ),
+    )?;
+    std::fs::write(
+        home.path().join("models.json"),
+        include_str!("../../../config/models.json"),
+    )?;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(header("authorization", "Bearer custom-model-secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [
+            {"id": "provider/chat-a"},
+            {"id": "provider/chat-b", "supported_reasoning_efforts": ["low", "high"],
+                "default_reasoning_effort": "high", "context_length": 32000},
+            {"id": "provider/embeddings", "mode": "embedding"},
+            {"id": "provider/chat-only", "supported_endpoints": ["/v1/chat/completions"]}
+        ]})))
+        .mount(&server)
+        .await;
+    let custom_command = || -> Result<assert_cmd::Command> {
+        let mut cmd = command(home.path())?;
+        cmd.env("LEMEX_TEST_CUSTOM_PROVIDER_KEY", "custom-model-secret");
+        Ok(cmd)
+    };
+    let output = custom_command()?
+        .args(["models", "--all", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("custom-model-secret"));
+    let inventory: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(inventory["models"].as_array().unwrap().len(), 2);
+    assert_eq!(inventory["inference_verified"], false);
+    let a = inventory["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["id"] == "provider/chat-a")
+        .unwrap();
+    assert!(a["reasoning_efforts"].as_array().unwrap().is_empty());
+    custom_command()?
+        .args([
+            "models",
+            "shortlist",
+            "provider/chat-b",
+            "provider/chat-a",
+            "provider/chat-b",
+        ])
+        .assert()
+        .success();
+    let config_path = home.path().join("config.toml");
+    let parsed: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    assert_eq!(parsed["model"].as_str(), Some("provider/chat-a"));
+    assert_eq!(parsed["model_picker_models"].as_array().unwrap().len(), 2);
+    let before = std::fs::read(&config_path)?;
+    for args in [
+        vec!["models", "shortlist", "provider/chat-a", "not-listed"],
+        vec!["model", "provider/chat-b", "--reasoning", "max"],
+        vec!["model", "provider/chat-a", "--reasoning", "high"],
+    ] {
+        custom_command()?.args(args).assert().failure();
+        assert_eq!(std::fs::read(&config_path)?, before);
+    }
+    custom_command()?
+        .args(["model", "provider/chat-b", "--reasoning", "low"])
+        .assert()
+        .success();
+    let selected: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    assert_eq!(selected["model"].as_str(), Some("provider/chat-b"));
+    assert_eq!(selected["model_reasoning_effort"].as_str(), Some("low"));
+    custom_command()?
+        .args(["models", "shortlist", "--clear"])
+        .assert()
+        .success();
+    let cleared: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    assert!(
+        cleared["model_picker_models"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(cleared["model"], selected["model"]);
+    custom_command()?
+        .args(["model", "provider/chat-a"])
+        .assert()
+        .success();
+    let selected: toml::Value = toml::from_str(&std::fs::read_to_string(&config_path)?)?;
+    assert!(selected.get("model_reasoning_effort").is_none());
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| request.url.path() == "/v1/models")
+    );
+    // An old global effort must not leak onto a newly discovered model whose
+    // deployment does not advertise effort values.
+    let mut stale = selected;
+    stale.as_table_mut().unwrap().insert(
+        "model_reasoning_effort".into(),
+        toml::Value::String("max".into()),
+    );
+    std::fs::write(&config_path, toml::to_string(&stale)?)?;
+    let event = json!({"type":"response.completed", "response": {
+        "id":"custom-model-response", "status":"completed", "output":[],
+        "usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}
+    }});
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .and(header("authorization", "Bearer custom-model-secret"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(format!("event: response.completed\ndata: {event}\n\n")),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    custom_command()?
+        .args([
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "Reply exactly OK",
+        ])
+        .assert()
+        .success();
+    let requests = server.received_requests().await.unwrap();
+    let inference = requests
+        .iter()
+        .find(|request| request.url.path() == "/v1/responses")
+        .unwrap();
+    let body: Value = serde_json::from_slice(&inference.body)?;
+    assert_eq!(body["model"], "provider/chat-a");
+    assert!(body.pointer("/reasoning/effort").is_none());
+    server.verify().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn saved_key_reaches_responses_api_and_environment_overrides_work() -> Result<()> {
     for override_environment in [false, true] {
         let server = MockServer::start().await;
@@ -405,8 +565,6 @@ async fn saved_key_reaches_responses_api_and_environment_overrides_work() -> Res
             "exec",
             "--ephemeral",
             "--skip-git-repo-check",
-            "-c",
-            "mcp_servers.exa.enabled=false",
             "Reply exactly OK",
         ])
         .assert()
