@@ -40,7 +40,6 @@ use crate::thread_startup_metadata::ThreadStartupMetadata;
 use codex_agent_graph_store::AgentGraphStore;
 use codex_agent_graph_store::LocalAgentGraphStore;
 use codex_agent_message_board_extension::LocalAgentMessageBoard;
-use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
 use codex_attachment_store::AttachmentStore;
@@ -440,7 +439,6 @@ pub(crate) struct ThreadManagerState {
     external_time_provider: Option<Arc<dyn TimeProvider>>,
     session_source: SessionSource,
     installation_id: String,
-    analytics_events_client: Option<AnalyticsEventsClient>,
     // Captures submitted ops for testing purpose when test mode is enabled.
     ops_log: Option<SharedCapturedOps>,
 }
@@ -543,7 +541,6 @@ impl ThreadManager {
         environment_manager: Arc<EnvironmentManager>,
         extensions: Arc<ExtensionRegistry<Config>>,
         user_instructions_provider: Arc<dyn UserInstructionsProvider>,
-        analytics_events_client: Option<AnalyticsEventsClient>,
         image_store: Arc<dyn AttachmentStore>,
         thread_store: Arc<dyn ThreadStore>,
         agent_graph_store: Option<Arc<dyn AgentGraphStore>>,
@@ -603,7 +600,6 @@ impl ThreadManager {
                 auth_manager,
                 session_source,
                 installation_id,
-                analytics_events_client,
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -778,7 +774,6 @@ impl ThreadManager {
                 auth_manager,
                 session_source: SessionSource::Exec,
                 installation_id,
-                analytics_events_client: None,
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -2329,7 +2324,6 @@ impl ThreadManagerState {
             turn_extension_init,
             client_mcp_extensions,
             reserved_thread_id,
-            analytics_events_client: self.analytics_events_client.clone(),
             image_store: Arc::clone(&self.image_store),
             thread_store: Arc::clone(&self.thread_store),
             attestation_provider: self.attestation_provider.clone(),

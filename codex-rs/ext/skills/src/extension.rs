@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::HostSkillsSnapshot;
 use crate::InjectedHostSkillPrompts;
-use codex_analytics::InvocationType;
+use crate::invocation::InvocationType;
 use codex_exec_server::ExecutorCapabilityDiscoverySnapshot;
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_exec_server::ResolvedSelectedCapabilityRoot;

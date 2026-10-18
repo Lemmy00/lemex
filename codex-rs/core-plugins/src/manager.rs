@@ -87,8 +87,6 @@ use crate::store::PluginStore;
 use crate::store::PluginStoreError;
 use crate::store::error_context_sub_error_type;
 use crate::tool_suggest_metadata::ToolSuggestMetadataCache;
-use codex_analytics::AnalyticsEventsClient;
-use codex_analytics::PluginInstallSource;
 use codex_config::ConfigLayerStack;
 use codex_config::SkillConfigRules;
 use codex_config::clear_user_plugin;
@@ -573,8 +571,6 @@ pub struct PluginsManager {
     remote_catalog_cache_refresh_state: RwLock<RemoteCatalogCacheRefreshState>,
     restriction_product: Option<Product>,
     auth_manager: Arc<AuthManager>,
-    analytics_events_client: RwLock<Option<AnalyticsEventsClient>>,
-    plugin_install_source: PluginInstallSource,
 }
 
 #[derive(Clone)]
@@ -735,14 +731,7 @@ impl PluginsManager {
             ),
             restriction_product,
             auth_manager,
-            analytics_events_client: RwLock::new(None),
-            plugin_install_source: PluginInstallSource::Manual,
         }
-    }
-
-    pub fn with_plugin_install_source(mut self, source: PluginInstallSource) -> Self {
-        self.plugin_install_source = source;
-        self
     }
 
     pub fn auth_mode(&self) -> Option<AuthMode> {
@@ -770,14 +759,6 @@ impl PluginsManager {
                 on_effective_plugins_changed,
             );
         }
-    }
-
-    pub fn set_analytics_events_client(&self, analytics_events_client: AnalyticsEventsClient) {
-        let mut stored_client = match self.analytics_events_client.write() {
-            Ok(client_guard) => client_guard,
-            Err(err) => err.into_inner(),
-        };
-        *stored_client = Some(analytics_events_client);
     }
 
     fn restriction_product_matches(&self, products: Option<&[Product]>) -> bool {
@@ -2079,18 +2060,9 @@ impl PluginsManager {
         request: PluginInstallRequest,
     ) -> Result<PluginInstallOutcome, PluginInstallError> {
         let resolved = self.resolve_installable_plugin(config_layer_stack, &request)?;
-        let plugin_id = resolved.plugin_id.clone();
         match self.install_resolved_plugin(resolved).await {
             Ok(outcome) => Ok(outcome),
-            Err(err) => {
-                self.track_plugin_install_failed(
-                    &plugin_id,
-                    plugin_install_error_type(&err),
-                    err.sub_error_type(),
-                    err.to_string(),
-                );
-                Err(err)
-            }
+            Err(err) => Err(err),
         }
     }
 
@@ -2106,7 +2078,6 @@ impl PluginsManager {
         ) {
             Ok(resolved) => resolved,
             Err(err) => {
-                self.track_plugin_install_resolution_failed(&err);
                 return Err(err.into());
             }
         };
@@ -2123,7 +2094,6 @@ impl PluginsManager {
                 path: request.marketplace_path.to_path_buf(),
                 message,
             };
-            self.track_plugin_install_resolution_failed(&err);
             return Err(err.into());
         }
         Ok(resolved)
@@ -2146,110 +2116,11 @@ impl PluginsManager {
         .await
         {
             let err = PluginInstallError::from(err);
-            self.track_plugin_install_failed(
-                &resolved.plugin_id,
-                plugin_install_error_type(&err),
-                err.sub_error_type(),
-                err.to_string(),
-            );
             return Err(err);
         }
-        let plugin_id = resolved.plugin_id.clone();
         match self.install_resolved_plugin(resolved).await {
             Ok(outcome) => Ok(outcome),
-            Err(err) => {
-                self.track_plugin_install_failed(
-                    &plugin_id,
-                    plugin_install_error_type(&err),
-                    err.sub_error_type(),
-                    err.to_string(),
-                );
-                Err(err)
-            }
-        }
-    }
-
-    fn track_plugin_install_resolution_failed(&self, err: &MarketplaceError) {
-        let sub_error_type = marketplace_error_sub_error_type(err);
-        let plugin_id = match err {
-            MarketplaceError::PluginNotFound {
-                plugin_name,
-                marketplace_name,
-            }
-            | MarketplaceError::PluginNotAvailable {
-                plugin_name,
-                marketplace_name,
-            } => PluginId::new(plugin_name.clone(), marketplace_name.clone()).ok(),
-            MarketplaceError::Io { .. }
-            | MarketplaceError::MarketplaceNotFound { .. }
-            | MarketplaceError::InvalidMarketplaceFile { .. }
-            | MarketplaceError::PluginsDisabled
-            | MarketplaceError::InvalidPlugin(_) => None,
-        };
-        if let Some(plugin_id) = plugin_id {
-            self.track_plugin_install_failed(
-                &plugin_id,
-                marketplace_error_type(err),
-                sub_error_type,
-                err.to_string(),
-            );
-        } else {
-            tracing::warn!(
-                error_type = %marketplace_error_type(err),
-                sub_error_type = sub_error_type.as_deref(),
-                error = %err,
-                "plugin install failed while resolving marketplace plugin"
-            );
-            self.emit_plugin_install_failed(
-                PluginTelemetryMetadata {
-                    plugin_id: None,
-                    remote_plugin_id: None,
-                    capability_summary: None,
-                },
-                marketplace_error_type(err),
-                sub_error_type,
-            );
-        }
-    }
-
-    fn track_plugin_install_failed(
-        &self,
-        plugin_id: &PluginId,
-        error_type: &'static str,
-        sub_error_type: Option<String>,
-        error_message: String,
-    ) {
-        tracing::warn!(
-            plugin_id = %plugin_id.as_key(),
-            error_type = %error_type,
-            sub_error_type = sub_error_type.as_deref(),
-            error = %error_message,
-            "plugin install failed"
-        );
-        self.emit_plugin_install_failed(
-            self.telemetry_metadata_for_plugin_id(plugin_id),
-            error_type,
-            sub_error_type,
-        );
-    }
-
-    fn emit_plugin_install_failed(
-        &self,
-        plugin: PluginTelemetryMetadata,
-        error_type: &'static str,
-        sub_error_type: Option<String>,
-    ) {
-        let analytics_events_client = match self.analytics_events_client.read() {
-            Ok(client) => client.clone(),
-            Err(err) => err.into_inner().clone(),
-        };
-        if let Some(analytics_events_client) = analytics_events_client {
-            analytics_events_client.track_plugin_install_failed(
-                plugin,
-                self.plugin_install_source,
-                error_type.to_string(),
-                sub_error_type,
-            );
+            Err(err) => Err(err),
         }
     }
 
@@ -2311,17 +2182,6 @@ impl PluginsManager {
         .await
         .map_err(anyhow::Error::from)?;
 
-        let analytics_events_client = match self.analytics_events_client.read() {
-            Ok(client) => client.clone(),
-            Err(err) => err.into_inner().clone(),
-        };
-        if let Some(analytics_events_client) = analytics_events_client {
-            analytics_events_client.track_plugin_installed(
-                self.telemetry_metadata_for_installed_plugin(&result.plugin_id)
-                    .await,
-            );
-        }
-
         Ok(PluginInstallOutcome {
             plugin_id: result.plugin_id,
             plugin_version: result.plugin_version,
@@ -2357,14 +2217,6 @@ impl PluginsManager {
     }
 
     async fn uninstall_plugin_id(&self, plugin_id: PluginId) -> Result<(), PluginUninstallError> {
-        let plugin_telemetry = if self.store.active_plugin_root(&plugin_id).is_some() {
-            Some(
-                self.telemetry_metadata_for_installed_plugin(&plugin_id)
-                    .await,
-            )
-        } else {
-            None
-        };
         let store = self.store.clone();
         let plugin_id_for_store = plugin_id.clone();
         tokio::task::spawn_blocking(move || store.uninstall(&plugin_id_for_store))
@@ -2374,16 +2226,6 @@ impl PluginsManager {
         clear_user_plugin(&self.codex_home, plugin_id.as_key())
             .await
             .map_err(anyhow::Error::from)?;
-
-        let analytics_events_client = match self.analytics_events_client.read() {
-            Ok(client) => client.clone(),
-            Err(err) => err.into_inner().clone(),
-        };
-        if let Some(plugin_telemetry) = plugin_telemetry
-            && let Some(analytics_events_client) = analytics_events_client
-        {
-            analytics_events_client.track_plugin_uninstalled(plugin_telemetry);
-        }
 
         Ok(())
     }
@@ -3754,28 +3596,6 @@ impl PluginInstallError {
     }
 }
 
-fn plugin_install_error_type(err: &PluginInstallError) -> &'static str {
-    match err {
-        PluginInstallError::Marketplace(err) => marketplace_error_type(err),
-        PluginInstallError::Remote(err) => remote_plugin_mutation_error_type(err),
-        PluginInstallError::Store(err) => plugin_store_error_type(err),
-        PluginInstallError::Config(_) => "config",
-        PluginInstallError::Join(_) => "join",
-    }
-}
-
-fn marketplace_error_type(err: &MarketplaceError) -> &'static str {
-    match err {
-        MarketplaceError::Io { .. } => "marketplace_io",
-        MarketplaceError::MarketplaceNotFound { .. } => "marketplace_not_found",
-        MarketplaceError::InvalidMarketplaceFile { .. } => "invalid_marketplace_file",
-        MarketplaceError::PluginNotFound { .. } => "plugin_not_found",
-        MarketplaceError::PluginNotAvailable { .. } => "plugin_not_available",
-        MarketplaceError::PluginsDisabled => "plugins_disabled",
-        MarketplaceError::InvalidPlugin(_) => "invalid_plugin",
-    }
-}
-
 fn marketplace_error_sub_error_type(err: &MarketplaceError) -> Option<String> {
     match err {
         MarketplaceError::Io { context, .. } => Some(error_context_sub_error_type(context)),
@@ -3785,32 +3605,6 @@ fn marketplace_error_sub_error_type(err: &MarketplaceError) -> Option<String> {
         | MarketplaceError::PluginNotAvailable { .. }
         | MarketplaceError::PluginsDisabled
         | MarketplaceError::InvalidPlugin(_) => None,
-    }
-}
-
-fn remote_plugin_mutation_error_type(err: &RemotePluginMutationError) -> &'static str {
-    match err {
-        RemotePluginMutationError::AuthRequired => "remote_mutation_auth_required",
-        RemotePluginMutationError::UnsupportedAuthMode => "remote_mutation_unsupported_auth_mode",
-        RemotePluginMutationError::AuthToken(_) => "remote_mutation_auth_token",
-        RemotePluginMutationError::InvalidBaseUrl(_) => "remote_mutation_invalid_base_url",
-        RemotePluginMutationError::InvalidBaseUrlPath => "remote_mutation_invalid_base_url_path",
-        RemotePluginMutationError::Request { .. } => "remote_mutation_request",
-        RemotePluginMutationError::UnexpectedStatus { .. } => "remote_mutation_unexpected_status",
-        RemotePluginMutationError::Decode { .. } => "remote_mutation_decode",
-        RemotePluginMutationError::UnexpectedPluginId { .. } => {
-            "remote_mutation_unexpected_plugin_id"
-        }
-        RemotePluginMutationError::UnexpectedEnabledState { .. } => {
-            "remote_mutation_unexpected_enabled_state"
-        }
-    }
-}
-
-fn plugin_store_error_type(err: &PluginStoreError) -> &'static str {
-    match err {
-        PluginStoreError::Io { .. } => "store_io",
-        PluginStoreError::Invalid(_) => "store_invalid",
     }
 }
 

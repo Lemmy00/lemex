@@ -498,10 +498,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                     ))
                     .await;
             }
-            RealtimeEvent::SessionUpdated {
-                realtime_session_id,
-                ..
-            } => outgoing.track_realtime_session_updated(realtime_session_id),
+            RealtimeEvent::SessionUpdated { .. } => {}
             RealtimeEvent::InputAudioSpeechStarted(event) => {
                 let notification = ThreadRealtimeItemAddedNotification {
                     thread_id: conversation_id.to_string(),
@@ -1839,7 +1836,6 @@ async fn on_request_permissions_response(
             return;
         }
     };
-    outgoing.track_effective_permissions_approval_response(pending_request_id, response.clone());
 
     if let Err(err) = conversation
         .submit(Op::RequestPermissionsResponse {
@@ -2465,10 +2461,7 @@ mod tests {
         let conversation_id = ThreadId::new();
         let thread_state = new_thread_state();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -2547,10 +2540,7 @@ mod tests {
         let conversation_id = ThreadId::new();
         let thread_state = new_thread_state();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -2650,10 +2640,7 @@ mod tests {
         let thread_state = new_thread_state();
         let thread_watch_manager = ThreadWatchManager::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3122,10 +3109,7 @@ mod tests {
         }
         let thread_watch_manager = ThreadWatchManager::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3238,10 +3222,7 @@ mod tests {
             .await;
         assert_eq!(thread_watch_manager.running_turn_count().await, 1);
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3326,10 +3307,7 @@ mod tests {
             .start_thread(codex_core::StartThreadOptions::new(config))
             .await?;
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3395,10 +3373,7 @@ mod tests {
         let conversation_id = ThreadId::new();
         let event_turn_id = "complete1".to_string();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3514,10 +3489,7 @@ mod tests {
         )
         .await;
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3569,10 +3541,7 @@ mod tests {
         )
         .await;
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3614,10 +3583,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_turn_plan_update_emits_notification_for_v2() -> Result<()> {
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3664,10 +3630,7 @@ mod tests {
         let conversation_id = ThreadId::new();
         let turn_id = "turn-123".to_string();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3759,10 +3722,7 @@ mod tests {
         let conversation_id = ThreadId::new();
         let turn_id = "turn-456".to_string();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3795,10 +3755,7 @@ mod tests {
         let thread_state = new_thread_state();
 
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],
@@ -3916,10 +3873,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_turn_diff_emits_v2_notification() -> Result<()> {
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let outgoing = ThreadScopedOutgoingMessageSender::new(
             outgoing,
             vec![ConnectionId(1)],

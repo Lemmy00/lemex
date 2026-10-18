@@ -5,6 +5,10 @@ use crate::responses_metadata::AUTO_REVIEW_ENABLED_KEY;
 use crate::responses_metadata::CONTEXT_WINDOW_ID_KEY;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CodexResponsesRequestKind;
+use crate::responses_metadata::CompactionImplementation;
+use crate::responses_metadata::CompactionPhase;
+use crate::responses_metadata::CompactionReason;
+use crate::responses_metadata::CompactionTrigger;
 use crate::responses_metadata::CompactionTurnMetadata;
 use crate::responses_metadata::FORKED_FROM_ORDINAL_EXCLUSIVE_KEY;
 use crate::responses_metadata::INSTALLATION_ID_KEY;
@@ -23,11 +27,6 @@ use crate::responses_metadata::validate_extra_metadata;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::update_turn_settings_for_test;
-use codex_analytics::CompactionImplementation;
-use codex_analytics::CompactionPhase;
-use codex_analytics::CompactionReason;
-use codex_analytics::CompactionTrigger;
-use codex_analytics::TurnAnalyticsMetadata;
 use codex_models_manager::model_info::model_info_from_slug;
 use codex_protocol::AgentPath;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -965,51 +964,13 @@ fn turn_metadata_state_merges_client_metadata_without_replacing_reserved_fields(
     assert!(meta.get("codex_security_surface").is_none());
     assert!(meta.get(ANALYTICS_ENABLED_KEY).is_none());
     assert_eq!(state.workspace_kind().as_deref(), Some("projectless"));
-    assert_eq!(
-        (state.turn_trigger(), state.codex_turn_source()),
-        (
-            Some("goal".to_string()),
-            Some(" Configured_Source ".to_string())
-        )
-    );
     assert_eq!(model_request_json["source"], " Configured_Source ");
-
-    for (configured, client, expected) in [
-        (None, None, None),
-        (
-            None,
-            Some(" New_Source ".to_string()),
-            Some(" New_Source ".to_string()),
-        ),
-        (None, Some(String::new()), Some(String::new())),
-        (None, Some("é".repeat(/*n*/ 64)), Some("é".repeat(/*n*/ 64))),
-        (None, Some("é".repeat(/*n*/ 65)), None),
-        (
-            Some("x".repeat(/*n*/ 129)),
-            Some("client-source".to_string()),
-            None,
-        ),
-    ] {
-        state.set_responses_api_metadata(
-            configured
-                .map(|source| ("source".to_string(), source))
-                .into_iter()
-                .collect(),
-        );
-        state.set_responsesapi_client_metadata(
-            client
-                .map(|source| ("source".to_string(), source))
-                .into_iter()
-                .collect(),
-        );
-        assert_eq!(state.codex_turn_source(), expected);
-    }
 }
 
 #[test]
-fn turn_metadata_state_bounds_trigger_only_for_analytics() {
+fn turn_metadata_state_preserves_long_triggers_in_request_metadata() {
     let temp_dir = TempDir::new().expect("temp dir");
-    for (characters, included) in [(64, true), (65, false)] {
+    for characters in [64, 65] {
         let state = TurnMetadataState::new(
             "session-a".to_string(),
             "thread-a".to_string(),
@@ -1030,8 +991,11 @@ fn turn_metadata_state_bounds_trigger_only_for_analytics() {
         let metadata: Value =
             serde_json::from_str(&test_turn_metadata_header(&state)).expect("json");
         assert_eq!(
-            (state.turn_trigger(), metadata[TURN_TRIGGER_KEY].as_str()),
-            (included.then(|| trigger.clone()), Some(trigger.as_str()))
+            (
+                state.current_turn_trigger(),
+                metadata[TURN_TRIGGER_KEY].as_str()
+            ),
+            (Some(trigger.clone()), Some(trigger.as_str()))
         );
     }
 }

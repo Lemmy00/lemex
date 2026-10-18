@@ -26,6 +26,42 @@ class SourceInstallTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
 
+    def test_python_detection_skips_an_old_system_python(self):
+        result = subprocess.run(
+            ["/bin/bash", "-c", r'''
+source "$1"
+command_exists() { case "$1" in python3|python3.11) return 0;; *) return 1;; esac; }
+python3() { return 1; }
+python3.11() { return 0; }
+select_python
+printf '%s' "$LEMEX_PYTHON_BIN"
+''', "test", str(ROOT / "scripts/install/install_from_source.sh")],
+            env={key: value for key, value in os.environ.items() if key != "LEMEX_PYTHON"},
+            capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(result.stdout, "python3.11")
+
+    def test_python_override_supports_paths_with_spaces(self):
+        python = self.root / "supported python"
+        python.write_text("#!/bin/sh\nexit 0\n")
+        python.chmod(0o755)
+        result = subprocess.run(
+            ["/bin/bash", "-c", 'source "$1"; select_python; printf "%s" "$LEMEX_PYTHON_BIN"',
+             "test", str(ROOT / "scripts/install/install_from_source.sh")],
+            env=dict(os.environ, LEMEX_PYTHON=str(python)), capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(result.stdout, str(python))
+
+    def test_invalid_python_override_fails_before_building(self):
+        result = subprocess.run(
+            ["/bin/bash", "-c", 'source "$1"; select_python',
+             "test", str(ROOT / "scripts/install/install_from_source.sh")],
+            env=dict(os.environ, LEMEX_PYTHON=str(self.root / "missing-python")),
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("LEMEX_PYTHON must name a working Python 3.11+ executable", result.stderr)
+
     def stage(self, catalog=None):
         staged = self.root / "staged"
         staged.mkdir()

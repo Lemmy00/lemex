@@ -1,11 +1,8 @@
 use crate::config::Config;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_analytics::InvocationType;
-use codex_analytics::SkillInvocation;
-use codex_analytics::SkillInvocationLocation;
-use codex_analytics::TrackEventsContext;
-use codex_analytics::build_track_events_context;
+use codex_skills_extension::SkillInvocationLocation;
+
 use codex_extension_api::SkillInvocationInput;
 use codex_extension_api::SkillInvocationKind;
 use codex_otel::SkillInvocationEvent;
@@ -42,7 +39,6 @@ pub(crate) async fn emit_explicit_skill_invocations(
     turn_context: &TurnContext,
     mentioned_skills: &[SkillMetadata],
     injected_skills: &[SkillMetadata],
-    tracking: TrackEventsContext,
 ) {
     let injected_skill_paths = injected_skills
         .iter()
@@ -110,23 +106,6 @@ pub(crate) async fn emit_explicit_skill_invocations(
                 .await;
         }
     }
-
-    let invocations = injected_skills
-        .iter()
-        .map(|skill| SkillInvocation {
-            skill_name: skill.name.clone(),
-            location: SkillInvocationLocation::Host {
-                path: skill.path_to_skills_md.clone(),
-                scope: skill.scope,
-            },
-            plugin_id: skill.plugin_id.clone(),
-            remote_plugin_id: skill.remote_plugin_id.clone(),
-            invocation_type: InvocationType::Explicit,
-        })
-        .collect();
-    sess.services
-        .analytics_events_client
-        .track_skill_invocations(tracking, invocations);
 }
 
 pub(crate) async fn maybe_emit_implicit_skill_invocation(
@@ -218,16 +197,4 @@ pub(crate) async fn maybe_emit_implicit_skill_invocation(
             ("reasoning_effort", reasoning_effort.as_str()),
         ],
     );
-    sess.services
-        .analytics_events_client
-        .track_skill_invocations(
-            build_track_events_context(
-                turn_context.model_info().slug.clone(),
-                sess.thread_id.to_string(),
-                turn_context.sub_id.clone(),
-                turn_context.originator.clone(),
-                Some(turn_context.turn_metadata_state.clone()),
-            ),
-            vec![invocation],
-        );
 }

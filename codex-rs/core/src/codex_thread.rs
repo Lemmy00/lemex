@@ -284,7 +284,7 @@ impl CodexThread {
 
     /// Whether analytics is enabled for this thread after configuration and host overrides.
     pub fn analytics_enabled(&self) -> bool {
-        self.session.services.analytics_events_client.is_enabled()
+        false
     }
 
     /// Returns extension-owned data attached to this thread runtime.

@@ -84,7 +84,6 @@ pub(crate) struct TurnRequestProcessor {
     auth_manager: Arc<AuthManager>,
     thread_manager: Arc<ThreadManager>,
     outgoing: Arc<OutgoingMessageSender>,
-    analytics_events_client: AnalyticsEventsClient,
     config: Arc<Config>,
     config_manager: ConfigManager,
     pending_thread_unloads: PendingThreadUnloads,
@@ -146,7 +145,6 @@ impl TurnRequestProcessor {
         auth_manager: Arc<AuthManager>,
         thread_manager: Arc<ThreadManager>,
         outgoing: Arc<OutgoingMessageSender>,
-        analytics_events_client: AnalyticsEventsClient,
         config: Arc<Config>,
         config_manager: ConfigManager,
         pending_thread_unloads: PendingThreadUnloads,
@@ -161,7 +159,6 @@ impl TurnRequestProcessor {
             auth_manager,
             thread_manager,
             outgoing,
-            analytics_events_client,
             config,
             config_manager,
             pending_thread_unloads,
@@ -270,9 +267,6 @@ impl TurnRequestProcessor {
         params: TurnInterruptParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         let result = self.turn_interrupt_inner(request_id, params).await;
-        if let Err(error) = &result {
-            self.track_error_response(request_id, error, /*error_type*/ None);
-        }
         result.map(|response| response.map(Into::into))
     }
 
@@ -358,20 +352,6 @@ impl TurnRequestProcessor {
             .map(|()| None)
     }
 
-    fn track_error_response(
-        &self,
-        request_id: &ConnectionRequestId,
-        error: &JSONRPCErrorError,
-        error_type: Option<AnalyticsJsonRpcError>,
-    ) {
-        self.analytics_events_client.track_error_response(
-            request_id.connection_id.0,
-            request_id.request_id.clone(),
-            error.clone(),
-            error_type,
-        );
-    }
-
     async fn load_thread(
         &self,
         thread_id: &str,
@@ -391,14 +371,10 @@ impl TurnRequestProcessor {
 
     async fn ensure_direct_input_allowed(
         &self,
-        request_id: &ConnectionRequestId,
+        _request_id: &ConnectionRequestId,
         thread: &CodexThread,
     ) -> Result<(), JSONRPCErrorError> {
-        ensure_direct_input_allowed(thread)
-            .await
-            .inspect_err(|error| {
-                self.track_error_response(request_id, error, /*error_type*/ None);
-            })
+        ensure_direct_input_allowed(thread).await
     }
 
     fn normalize_collaboration_mode(
@@ -527,12 +503,7 @@ impl TurnRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<TurnStartResponse, JSONRPCErrorError> {
-        let (thread_id, thread) =
-            self.load_thread(&params.thread_id)
-                .await
-                .inspect_err(|error| {
-                    self.track_error_response(&request_id, error, /*error_type*/ None);
-                })?;
+        let (thread_id, thread) = self.load_thread(&params.thread_id).await?;
         self.ensure_direct_input_allowed(&request_id, thread.as_ref())
             .await?;
         self.config_manager
@@ -571,11 +542,6 @@ impl TurnRequestProcessor {
                 });
         if actual_chars > MAX_USER_INPUT_TEXT_CHARS {
             let error = Self::input_too_large_error(actual_chars);
-            self.track_error_response(
-                &request_id,
-                &error,
-                Some(AnalyticsJsonRpcError::Input(InputError::TooLarge)),
-            );
             return Err(error);
         }
         Self::set_app_server_client_info(
@@ -583,10 +549,7 @@ impl TurnRequestProcessor {
             app_server_client_name,
             app_server_client_version,
         )
-        .await
-        .inspect_err(|error| {
-            self.track_error_response(&request_id, error, /*error_type*/ None);
-        })?;
+        .await?;
         let runtime_workspace_roots = params
             .runtime_workspace_roots
             .map(resolve_runtime_workspace_roots);
@@ -669,7 +632,6 @@ impl TurnRequestProcessor {
             .await
             .map_err(|err| {
                 let error = internal_error(format!("failed to submit turn input: {err}"));
-                self.track_error_response(&request_id, &error, /*error_type*/ None);
                 error
             })?;
         let (turn_id, root_turn_id, started) = match submission {
@@ -687,7 +649,6 @@ impl TurnRequestProcessor {
                 } else {
                     internal_error(format!("failed to submit turn input: {reason:?}"))
                 };
-                self.track_error_response(&request_id, &error, /*error_type*/ None);
                 return Err(error);
             }
         };
@@ -1037,12 +998,7 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         params: TurnSteerParams,
     ) -> Result<TurnSteerResponse, JSONRPCErrorError> {
-        let (_, thread) = self
-            .load_thread(&params.thread_id)
-            .await
-            .inspect_err(|error| {
-                self.track_error_response(request_id, error, /*error_type*/ None);
-            })?;
+        let (_, thread) = self.load_thread(&params.thread_id).await?;
         self.ensure_direct_input_allowed(request_id, thread.as_ref())
             .await?;
         self.config_manager
@@ -1057,11 +1013,6 @@ impl TurnRequestProcessor {
             .record_request_turn_id(request_id, &params.expected_turn_id)
             .await;
         if let Err(error) = Self::validate_v2_input_limit(&params.input) {
-            self.track_error_response(
-                request_id,
-                &error,
-                Some(AnalyticsJsonRpcError::Input(InputError::TooLarge)),
-            );
             return Err(error);
         }
 
@@ -1085,41 +1036,36 @@ impl TurnRequestProcessor {
             .await
             .map_err(|err| {
                 let error = internal_error(format!("failed to steer turn: {err}"));
-                self.track_error_response(request_id, &error, /*error_type*/ None);
                 error
             })?;
         let turn_id = match submission {
             SteerSubmission::Steered { turn_id } => turn_id,
             SteerSubmission::NotSubmitted { reason } => {
-                let (message, data, error_type) = match reason {
+                let (message, data) = match reason {
                     NotSubmittedReason::ServerDraining => {
                         return Err(crate::error_code::server_draining_error());
                     }
-                    NotSubmittedReason::NoActiveTurn | NotSubmittedReason::NotIdle => (
-                        "no active turn to steer".to_string(),
-                        None,
-                        Some(AnalyticsJsonRpcError::TurnSteer(
-                            TurnSteerRequestError::NoActiveTurn,
-                        )),
-                    ),
+                    NotSubmittedReason::NoActiveTurn
+                    | NotSubmittedReason::NotIdle
+                    | NotSubmittedReason::PendingTriggerTurn
+                    | NotSubmittedReason::PlanMode
+                    | NotSubmittedReason::Superseded => {
+                        ("no active turn to steer".to_string(), None)
+                    }
                     NotSubmittedReason::ExpectedTurnMismatch { expected, actual } => (
                         format!("expected active turn id `{expected}` but found `{actual}`"),
                         None,
-                        Some(AnalyticsJsonRpcError::TurnSteer(
-                            TurnSteerRequestError::ExpectedTurnMismatch,
-                        )),
                     ),
                     NotSubmittedReason::ActiveTurnNotSteerable { turn_kind } => {
-                        let (message, turn_steer_error) = match turn_kind {
-                            codex_protocol::protocol::NonSteerableTurnKind::Review => (
-                                "cannot steer a review turn".to_string(),
-                                TurnSteerRequestError::NonSteerableReview,
-                            ),
-                            codex_protocol::protocol::NonSteerableTurnKind::Compact => (
-                                "cannot steer a compact turn".to_string(),
-                                TurnSteerRequestError::NonSteerableCompact,
-                            ),
-                        };
+                        let message = match turn_kind {
+                            codex_protocol::protocol::NonSteerableTurnKind::Review => {
+                                "cannot steer a review turn"
+                            }
+                            codex_protocol::protocol::NonSteerableTurnKind::Compact => {
+                                "cannot steer a compact turn"
+                            }
+                        }
+                        .to_string();
                         let error = TurnError {
                             misalignment: None,
                             message: message.clone(),
@@ -1138,35 +1084,16 @@ impl TurnRequestProcessor {
                                 None
                             }
                         };
-                        (
-                            message,
-                            data,
-                            Some(AnalyticsJsonRpcError::TurnSteer(turn_steer_error)),
-                        )
+                        (message, data)
                     }
-                    NotSubmittedReason::EmptyInput => (
-                        "input must not be empty".to_string(),
-                        None,
-                        Some(AnalyticsJsonRpcError::Input(InputError::Empty)),
-                    ),
+                    NotSubmittedReason::EmptyInput => ("input must not be empty".to_string(), None),
                     NotSubmittedReason::ActiveTurnOutputSchemaMismatch => (
                         "active turn uses a different output schema".to_string(),
                         None,
-                        None,
-                    ),
-                    NotSubmittedReason::PendingTriggerTurn
-                    | NotSubmittedReason::PlanMode
-                    | NotSubmittedReason::Superseded => (
-                        "no active turn to steer".to_string(),
-                        None,
-                        Some(AnalyticsJsonRpcError::TurnSteer(
-                            TurnSteerRequestError::NoActiveTurn,
-                        )),
                     ),
                 };
                 let mut error = invalid_request(message);
                 error.data = data;
-                self.track_error_response(request_id, &error, error_type);
                 return Err(error);
             }
         };

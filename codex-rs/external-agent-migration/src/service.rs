@@ -39,7 +39,6 @@ use crate::utils::invalid_data_error;
 use crate::utils::is_missing_or_empty_text_file;
 pub(super) use crate::utils::read_json_file as read_external_settings;
 use crate::utils::rewrite_external_agent_terms;
-use codex_analytics::AnalyticsEventsClient;
 use codex_core::config::Config;
 use codex_core_plugins::PluginsManager;
 use codex_core_plugins::marketplace::MarketplacePluginInstallPolicy;
@@ -69,7 +68,6 @@ pub struct ExternalAgentConfigService {
     pub(super) codex_home: PathBuf,
     pub(super) connector_metadata_roots: Vec<PathBuf>,
     pub(crate) external_agent_home: PathBuf,
-    pub(crate) analytics_events_client: Option<AnalyticsEventsClient>,
     pub(crate) auth_manager: Arc<AuthManager>,
     pub(crate) source: ExternalAgentSource,
     pub(crate) session_import_limits: ExternalAgentSessionImportLimits,
@@ -80,7 +78,6 @@ impl ExternalAgentConfigService {
     pub fn new(
         codex_home: PathBuf,
         auth_manager: Arc<AuthManager>,
-        analytics_events_client: AnalyticsEventsClient,
         state_db: Option<StateDbHandle>,
     ) -> Self {
         let source = ExternalAgentSource::default();
@@ -90,7 +87,6 @@ impl ExternalAgentConfigService {
             codex_home,
             connector_metadata_roots,
             external_agent_home,
-            analytics_events_client: Some(analytics_events_client),
             auth_manager,
             source,
             session_import_limits: ExternalAgentSessionImportLimits::default(),
@@ -106,7 +102,6 @@ impl ExternalAgentConfigService {
             codex_home: self.codex_home.clone(),
             connector_metadata_roots,
             external_agent_home,
-            analytics_events_client: self.analytics_events_client.clone(),
             auth_manager: Arc::clone(&self.auth_manager),
             source,
             session_import_limits: self.session_import_limits,
@@ -162,7 +157,6 @@ impl ExternalAgentConfigService {
             codex_home,
             connector_metadata_roots,
             external_agent_home,
-            analytics_events_client: None,
             auth_manager: codex_login::test_support::auth_manager_from_optional_auth(
                 /*auth*/ None,
             ),

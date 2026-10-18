@@ -1,9 +1,7 @@
 use anyhow::Result;
-use codex_analytics::AnalyticsEventsClient;
 use codex_core::TurnInputRequest;
 use codex_core::config::AgentRoleConfig;
 use codex_features::Feature;
-use codex_login::CodexAuth;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::EventMsg;
@@ -458,20 +456,11 @@ async fn cold_root_resume_restores_agent_identity_and_role_on_followup() -> Resu
         ]),
     )
     .await;
-    let analytics_client = AnalyticsEventsClient::new(
-        codex_core::test_support::auth_manager_from_auth(
-            CodexAuth::create_dummy_chatgpt_auth_for_testing(),
-        ),
-        server.uri(),
-        /* analytics_enabled */ Some(true),
-    );
     let resumed_model_provider_base_url = format!("{}/v1", server.uri());
-    let mut resume_builder = test_codex()
-        .with_analytics_events_client(analytics_client.clone())
-        .with_config(move |config| {
-            configure_multi_agent_v2_with_role(config, &resumed_model_provider_base_url);
-            config.analytics_enabled = Some(true);
-        });
+    let mut resume_builder = test_codex().with_config(move |config| {
+        configure_multi_agent_v2_with_role(config, &resumed_model_provider_base_url);
+        config.analytics_enabled = Some(true);
+    });
     let resumed = resume_builder.restart(&server, &initial).await?;
     resumed
         .codex
@@ -568,7 +557,6 @@ openai_base_url = "{redirected_base_url}"
         matches!(event, EventMsg::TurnComplete(_))
     })
     .await;
-    tokio::time::timeout(Duration::from_secs(10), analytics_client.flush()).await?;
     assert!(followup_child_request.requests().iter().any(|request| {
         request.body_contains_text(FOLLOWUP_TASK)
             && request.body_contains_text(ROLE_DEVELOPER_INSTRUCTIONS)

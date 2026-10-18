@@ -1979,27 +1979,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-analytics"
-version = "0.0.0"
-dependencies = [
- "codex-app-server-protocol",
- "codex-git-utils",
- "codex-login",
- "codex-plugin",
- "codex-protocol",
- "codex-state",
- "codex-utils-absolute-path",
- "codex-utils-path-uri",
- "os_info",
- "pretty_assertions",
- "serde",
- "serde_json",
- "sha1 0.10.6",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "codex-ansi-escape"
 version = "0.0.0"
 dependencies = [
@@ -2059,7 +2038,6 @@ dependencies = [
  "chrono",
  "clap",
  "codex-agent-extension",
- "codex-analytics",
  "codex-app-server-protocol",
  "codex-app-server-transport",
  "codex-arg0",
@@ -2461,20 +2439,15 @@ name = "codex-chatgpt"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "clap",
  "codex-connectors",
  "codex-core",
- "codex-git-utils",
  "codex-http-client",
  "codex-login",
  "codex-model-provider",
  "codex-plugin",
- "codex-utils-cargo-bin",
- "codex-utils-cli",
  "pretty_assertions",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
 ]
 
@@ -2494,13 +2467,10 @@ dependencies = [
  "codex-app-server-client",
  "codex-app-server-daemon",
  "codex-app-server-protocol",
- "codex-app-server-test-client",
  "codex-arg0",
  "codex-aws-auth",
  "codex-build-info",
- "codex-chatgpt",
  "codex-cloud-config",
- "codex-cloud-tasks",
  "codex-config",
  "codex-core",
  "codex-core-plugins",
@@ -2643,63 +2613,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "codex-cloud-tasks"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "codex-cloud-tasks-client",
- "codex-cloud-tasks-mock-client",
- "codex-core",
- "codex-git-utils",
- "codex-http-client",
- "codex-login",
- "codex-model-provider",
- "codex-tui",
- "codex-utils-cli",
- "crossterm",
- "http 1.4.0",
- "insta",
- "owo-colors",
- "pretty_assertions",
- "ratatui",
- "serde",
- "serde_json",
- "supports-color 3.0.2",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
- "unicode-segmentation",
- "unicode-width 0.2.1",
-]
-
-[[package]]
-name = "codex-cloud-tasks-client"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "chrono",
- "codex-api",
- "codex-backend-client",
- "codex-git-utils",
- "codex-http-client",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "codex-cloud-tasks-mock-client"
-version = "0.0.0"
-dependencies = [
- "chrono",
- "codex-cloud-tasks-client",
- "diffy",
 ]
 
 [[package]]
@@ -2886,7 +2799,6 @@ dependencies = [
  "codex-agent-message-board-client",
  "codex-agent-message-board-extension",
  "codex-agent-roles",
- "codex-analytics",
  "codex-api",
  "codex-app-server-protocol",
  "codex-apply-patch",
@@ -3015,7 +2927,6 @@ dependencies = [
 name = "codex-core-api"
 version = "0.0.0"
 dependencies = [
- "codex-analytics",
  "codex-app-server-protocol",
  "codex-arg0",
  "codex-config",
@@ -3051,7 +2962,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "chrono",
- "codex-analytics",
  "codex-app-server-protocol",
  "codex-config",
  "codex-connectors",
@@ -3332,7 +3242,6 @@ name = "codex-external-agent-migration"
 version = "0.0.0"
 dependencies = [
  "chrono",
- "codex-analytics",
  "codex-app-server-protocol",
  "codex-config",
  "codex-core",
@@ -3477,7 +3386,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "chrono",
- "codex-analytics",
  "codex-core",
  "codex-extension-api",
  "codex-otel",
@@ -3513,7 +3421,6 @@ name = "codex-guardian-reviewer"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "codex-analytics",
  "codex-extension-api",
  "codex-feedback",
  "codex-guardian-context",
@@ -3538,7 +3445,6 @@ name = "codex-guardian-v2"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "codex-analytics",
  "codex-api",
  "codex-config",
  "codex-context-fragments",
@@ -3587,7 +3493,6 @@ dependencies = [
 name = "codex-history-notes-extension"
 version = "0.0.0"
 dependencies = [
- "codex-analytics",
  "codex-client",
  "codex-config",
  "codex-core",
@@ -4547,7 +4452,6 @@ version = "0.0.0"
 dependencies = [
  "assert_matches",
  "blake3",
- "codex-analytics",
  "codex-config",
  "codex-exec-server",
  "codex-extension-api",
@@ -5572,7 +5476,6 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "base64 0.22.1",
- "codex-analytics",
  "codex-arg0",
  "codex-attachment-store",
  "codex-config",

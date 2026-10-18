@@ -200,13 +200,13 @@ impl ReviewHost for super::super::runtime::ReviewRuntime {
         cancellation: &CancellationToken,
     ) -> (
         GuardianReviewOutcome,
-        GuardianReviewAnalyticsResult,
+        GuardianReviewDiagnostics,
         Option<ApprovalEvidence>,
     ) {
         if self.history_reset.is_cancelled() || cancellation.is_cancelled() {
             return (
                 GuardianReviewOutcome::Error(GuardianReviewError::Cancelled),
-                GuardianReviewAnalyticsResult::without_session(),
+                GuardianReviewDiagnostics::without_session(),
                 None,
             );
         }
@@ -225,7 +225,7 @@ impl ReviewHost for super::super::runtime::ReviewRuntime {
         {
             return (
                 GuardianReviewOutcome::Error(GuardianReviewError::Cancelled),
-                GuardianReviewAnalyticsResult::without_session(),
+                GuardianReviewDiagnostics::without_session(),
                 None,
             );
         }

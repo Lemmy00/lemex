@@ -190,14 +190,7 @@ impl McpHandler {
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
         let prepared_mcp_call = invocation.session.prepare_mcp_call(&self.tool_info).await;
         // Use the executed call's binding; a later catalog refresh must not change eligibility.
-        let result_metadata_capture_allowed = invocation
-            .session
-            .services
-            .analytics_events_client
-            .is_enabled()
-            && prepared_mcp_call
-                .as_ref()
-                .is_some_and(codex_mcp::PreparedMcpCall::is_host_owned_apps);
+        let result_metadata_capture_allowed = false;
         let mcp_tool = prepared_mcp_call.as_ref().map(|call| {
             McpToolContext::from_prepared_call(
                 call,

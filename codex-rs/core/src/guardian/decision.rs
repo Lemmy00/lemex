@@ -104,7 +104,6 @@ pub(crate) async fn decide_approval(
         model: turn.model_info(),
         telemetry: &session.services.session_telemetry,
         log_assessments: turn.config.otel.guardian_assessment_logging_enabled(),
-        analytics: &session.services.analytics_events_client,
         metrics: Some(crate::session::extension_metrics::from_session_telemetry(
             turn.session_telemetry.clone(),
         )),

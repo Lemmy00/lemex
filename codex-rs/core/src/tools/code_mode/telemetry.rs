@@ -1,24 +1,16 @@
-//! Code-mode tool analytics and tracing for handlers and queued nested dispatch.
+//! Local tool spans and timing observers for Code Mode dispatch.
 
-use codex_analytics::AnalyticsEventsClient;
-use codex_analytics::CodeModeToolCallFact;
-use codex_analytics::CodeModeToolCallStatus;
-use codex_analytics::TurnAnalyticsMetadata;
 use codex_protocol::ThreadId;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::Span;
 
 pub(super) struct CodeModeToolCallGuard {
-    analytics: AnalyticsEventsClient,
     thread_id: String,
     turn_id: String,
-    turn_metadata: Arc<dyn TurnAnalyticsMetadata>,
     call_id: String,
     pub(super) cell_id: Option<String>,
     tool_name: &'static str,
-    started_at_ms: u64,
-    status: CodeModeToolCallStatus,
     handler_span: Span,
     extensions: Arc<codex_extension_api::ExtensionRegistry<crate::config::Config>>,
 }
@@ -27,21 +19,16 @@ impl CodeModeToolCallGuard {
     pub(super) fn new(
         session: &crate::session::session::Session,
         turn_id: String,
-        turn_metadata: Arc<dyn TurnAnalyticsMetadata>,
         call_id: String,
         tool_name: &'static str,
         handler_span: Span,
     ) -> Self {
         Self {
-            analytics: session.services.analytics_events_client.clone(),
             thread_id: session.thread_id.to_string(),
             turn_id,
-            turn_metadata,
             call_id,
             cell_id: None,
             tool_name,
-            started_at_ms: codex_analytics::now_unix_millis(),
-            status: CodeModeToolCallStatus::Interrupted,
             handler_span,
             extensions: Arc::clone(&session.services.extensions),
         }
@@ -49,12 +36,9 @@ impl CodeModeToolCallGuard {
 
     pub(super) fn finish(&mut self, success: bool) {
         let mut outcome = "failed";
-        self.status = if success {
+        if success {
             outcome = "completed";
-            CodeModeToolCallStatus::Completed
-        } else {
-            CodeModeToolCallStatus::Failed
-        };
+        }
         self.handler_span.record("outcome", outcome);
     }
 
@@ -86,23 +70,6 @@ impl CodeModeToolCallGuard {
             },
             "code-mode host operation completed"
         );
-    }
-}
-
-impl Drop for CodeModeToolCallGuard {
-    fn drop(&mut self) {
-        self.analytics
-            .track_code_mode_tool_call(CodeModeToolCallFact::Completed {
-                thread_id: self.thread_id.clone(),
-                turn_id: self.turn_id.clone(),
-                turn_metadata: self.turn_metadata.clone(),
-                call_id: self.call_id.clone(),
-                cell_id: self.cell_id.clone(),
-                tool_name: self.tool_name.to_string(),
-                started_at_ms: self.started_at_ms,
-                completed_at_ms: codex_analytics::now_unix_millis(),
-                status: self.status,
-            });
     }
 }
 

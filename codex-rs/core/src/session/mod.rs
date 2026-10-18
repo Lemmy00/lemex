@@ -59,15 +59,11 @@ use crate::turn_metadata::TurnMetadataState;
 use crate::turn_timing::now_unix_timestamp_ms;
 use async_channel::Receiver;
 use async_channel::Sender;
-use chrono::DateTime;
 use chrono::Local;
 use chrono::Utc;
-use codex_analytics::AnalyticsEventsClient;
-use codex_analytics::ImagePreparationFact;
-use codex_analytics::ImagePreparationMetadata;
-use codex_analytics::SubAgentThreadStartedInput;
-use codex_analytics::ThreadInitializationMode;
-use codex_analytics::TurnCodexErrorFact;
+
+use crate::image_preparation::ImagePreparationMetadata;
+
 use codex_async_utils::OrCancelExt;
 use codex_attachment_store::AttachmentStore;
 use codex_attachment_store::InlineAttachmentStore;
@@ -106,7 +102,6 @@ use codex_otel::current_span_w3c_trace_context;
 use codex_otel::set_parent_from_w3c_trace_context;
 use codex_prompts::render_model_instructions;
 use codex_protocol::ResponseUsageMetadata;
-use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::ElicitationRequest;
 use codex_protocol::approvals::ElicitationRequestEvent;
@@ -225,7 +220,6 @@ use crate::config::StartedNetworkProxy;
 use crate::config::resolve_web_search_mode_for_turn;
 use crate::context_manager::ContextManager;
 use crate::context_manager::HistoryReplacement;
-use crate::thread_rollout_truncation::initial_history_has_prior_user_turns;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerSource;
 use codex_config::types::McpServerConfig;
@@ -287,7 +281,6 @@ pub(crate) use self::input_queue::TurnInput;
 pub(crate) use self::input_queue::TurnInputQueue;
 pub(crate) use self::input_queue::UserInputMetadata;
 use self::review::spawn_review_thread;
-use self::session::AppServerClientMetadata;
 use self::session::Session;
 use self::session::SessionConfiguration;
 use self::session::SessionSettingsCommit;
@@ -483,7 +476,6 @@ pub(crate) struct SessionSpawnArgs {
     pub(crate) turn_extension_init: ExtensionDataInit,
     pub(crate) client_mcp_extensions: ClientMcpExtensions,
     pub(crate) reserved_thread_id: Option<ThreadId>,
-    pub(crate) analytics_events_client: Option<AnalyticsEventsClient>,
     pub(crate) image_store: Arc<dyn AttachmentStore>,
     pub(crate) thread_store: Arc<dyn ThreadStore>,
     pub(crate) attestation_provider: Option<Arc<dyn AttestationProvider>>,
@@ -594,7 +586,6 @@ impl Session {
             turn_extension_init,
             client_mcp_extensions,
             reserved_thread_id,
-            analytics_events_client,
             image_store,
             thread_store,
             attestation_provider,
@@ -950,7 +941,6 @@ impl Session {
             reserved_thread_id,
             environment_manager,
             inherited_environments,
-            analytics_events_client,
             image_store,
             thread_store,
             parent_rollout_thread_trace,
@@ -1235,17 +1225,6 @@ async fn thread_title_from_thread_store(
 }
 
 impl Session {
-    pub(crate) async fn app_server_client_metadata(&self) -> AppServerClientMetadata {
-        let state = self.state.lock().await;
-        AppServerClientMetadata {
-            client_name: state.session_configuration.app_server_client_name.clone(),
-            client_version: state
-                .session_configuration
-                .app_server_client_version
-                .clone(),
-        }
-    }
-
     fn managed_network_proxy_active_for_permission_profile(
         permission_profile: &PermissionProfile,
     ) -> bool {
@@ -1518,13 +1497,6 @@ impl Session {
         state.auto_compact_window_snapshot()
     }
 
-    pub(crate) async fn estimated_tokens_after_last_model_generated_item(&self) -> i64 {
-        let state = self.state.lock().await;
-        state
-            .history
-            .estimated_tokens_after_last_model_generated_item()
-    }
-
     pub(crate) async fn total_token_usage(&self) -> Option<TokenUsage> {
         let state = self.state.lock().await;
         state.token_info().map(|info| info.total_token_usage)
@@ -1591,12 +1563,6 @@ impl Session {
         state.merge_connector_selection(connector_ids)
     }
 
-    // Returns the connector IDs currently selected for this session.
-    pub(crate) async fn get_connector_selection(&self) -> HashSet<String> {
-        let state = self.state.lock().await;
-        state.get_connector_selection()
-    }
-
     // Clears connector IDs that were accumulated for explicit selection.
     pub(crate) async fn clear_connector_selection(&self) {
         let mut state = self.state.lock().await;
@@ -1618,11 +1584,6 @@ impl Session {
                 ),
             )
         };
-        let has_prior_user_turns = initial_history_has_prior_user_turns(&conversation_history);
-        {
-            let mut state = self.state.lock().await;
-            state.set_next_turn_is_first(!has_prior_user_turns);
-        }
         let turn_context = match conversation_history {
             InitialHistory::New | InitialHistory::Cleared => {
                 // Defer initial context insertion until the first real turn starts so
@@ -2355,17 +2316,6 @@ impl Session {
         }
     }
 
-    /// Record a terminal CodexErr before the app-server completion notification is reduced.
-    pub(crate) fn track_turn_codex_error(&self, turn_context: &TurnContext, error: &CodexErr) {
-        self.services
-            .analytics_events_client
-            .track_turn_codex_error(TurnCodexErrorFact::from_codex_err(
-                self.thread_id.to_string(),
-                turn_context.sub_id.clone(),
-                error,
-            ));
-    }
-
     /// Returns the reviewer pool installed by the Guardian extension.
     pub(crate) fn guardian_review_session(&self) -> Option<Arc<GuardianReviewSessionManager>> {
         self.services
@@ -2420,24 +2370,6 @@ impl Session {
             id: turn_context.sub_id.clone(),
             msg,
         };
-        // Private reviewers have no app-server listener; publicly resumed Guardian threads do.
-        if matches!(
-            &turn_context.session_source,
-            SessionSource::SubAgent(SubAgentSource::Other(name))
-                if name == crate::guardian::GUARDIAN_REVIEWER_NAME
-        ) && self.services.analytics_events_client.is_enabled()
-            && turn_context.parent_thread_id.is_some()
-            && self
-                .state
-                .lock()
-                .await
-                .session_configuration
-                .trusted_guardian_reviewer
-        {
-            self.services
-                .analytics_events_client
-                .track_guardian_session_event(self.thread_id, &event);
-        }
         self.send_event_raw(event).await;
         self.maybe_notify_parent_of_terminal_turn(turn_context, &legacy_source)
             .await;
@@ -3598,7 +3530,7 @@ impl Session {
         turn_context: &TurnContext,
         model_info: &ModelInfo,
         mut items: Vec<ResponseItemEnvelope>,
-        image_preparations: Vec<ImagePreparationMetadata>,
+        _image_preparations: Vec<ImagePreparationMetadata>,
     ) {
         // Save the originating history budget for replay.
         // Preserve any existing tool-specific override.
@@ -3687,14 +3619,6 @@ impl Session {
             state
                 .history
                 .record_annotated_items(&mut items, model_info.truncation_policy.into());
-        }
-        for image in image_preparations {
-            self.services
-                .analytics_events_client
-                .track_image_preparation(ImagePreparationFact {
-                    turn_id: turn_context.sub_id.clone(),
-                    metadata: image,
-                });
         }
         let rollout_items: Vec<RolloutItem> =
             items.into_iter().map(RolloutItem::ResponseItem).collect();
@@ -5189,54 +5113,6 @@ fn apply_prepared_image_file_ids(
             }
         }
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn emit_subagent_session_started(
-    analytics_events_client: &AnalyticsEventsClient,
-    client_metadata: AppServerClientMetadata,
-    session_id: SessionId,
-    thread_id: ThreadId,
-    parent_thread_id: Option<ThreadId>,
-    thread_config: ThreadConfigSnapshot,
-    subagent_source: SubAgentSource,
-    resumed_created_at: Option<DateTime<Utc>>,
-) {
-    let initialization_mode = if resumed_created_at.is_some() {
-        ThreadInitializationMode::Resumed
-    } else {
-        ThreadInitializationMode::New
-    };
-    let created_at =
-        u64::try_from(resumed_created_at.unwrap_or_else(Utc::now).timestamp()).unwrap_or_default();
-    let AppServerClientMetadata {
-        client_name,
-        client_version,
-    } = client_metadata;
-    if (client_name.is_none() || client_version.is_none())
-        && subagent_source.kind() != crate::guardian::GUARDIAN_REVIEWER_NAME
-    {
-        tracing::warn!("skipping subagent thread analytics: missing inherited client metadata");
-        return;
-    }
-    let input = SubAgentThreadStartedInput {
-        session_id: session_id.to_string(),
-        thread_id: thread_id.to_string(),
-        parent_thread_id: parent_thread_id.map(|thread_id| thread_id.to_string()),
-        forked_from_thread_id: thread_config
-            .forked_from_thread_id
-            .map(|thread_id| thread_id.to_string()),
-        product_client_id: thread_config.originator.clone(),
-        client_name,
-        client_version,
-        model: thread_config.model,
-        ephemeral: thread_config.ephemeral,
-        thread_source: thread_config.thread_source,
-        subagent_source,
-        initialization_mode,
-        created_at,
-    };
-    analytics_events_client.track_subagent_thread_started(input);
 }
 
 /// Builds hook configuration for one config snapshot, including any enabled plugin hooks.

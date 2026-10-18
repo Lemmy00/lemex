@@ -57,3 +57,5 @@ pub fn is_skill_prompt_fragment(text: &str) -> bool {
         text,
     )
 }
+
+pub use invocation::{InvocationType, SkillInvocation, SkillInvocationLocation};

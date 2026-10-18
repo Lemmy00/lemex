@@ -23,7 +23,6 @@ use crate::tools::sandboxing::ApprovalStore;
 use crate::unified_exec::UnifiedExecProcessManager;
 use arc_swap::ArcSwap;
 use arc_swap::ArcSwapOption;
-use codex_analytics::AnalyticsEventsClient;
 use codex_attachment_store::AttachmentStore;
 use codex_core_plugins::PluginsManager;
 use codex_extension_api::ExtensionData;
@@ -55,7 +54,6 @@ pub(crate) struct SessionServices {
     pub(crate) mcp_handler_cache: McpHandlerCache,
     pub(crate) unified_exec_manager: UnifiedExecProcessManager,
     pub(crate) elicitations: ElicitationService,
-    pub(crate) analytics_events_client: AnalyticsEventsClient,
     pub(crate) hooks: ArcSwap<Hooks>,
     pub(crate) rollout_thread_trace: ThreadTraceContext,
     pub(crate) user_shell: Arc<crate::shell::Shell>,

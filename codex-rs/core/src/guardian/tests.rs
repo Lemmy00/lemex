@@ -15,7 +15,6 @@ use crate::session::session::Session;
 use crate::session::tests::update_turn_settings_for_test;
 use crate::session::turn_context::TurnContext;
 use crate::test_support;
-use codex_analytics::GuardianApprovalRequestSource;
 use codex_config::ConfigLayerStack;
 use codex_config::FeatureRequirementsToml;
 use codex_config::NetworkConstraints;
@@ -45,6 +44,7 @@ use codex_protocol::TranscriptFormat;
 use codex_protocol::approvals::GuardianAssessmentAction;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::guardian_diagnostics::GuardianApprovalRequestSource;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
@@ -1987,7 +1987,7 @@ async fn guardian_request_model_for_auto_review(
     String,
     String,
     String,
-    codex_analytics::GuardianReviewAnalyticsResult,
+    codex_protocol::guardian_diagnostics::GuardianReviewDiagnostics,
 )> {
     let server = start_mock_server().await;
     let guardian_assessment = serde_json::json!({
@@ -2323,7 +2323,7 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
     ThreadId::from_string(guardian_thread_id).expect("guardian thread id should be a valid UUID");
     assert!(matches!(
         metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkNew)
+        Some(codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::TrunkNew)
     ));
     let request = request_log.single_request();
     let turn_metadata: serde_json::Value = serde_json::from_str(
@@ -2743,19 +2743,19 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
     assert_eq!(fourth_assessment.outcome, GuardianAssessmentOutcome::Allow);
     assert!(matches!(
         first_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkNew)
+        Some(codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::TrunkNew)
     ));
     assert!(matches!(
         second_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkReused)
+        Some(codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::TrunkReused)
     ));
     assert!(matches!(
         third_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkNew)
+        Some(codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::TrunkNew)
     ));
     assert!(matches!(
         fourth_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkNew)
+        Some(codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::TrunkNew)
     ));
     ThreadId::from_string(
         first_metadata
@@ -2954,7 +2954,7 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
     assert_eq!(first_assessment.rationale, "first guardian rationale");
     assert!(matches!(
         first_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkNew)
+        Some(codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::TrunkNew)
     ));
 
     session
@@ -3008,7 +3008,7 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
     assert_eq!(second_assessment.rationale, "second guardian rationale");
     assert!(matches!(
         second_metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkReused)
+        Some(codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::TrunkReused)
     ));
 
     assert_eq!(
@@ -3178,7 +3178,7 @@ async fn guardian_review_retries_transient_session_failure_then_approves() -> an
     assert_eq!(metadata.attempt_count, 2);
     assert!(matches!(
         metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkReused)
+        Some(codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::TrunkReused)
     ));
     assert_eq!(request_log.requests().len(), 2);
     Ok(())
@@ -3268,7 +3268,7 @@ async fn guardian_review_retries_two_parse_failures_then_approves() -> anyhow::R
     assert_eq!(metadata.attempt_count, 3);
     assert!(matches!(
         metadata.guardian_session_kind,
-        Some(codex_analytics::GuardianReviewSessionKind::TrunkReused)
+        Some(codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::TrunkReused)
     ));
     assert_eq!(request_log.requests().len(), 3);
     Ok(())

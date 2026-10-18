@@ -1042,7 +1042,8 @@ async fn review_guardian_mcp_elicitation(
         crate::guardian::GuardianReviewOptions {
             require_guardian: strict_auto_review,
             plugin_attribution_override: None,
-            approval_request_source: codex_analytics::GuardianApprovalRequestSource::MainTurn,
+            approval_request_source:
+                codex_protocol::guardian_diagnostics::GuardianApprovalRequestSource::MainTurn,
             external_cancel: Some(cancellation_token),
             require_synchronous_review,
         },

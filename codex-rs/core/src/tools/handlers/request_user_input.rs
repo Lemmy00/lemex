@@ -152,11 +152,7 @@ impl RequestUserInputHandler {
     }
 }
 
-impl CoreToolRuntime for RequestUserInputHandler {
-    fn is_builtin_control_tool(&self) -> bool {
-        true
-    }
-}
+impl CoreToolRuntime for RequestUserInputHandler {}
 
 #[cfg(test)]
 #[path = "request_user_input_tests.rs"]

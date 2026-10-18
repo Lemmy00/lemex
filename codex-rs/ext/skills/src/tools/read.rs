@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use codex_analytics::InvocationType;
+use crate::invocation::InvocationType;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::ToolCall;
 use codex_extension_api::ToolExecutor;

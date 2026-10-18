@@ -3,18 +3,14 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
 
-use codex_analytics::AnalyticsEventsClient;
-use codex_analytics::InvocationType;
-use codex_analytics::SkillInvocation;
-use codex_analytics::SkillInvocationLocation;
-use codex_analytics::build_track_events_context;
+use crate::invocation::InvocationType;
+
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionMetrics;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::JsonToolOutput;
 use codex_extension_api::ResponsesApiTool;
 use codex_extension_api::SelectedPluginSnapshot;
-use codex_extension_api::ThreadOriginator;
 use codex_extension_api::ToolCall;
 use codex_extension_api::ToolExecutor;
 use codex_extension_api::ToolName;
@@ -94,12 +90,9 @@ pub(crate) fn skill_tools(
 
 #[derive(Clone)]
 pub(crate) struct SkillAnalytics {
-    client: AnalyticsEventsClient,
     telemetry: Option<Arc<SessionTelemetry>>,
     metrics: Option<Arc<dyn ExtensionMetrics>>,
     turn_metrics: Option<Arc<SkillTurnMetrics>>,
-    thread_id: String,
-    product_client_id: String,
 }
 
 impl SkillAnalytics {
@@ -107,11 +100,7 @@ impl SkillAnalytics {
         session_store: &ExtensionData,
         thread_store: &ExtensionData,
     ) -> Option<Self> {
-        let client = session_store.get::<AnalyticsEventsClient>()?;
-        let originator = thread_store.get::<ThreadOriginator>()?;
-
         Some(Self {
-            client: client.as_ref().clone(),
             telemetry: session_store.get::<SessionTelemetry>(),
             metrics: session_store
                 .get::<SkillsSessionState>()
@@ -123,8 +112,6 @@ impl SkillAnalytics {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .upgrade(),
-            thread_id: thread_store.level_id().to_string(),
-            product_client_id: originator.0.clone(),
         })
     }
 
@@ -184,26 +171,6 @@ impl SkillAnalytics {
                 ],
             );
         }
-        self.client.track_skill_invocations(
-            build_track_events_context(
-                model,
-                self.thread_id.clone(),
-                turn_id,
-                self.product_client_id.clone(),
-                turn_metrics.and_then(|turn| turn.turn_metadata.clone()),
-            ),
-            vec![SkillInvocation {
-                skill_name: skill.name.clone(),
-                location: SkillInvocationLocation::Resource {
-                    id: skill.main_prompt.as_str().to_string(),
-                    skill_id: skill.canonical_skill_id.clone(),
-                    scope: skill.analytics_scope,
-                },
-                plugin_id: skill.plugin_id.clone(),
-                remote_plugin_id: None,
-                invocation_type,
-            }],
-        );
     }
 }
 

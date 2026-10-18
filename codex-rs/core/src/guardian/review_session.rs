@@ -21,9 +21,6 @@ use std::sync::atomic::Ordering;
 #[cfg(test)]
 use std::time::Duration;
 
-use codex_analytics::GuardianReviewAnalyticsResult;
-use codex_analytics::GuardianReviewSessionAnalyticsParams;
-use codex_analytics::GuardianReviewSessionKind;
 use codex_extension_api::Instructions;
 use codex_guardian_reviewer::ConversationCheckpoint;
 use codex_guardian_reviewer::ConversationState;
@@ -36,6 +33,9 @@ use codex_protocol::ThreadId;
 use codex_protocol::config_types::AutoCompactTokenLimitScope;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::guardian_diagnostics::GuardianReviewDiagnostics;
+use codex_protocol::guardian_diagnostics::GuardianReviewSessionDiagnostics;
+use codex_protocol::guardian_diagnostics::GuardianReviewSessionKind;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ImageDetail;
 use codex_protocol::models::ImageReference;
@@ -356,7 +356,7 @@ async fn run_review_on_session(
         )
     };
     let mut analytics_result =
-        GuardianReviewAnalyticsResult::from_session(GuardianReviewSessionAnalyticsParams {
+        GuardianReviewDiagnostics::from_session(GuardianReviewSessionDiagnostics {
             guardian_thread_id: review_session.session.thread_id().to_string(),
             guardian_session_kind,
             guardian_model: review_model.model.clone(),

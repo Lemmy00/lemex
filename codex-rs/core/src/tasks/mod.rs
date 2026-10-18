@@ -37,8 +37,6 @@ use crate::state::ActiveTurn;
 use crate::state::RunningTask;
 use crate::state::TaskKind;
 use crate::state::TurnState;
-use codex_analytics::TurnProfileFact;
-use codex_analytics::TurnTokenUsageFact;
 use codex_context_fragments::RenderedFragment;
 use codex_otel::SessionTelemetry;
 use codex_otel::TURN_E2E_DURATION_METRIC;
@@ -646,7 +644,6 @@ impl Session {
                     err.details(),
                 )
                 .await;
-                self.track_turn_codex_error(turn_context.as_ref(), &err);
                 self.send_event(
                     turn_context.as_ref(),
                     EventMsg::Error(err.to_error_event(/*message_prefix*/ None)),
@@ -780,13 +777,6 @@ impl Session {
                 "codex.turn.token_usage.total_tokens",
                 turn_token_usage.total_tokens,
             );
-            self.services
-                .analytics_events_client
-                .track_turn_token_usage(TurnTokenUsageFact {
-                    turn_id: turn_context.sub_id.clone(),
-                    thread_id: self.thread_id.to_string(),
-                    token_usage: turn_token_usage,
-                });
             token_usage_by_model.emit(turn_telemetry, tmp_mem);
         }
         emit_turn_memory_metric(
@@ -801,16 +791,9 @@ impl Session {
             &[],
         );
         let started_at = turn_context.turn_timing_state.started_at_unix_secs().await;
-        let (completed_at, duration_ms, profile) = turn_context
-            .turn_timing_state
-            .complete_profile_and_duration_ms()
-            .await;
-        self.services
-            .analytics_events_client
-            .track_turn_profile(TurnProfileFact {
-                turn_id: turn_context.sub_id.clone(),
-                profile,
-            });
+        let (completed_at, duration_ms) =
+            turn_context.turn_timing_state.complete_duration_ms().await;
+
         let idle_cause = if matches!(
             abort_reason.as_ref(),
             Some(TurnAbortReason::Interrupted | TurnAbortReason::BudgetLimited)
@@ -999,17 +982,11 @@ impl Session {
             .turn_timing_state
             .started_at_unix_secs()
             .await;
-        let (completed_at, duration_ms, profile) = task
+        let (completed_at, duration_ms) = task
             .turn_context
             .turn_timing_state
-            .complete_profile_and_duration_ms()
+            .complete_duration_ms()
             .await;
-        self.services
-            .analytics_events_client
-            .track_turn_profile(TurnProfileFact {
-                turn_id: task.turn_context.sub_id.clone(),
-                profile,
-            });
         self.emit_turn_abort_lifecycle(reason.clone(), task.turn_context.extension_data.as_ref())
             .await;
         let event = EventMsg::TurnAborted(TurnAbortedEvent {

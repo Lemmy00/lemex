@@ -4,7 +4,6 @@ use anyhow::Result;
 use anyhow::bail;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::TestAppServer;
-use app_test_support::start_analytics_events_server;
 use app_test_support::write_chatgpt_auth;
 use codex_app_server_protocol::PluginUninstallParams;
 use codex_app_server_protocol::PluginUninstallResponse;
@@ -58,37 +57,6 @@ enabled = true
     let response = uninstall_plugin(&mut mcp, "sample-plugin@debug").await?;
     assert_eq!(response, PluginUninstallResponse {});
 
-    Ok(())
-}
-
-#[tokio::test]
-async fn plugin_uninstall_tracks_analytics_event() -> Result<()> {
-    let analytics_server = start_analytics_events_server().await?;
-    let codex_home = TempDir::new()?;
-    write_installed_plugin(&codex_home, "debug", "sample-plugin")?;
-    std::fs::write(
-        codex_home.path().join("config.toml"),
-        format!(
-            "chatgpt_base_url = \"{}\"\n\n[features]\nplugins = true\n\n[plugins.\"sample-plugin@debug\"]\nenabled = true\n",
-            analytics_server.uri()
-        ),
-    )?;
-    write_chatgpt_auth(
-        codex_home.path(),
-        ChatGptAuthFixture::new("chatgpt-token")
-            .account_id("account-123")
-            .chatgpt_user_id("user-123")
-            .chatgpt_account_id("account-123"),
-        AuthCredentialsStoreMode::File,
-    )?;
-
-    let mut mcp = TestAppServer::builder()
-        .with_codex_home(codex_home.path())
-        .build_initialized_with_timeout(DEFAULT_TIMEOUT)
-        .await?;
-
-    let response = uninstall_plugin(&mut mcp, "sample-plugin@debug").await?;
-    assert_eq!(response, PluginUninstallResponse {});
     Ok(())
 }
 

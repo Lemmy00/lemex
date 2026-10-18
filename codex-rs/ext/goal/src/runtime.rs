@@ -14,8 +14,6 @@ use codex_protocol::protocol::ThreadGoal;
 
 use crate::accounting::BudgetLimitedGoalDisposition;
 use crate::accounting::GoalAccountingState;
-use crate::analytics::GoalAnalytics;
-use crate::analytics::GoalEventAttribution;
 use crate::events::GoalEventEmitter;
 use crate::metrics::GoalMetrics;
 use crate::steering::continuation_steering_item;
@@ -30,7 +28,6 @@ pub struct GoalRuntimeHandle {
 }
 
 pub(crate) struct GoalRuntimeConfig {
-    pub(crate) analytics: GoalAnalytics,
     pub(crate) enabled: bool,
     pub(crate) tools_available_for_thread: bool,
     pub(crate) tools_visible_for_thread: bool,
@@ -47,7 +44,6 @@ pub(crate) enum ActiveGoalStopReason {
 struct GoalRuntimeInner {
     thread_id: ThreadId,
     state_dbs: Arc<codex_state::StateRuntime>,
-    analytics: GoalAnalytics,
     event_emitter: GoalEventEmitter,
     metrics: GoalMetrics,
     thread_manager: Weak<ThreadManager>,
@@ -101,7 +97,6 @@ impl GoalRuntimeHandle {
             inner: Arc::new(GoalRuntimeInner {
                 thread_id,
                 state_dbs,
-                analytics: config.analytics,
                 event_emitter,
                 metrics,
                 thread_manager,
@@ -203,9 +198,6 @@ impl GoalRuntimeHandle {
             .is_some_and(|previous_goal| previous_goal.goal_id != goal.goal_id);
         if previous_goal.is_none() || replaced_existing_goal {
             self.inner.metrics.record_created();
-            self.inner
-                .analytics
-                .created(&goal, GoalEventAttribution::NoTurn);
         }
         let previous_status = previous_goal
             .as_ref()
@@ -216,9 +208,6 @@ impl GoalRuntimeHandle {
         self.inner
             .metrics
             .record_terminal_if_status_changed(previous_status, &goal);
-        self.inner
-            .analytics
-            .status_changed(&goal, previous_status, GoalEventAttribution::NoTurn);
         let objective_changed = previous_goal.as_ref().is_some_and(|previous_goal| {
             !replaced_existing_goal && previous_goal.objective != goal.objective
         });
@@ -257,13 +246,12 @@ impl GoalRuntimeHandle {
 
     pub async fn apply_external_goal_clear(
         &self,
-        goal: codex_state::ThreadGoal,
+        _goal: codex_state::ThreadGoal,
     ) -> Result<(), String> {
         if !self.is_enabled() {
             return Ok(());
         }
 
-        self.inner.analytics.cleared(&goal);
         self.inner.accounting_state.clear_active_goal();
         Ok(())
     }
@@ -383,11 +371,6 @@ impl GoalRuntimeHandle {
         self.inner
             .metrics
             .record_terminal_if_status_changed(previous_status, &goal);
-        self.inner.analytics.status_changed(
-            &goal,
-            previous_status,
-            GoalEventAttribution::Turn(turn_id),
-        );
         self.inner.accounting_state.clear_active_goal();
         let goal = protocol_goal_from_state(goal);
         self.inner.event_emitter.thread_goal_updated(
@@ -573,14 +556,6 @@ impl GoalRuntimeHandle {
                 self.inner
                     .metrics
                     .record_terminal_if_status_changed(previous_status, &goal);
-                self.inner
-                    .analytics
-                    .usage_accounted(&goal, GoalEventAttribution::Turn(turn_id));
-                self.inner.analytics.status_changed(
-                    &goal,
-                    previous_status,
-                    GoalEventAttribution::Turn(turn_id),
-                );
                 accounting.mark_progress_accounted_for_status(
                     turn_id,
                     &snapshot,
@@ -635,14 +610,6 @@ impl GoalRuntimeHandle {
                 self.inner
                     .metrics
                     .record_terminal_if_status_changed(previous_status, &goal);
-                self.inner
-                    .analytics
-                    .usage_accounted(&goal, GoalEventAttribution::NoTurn);
-                self.inner.analytics.status_changed(
-                    &goal,
-                    previous_status,
-                    GoalEventAttribution::NoTurn,
-                );
                 accounting.mark_idle_progress_accounted_for_status(
                     &snapshot,
                     goal.status,

@@ -98,7 +98,7 @@ class DependencyTests(unittest.TestCase):
             result = deps.prepare("aarch64-unknown-linux-gnu")
         build.assert_called_once()
         self.assertEqual(result["LIBCAP_STATIC"], "1")
-        self.assertEqual(result["PKG_CONFIG_PATH"], str(self.root / "aarch64-unknown-linux-gnu/libcap-2.78/lib/pkgconfig") + ":/custom/pkgconfig")
+        self.assertEqual(result["PKG_CONFIG_PATH"], str((self.root / "aarch64-unknown-linux-gnu/libcap-2.78/lib/pkgconfig").resolve()) + ":/custom/pkgconfig")
 
     def test_openssl_missing_uses_cargos_bundled_build(self):
         self.ready(library_available=False)

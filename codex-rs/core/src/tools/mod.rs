@@ -3,7 +3,6 @@ pub(crate) mod call_trace;
 mod catalog_parameters;
 pub(crate) mod code_mode;
 pub(crate) mod context;
-mod control_tool_analytics;
 pub(crate) mod events;
 mod executed_tool_calls;
 pub(crate) mod handlers;

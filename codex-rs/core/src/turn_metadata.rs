@@ -16,7 +16,6 @@ use tokio_util::task::AbortOnDropHandle;
 use crate::responses_metadata::AGENT_NAME_KEY;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CodexResponsesRequestKind;
-use crate::responses_metadata::MAX_EXTRA_METADATA_VALUE_BYTES;
 use crate::responses_metadata::PARENT_TURN_ID_KEY;
 use crate::responses_metadata::ROOT_TURN_ID_KEY;
 use crate::responses_metadata::TurnMetadataWorkspace;
@@ -48,6 +47,7 @@ const MODEL_KEY: &str = "model";
 const CODEX_VERSION_KEY: &str = "codex_version";
 const REASONING_EFFORT_KEY: &str = "reasoning_effort";
 const USER_INPUT_REQUESTED_DURING_TURN_KEY: &str = "user_input_requested_during_turn";
+#[cfg(test)]
 const WORKSPACE_KIND_KEY: &str = "workspace_kind";
 
 fn is_targeted_continuation(value: &str) -> bool {
@@ -184,36 +184,6 @@ pub(crate) struct TurnMetadataState {
     user_input_requested_during_turn: AtomicBool,
     enrichment_task: Mutex<Option<AbortOnDropHandle<()>>>,
     git_enrichment_complete: watch::Sender<bool>,
-}
-
-impl codex_analytics::TurnAnalyticsMetadata for TurnMetadataState {
-    fn root_turn_id(&self) -> Option<String> {
-        TurnMetadataState::root_turn_id(self)
-    }
-
-    fn turn_trigger(&self) -> Option<String> {
-        self.turn_trigger
-            .get()
-            .filter(|trigger| trigger.len() <= MAX_EXTRA_METADATA_VALUE_BYTES)
-            .cloned()
-    }
-
-    fn codex_turn_source(&self) -> Option<String> {
-        // Match Responses metadata precedence without copying oversized client values to analytics.
-        let configured_metadata = self
-            .responses_api_metadata
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let client_metadata = self
-            .responsesapi_client_metadata
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        configured_metadata
-            .get("source")
-            .or_else(|| client_metadata.get("source"))
-            .filter(|source| source.len() <= MAX_EXTRA_METADATA_VALUE_BYTES)
-            .cloned()
-    }
 }
 
 impl TurnMetadataState {
@@ -415,6 +385,7 @@ impl TurnMetadataState {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = metadata;
     }
 
+    #[cfg(test)]
     pub(crate) fn workspace_kind(&self) -> Option<String> {
         self.responsesapi_client_metadata
             .read()

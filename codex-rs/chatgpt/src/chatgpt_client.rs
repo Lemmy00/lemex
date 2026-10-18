@@ -50,14 +50,6 @@ fn chatgpt_client(factory: HttpClientFactory) -> HttpClient {
     client
 }
 
-/// Make a GET request to the ChatGPT backend API.
-pub(crate) async fn chatgpt_get_request<T: DeserializeOwned>(
-    config: &Config,
-    path: String,
-) -> anyhow::Result<T> {
-    chatgpt_get_request_with_timeout(config, path, /*timeout*/ None).await
-}
-
 pub(crate) async fn chatgpt_get_request_with_timeout<T: DeserializeOwned>(
     config: &Config,
     path: String,

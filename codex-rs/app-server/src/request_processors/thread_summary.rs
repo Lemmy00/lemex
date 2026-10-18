@@ -4,6 +4,8 @@ use chrono::DateTime;
 #[cfg(test)]
 use chrono::Utc;
 use codex_protocol::config_types::MultiAgentMode;
+#[cfg(test)]
+use std::io::Error as IoError;
 
 #[cfg(test)]
 pub(crate) async fn read_summary_from_rollout(

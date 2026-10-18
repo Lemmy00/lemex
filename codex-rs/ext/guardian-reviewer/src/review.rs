@@ -7,10 +7,10 @@ use crate::GuardianReviewSessionLimits;
 use crate::ReviewDenials;
 use crate::ReviewReport;
 use crate::ReviewRequest;
-use codex_analytics::GuardianReviewAnalyticsResult;
 use codex_extension_api::ExtensionFuture;
 use codex_extension_api::SynchronousApprovalReviewer;
 use codex_protocol::approvals::GuardianReviewReason;
+use codex_protocol::guardian_diagnostics::GuardianReviewDiagnostics;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
@@ -53,7 +53,7 @@ pub trait ReviewHost: Send + Sync {
     ) -> impl Future<
         Output = (
             GuardianReviewOutcome,
-            GuardianReviewAnalyticsResult,
+            GuardianReviewDiagnostics,
             Option<Self::Evidence>,
         ),
     > + Send;
@@ -138,7 +138,10 @@ impl<H: ReviewHost> SynchronousApprovalReviewer for ReviewRequest<'_, H> {
             } else {
                 review.await
             };
-            let completed_at_ms = codex_analytics::now_unix_millis();
+            let completed_at_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
             let cached_approval = matches!(outcome, GuardianReviewOutcome::CachedApproval);
             let completed = report.complete(
                 outcome,
@@ -151,12 +154,7 @@ impl<H: ReviewHost> SynchronousApprovalReviewer for ReviewRequest<'_, H> {
                 self.telemetry
                     .guardian_assessment(&completed.event, completed.assessment_outcome);
             }
-            report.track(
-                self.telemetry,
-                self.analytics,
-                completed.analytics,
-                completed_at_ms,
-            );
+            report.track(self.telemetry, completed.analytics, completed_at_ms);
             if let Some(message) = completed.warning {
                 self.host
                     .emit(EventMsg::GuardianWarning(WarningEvent { message }))

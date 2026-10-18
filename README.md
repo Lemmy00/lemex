@@ -4,6 +4,8 @@ Lemex is a local coding agent based on OpenAI Codex. It runs as `lemex` and keep
 
 External analytics and feedback reporting are removed. Local logs and token usage are preserved. Custom OpenTelemetry exporters require explicit configuration.
 
+Lemex does not include ChatGPT cloud tasks, account sign-in, or the Codex desktop-app installer. Developer test tooling is kept outside the installed CLI.
+
 Normal sessions use the embedded backend. The persistent background daemon is opt-in, and never downloads or updates itself.
 
 ## Install

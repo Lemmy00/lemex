@@ -1,7 +1,6 @@
 use super::*;
 use crate::outgoing_message::OutgoingEnvelope;
 use crate::outgoing_message::OutgoingMessage;
-use codex_analytics::AnalyticsEventsClient;
 use codex_core::config::ConfigBuilder;
 use codex_feedback::CodexFeedback;
 use codex_state::LogWriteFailureReporter;
@@ -20,10 +19,7 @@ async fn log_write_warning_is_broadcast_once() -> anyhow::Result<()> {
         config.feedback_enabled = feedback_enabled;
         let feedback = CodexFeedback::new();
         let (tx, mut rx) = mpsc::channel(/*buffer*/ 4);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let reporter = LogWriteWarningReporter::new(feedback.clone(), &outgoing, &config);
         reporter.report_failure("SQLite flush failed");
         let OutgoingEnvelope::Broadcast {
@@ -69,10 +65,7 @@ async fn log_write_warning_keeps_feedback_when_sender_is_gone() -> anyhow::Resul
         .await?;
     let feedback = CodexFeedback::new();
     let (tx, mut rx) = mpsc::channel(/*buffer*/ 4);
-    let outgoing = Arc::new(OutgoingMessageSender::new(
-        tx,
-        AnalyticsEventsClient::disabled(),
-    ));
+    let outgoing = Arc::new(OutgoingMessageSender::new(tx));
     let reporter = LogWriteWarningReporter::new(feedback.clone(), &outgoing, &config);
     drop(outgoing);
     reporter.report_failure("SQLite flush failed");
@@ -113,10 +106,7 @@ async fn log_write_warning_reports_failed_sqlite_flush() -> anyhow::Result<()> {
         )
         .await?;
         let (tx, mut rx) = mpsc::channel(/*buffer*/ 4);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            tx,
-            AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(tx));
         let reporter = LogWriteWarningReporter::new(feedback.clone(), &outgoing, &config);
         let initial_reporter: Arc<dyn LogWriteFailureReporter> = if attach_after_failure {
             Arc::new(feedback.clone())

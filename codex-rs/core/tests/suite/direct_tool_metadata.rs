@@ -758,7 +758,7 @@ async fn direct_metadata_limit_respects_provider_support(
         .with_config(configure_metadata.clone());
     // build() always selects the local test environment; all network destinations are the mock.
     let test = builder.build(&server).await?;
-    assert!(test.codex.analytics_enabled());
+    assert!(!test.codex.analytics_enabled());
     wait_for_mcp_server(&test.codex, CODEX_APPS_MCP_SERVER_NAME).await?;
     test.submit_turn_with_approval_and_permission_profile(
         "Use [$calendar](app://calendar) to list events twice.",

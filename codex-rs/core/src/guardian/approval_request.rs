@@ -1,7 +1,7 @@
-use codex_analytics::GuardianReviewedAction;
 use codex_protocol::approvals::GuardianAssessmentAction;
 use codex_protocol::approvals::GuardianCommandSource;
 use codex_protocol::approvals::NetworkApprovalProtocol;
+use codex_protocol::guardian_diagnostics::GuardianReviewedAction;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_utils_path_uri::LegacyAppPathString;

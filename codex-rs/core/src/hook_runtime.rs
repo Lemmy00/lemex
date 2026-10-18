@@ -2,9 +2,8 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_analytics::CompactionTrigger;
-use codex_analytics::HookRunFact;
-use codex_analytics::build_track_events_context;
+use crate::responses_metadata::CompactionTrigger;
+
 use codex_connectors::AppToolPolicyEvaluator;
 use codex_connectors::AppToolPolicyInput;
 use codex_core_plugins::executor_plugin_hook_sources;
@@ -920,7 +919,6 @@ pub(crate) async fn emit_hook_completed_events(
 
     for completed in completed_events {
         emit_hook_completed_metrics(turn_context, &completed);
-        track_hook_completed_analytics(sess, turn_context, &completed);
         if should_emit_hook_notification(&completed.run) {
             sess.send_event(turn_context, EventMsg::HookCompleted(completed))
                 .await;
@@ -942,44 +940,6 @@ fn emit_hook_completed_metrics(turn_context: &TurnContext, completed: &HookCompl
             &tags,
         );
     }
-}
-
-fn track_hook_completed_analytics(
-    sess: &Arc<Session>,
-    turn_context: &Arc<TurnContext>,
-    completed: &HookCompletedEvent,
-) {
-    let (tracking, hook) =
-        hook_run_analytics_payload(sess.thread_id.to_string(), turn_context, completed);
-    sess.services
-        .analytics_events_client
-        .track_hook_run(tracking, hook);
-}
-
-fn hook_run_analytics_payload(
-    thread_id: String,
-    turn_context: &TurnContext,
-    completed: &HookCompletedEvent,
-) -> (codex_analytics::TrackEventsContext, HookRunFact) {
-    (
-        build_track_events_context(
-            turn_context.model_info().slug.clone(),
-            thread_id,
-            completed
-                .turn_id
-                .clone()
-                .unwrap_or_else(|| turn_context.sub_id.clone()),
-            turn_context.originator.clone(),
-            /*turn_metadata*/ None,
-        ),
-        HookRunFact {
-            event_name: completed.run.event_name,
-            hook_source: completed.run.source,
-            handler_type: completed.run.handler_type,
-            execution_mode: completed.run.execution_mode,
-            status: completed.run.status,
-        },
-    )
 }
 
 fn hook_run_metric_tags(run: &HookRunSummary) -> [(&'static str, &'static str); 5] {
@@ -1092,9 +1052,7 @@ mod tests {
     use super::additional_context_messages;
     use super::emit_hook_completed_events;
     use super::emit_hook_started_events;
-    use super::hook_run_analytics_payload;
     use super::hook_run_metric_tags;
-    use crate::session::tests::make_session_and_context;
     use crate::session::tests::make_session_and_context_with_rx;
     use codex_protocol::protocol::HookCompletedEvent;
     use codex_protocol::protocol::HookRunSummary;
@@ -1242,45 +1200,6 @@ mod tests {
                 .sum::<f64>(),
             81.0,
         );
-    }
-
-    #[tokio::test]
-    async fn hook_run_analytics_payload_uses_completed_turn_id() {
-        let (_session, turn_context) = make_session_and_context().await;
-        let completed = HookCompletedEvent {
-            turn_id: Some("turn-from-hook".to_string()),
-            run: sample_hook_run(HookRunStatus::Blocked, HookSource::Project),
-        };
-
-        let (tracking, hook) =
-            hook_run_analytics_payload("thread-123".to_string(), &turn_context, &completed);
-
-        assert_eq!(tracking.thread_id, "thread-123");
-        assert_eq!(tracking.turn_id, "turn-from-hook");
-        assert_eq!(tracking.model_slug, turn_context.model_info().slug);
-        assert_eq!(hook.event_name, HookEventName::Stop);
-        assert_eq!(hook.handler_type, HookHandlerType::Command);
-        assert_eq!(hook.execution_mode, HookExecutionMode::Sync);
-        assert_eq!(hook.hook_source, HookSource::Project);
-        assert_eq!(hook.status, HookRunStatus::Blocked);
-    }
-
-    #[tokio::test]
-    async fn hook_run_analytics_payload_falls_back_to_turn_context_id() {
-        let (_session, turn_context) = make_session_and_context().await;
-        let mut run = sample_hook_run(HookRunStatus::Failed, HookSource::Unknown);
-        run.handler_type = HookHandlerType::Prompt;
-        run.execution_mode = HookExecutionMode::Async;
-        let completed = HookCompletedEvent { turn_id: None, run };
-
-        let (tracking, hook) =
-            hook_run_analytics_payload("thread-123".to_string(), &turn_context, &completed);
-
-        assert_eq!(tracking.turn_id, turn_context.sub_id);
-        assert_eq!(hook.handler_type, HookHandlerType::Prompt);
-        assert_eq!(hook.execution_mode, HookExecutionMode::Async);
-        assert_eq!(hook.hook_source, HookSource::Unknown);
-        assert_eq!(hook.status, HookRunStatus::Failed);
     }
 
     #[test]

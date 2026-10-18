@@ -1,5 +1,3 @@
-# ChatGPT
+# Connector directory support
 
-This crate pertains to first party ChatGPT APIs and products such as Codex agent.
-
-This crate is built and maintained by OpenAI employees. External code contributions are not accepted; please report bugs and request features in the [Codex issue tracker](https://github.com/openai/codex/issues).
+Compatibility support for connector listings used by the app server. Cloud-task downloads and their apply command have been removed from Lemex.

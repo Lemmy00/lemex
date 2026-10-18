@@ -105,15 +105,6 @@ impl CodeModeExecuteHandler {
         telemetry.cell_id = Some(cell_id.to_string());
         exec.session
             .services
-            .analytics_events_client
-            .track_code_mode_tool_call(codex_analytics::CodeModeToolCallFact::CellStarted {
-                thread_id: exec.session.thread_id.to_string(),
-                turn_id: exec.turn.sub_id.clone(),
-                call_id: call_id.clone(),
-                cell_id: cell_id.to_string(),
-            });
-        exec.session
-            .services
             .executed_tool_calls
             .start_cell(&cell_id, &call_id);
         let runtime_cell_id = cell_id.to_string();
@@ -150,14 +141,6 @@ impl CodeModeExecuteHandler {
                 .services
                 .code_mode_service
                 .finish_cell_dispatch(&cell_id);
-            exec.session
-                .services
-                .analytics_events_client
-                .track_code_mode_tool_call(codex_analytics::CodeModeToolCallFact::CellClosed {
-                    thread_id: exec.session.thread_id.to_string(),
-                    turn_id: exec.turn.sub_id.clone(),
-                    cell_id: cell_id.to_string(),
-                });
         }
         exec.session.services.elicitations.wait_until_clear().await;
         let wall_time = response
@@ -224,7 +207,6 @@ impl CodeModeExecuteHandler {
         let mut telemetry = CodeModeToolCallGuard::new(
             &session,
             turn.sub_id.clone(),
-            turn.turn_metadata_state.clone(),
             call_id.clone(),
             PUBLIC_TOOL_NAME,
             handler_span,

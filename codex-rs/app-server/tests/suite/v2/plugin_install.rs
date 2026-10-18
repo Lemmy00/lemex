@@ -10,7 +10,6 @@ use anyhow::Result;
 use anyhow::bail;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::TestAppServer;
-use app_test_support::start_analytics_events_server;
 use app_test_support::write_chatgpt_auth;
 use axum::Json;
 use axum::Router;
@@ -775,50 +774,6 @@ async fn plugin_install_returns_invalid_request_for_missing_marketplace_file() -
 }
 
 #[tokio::test]
-async fn plugin_install_tracks_analytics_when_marketplace_file_cannot_be_read() -> Result<()> {
-    let analytics_server = start_analytics_events_server().await?;
-    let codex_home = TempDir::new()?;
-    write_analytics_config(codex_home.path(), &analytics_server.uri())?;
-    write_chatgpt_auth(
-        codex_home.path(),
-        ChatGptAuthFixture::new("chatgpt-token")
-            .account_id("account-123")
-            .chatgpt_user_id("user-123")
-            .chatgpt_account_id("account-123"),
-        AuthCredentialsStoreMode::File,
-    )?;
-    let marketplace_path = codex_home.path().join("marketplace-dir");
-    std::fs::create_dir_all(&marketplace_path)?;
-
-    let mut mcp = TestAppServer::builder()
-        .with_codex_home(codex_home.path())
-        .build_initialized_with_timeout(DEFAULT_TIMEOUT)
-        .await?;
-
-    let request_id = mcp
-        .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(AbsolutePathBuf::try_from(marketplace_path)?),
-            remote_marketplace_name: None,
-            install_attempt_id: None,
-            plugin_name: "sample-plugin".to_string(),
-        })
-        .await?;
-    let err = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-
-    assert_eq!(err.error.code, -32603);
-    assert!(
-        err.error
-            .message
-            .contains("failed to read marketplace file")
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn plugin_install_returns_invalid_request_for_not_available_plugin() -> Result<()> {
     let codex_home = TempDir::new()?;
     let repo_root = TempDir::new()?;
@@ -909,100 +864,6 @@ async fn plugin_install_returns_invalid_request_for_disallowed_product_plugin() 
 
     assert_eq!(err.error.code, -32600);
     assert!(err.error.message.contains("not available for install"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn plugin_install_tracks_analytics_event() -> Result<()> {
-    let analytics_server = start_analytics_events_server().await?;
-    let codex_home = TempDir::new()?;
-    write_analytics_config(codex_home.path(), &analytics_server.uri())?;
-    write_chatgpt_auth(
-        codex_home.path(),
-        ChatGptAuthFixture::new("chatgpt-token")
-            .account_id("account-123")
-            .chatgpt_user_id("user-123")
-            .chatgpt_account_id("account-123"),
-        AuthCredentialsStoreMode::File,
-    )?;
-
-    let repo_root = TempDir::new()?;
-    write_plugin_marketplace(
-        repo_root.path(),
-        "debug",
-        "sample-plugin",
-        "./sample-plugin",
-        /*install_policy*/ None,
-        /*auth_policy*/ None,
-    )?;
-    write_plugin_source(repo_root.path(), "sample-plugin", &[])?;
-    let marketplace_path =
-        AbsolutePathBuf::try_from(repo_root.path().join(".agents/plugins/marketplace.json"))?;
-
-    let mut mcp = TestAppServer::builder()
-        .with_codex_home(codex_home.path())
-        .build_initialized_with_timeout(DEFAULT_TIMEOUT)
-        .await?;
-
-    let request_id = mcp
-        .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(marketplace_path),
-            remote_marketplace_name: None,
-            install_attempt_id: None,
-            plugin_name: "sample-plugin".to_string(),
-        })
-        .await?;
-    let response: PluginInstallResponse =
-        timeout(DEFAULT_TIMEOUT, mcp.read_response(request_id)).await??;
-    assert_eq!(response.apps_needing_auth, Vec::<AppSummary>::new());
-    Ok(())
-}
-
-#[tokio::test]
-async fn plugin_install_failure_tracks_analytics_event() -> Result<()> {
-    let analytics_server = start_analytics_events_server().await?;
-    let codex_home = TempDir::new()?;
-    write_analytics_config(codex_home.path(), &analytics_server.uri())?;
-    write_chatgpt_auth(
-        codex_home.path(),
-        ChatGptAuthFixture::new("chatgpt-token")
-            .account_id("account-123")
-            .chatgpt_user_id("user-123")
-            .chatgpt_account_id("account-123"),
-        AuthCredentialsStoreMode::File,
-    )?;
-
-    let repo_root = TempDir::new()?;
-    write_plugin_marketplace(
-        repo_root.path(),
-        "debug",
-        "sample-plugin",
-        "./missing-plugin",
-        /*install_policy*/ None,
-        /*auth_policy*/ None,
-    )?;
-    let marketplace_path =
-        AbsolutePathBuf::try_from(repo_root.path().join(".agents/plugins/marketplace.json"))?;
-
-    let mut mcp = TestAppServer::builder()
-        .with_codex_home(codex_home.path())
-        .build_initialized_with_timeout(DEFAULT_TIMEOUT)
-        .await?;
-
-    let request_id = mcp
-        .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(marketplace_path),
-            remote_marketplace_name: None,
-            install_attempt_id: None,
-            plugin_name: "sample-plugin".to_string(),
-        })
-        .await?;
-    let err = timeout(
-        DEFAULT_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
-    )
-    .await??;
-    assert_eq!(err.error.code, -32600);
     Ok(())
 }
 
@@ -2671,13 +2532,6 @@ mcp_oauth_credentials_store = "file"
 connectors = true
 "#
         ),
-    )
-}
-
-fn write_analytics_config(codex_home: &std::path::Path, base_url: &str) -> std::io::Result<()> {
-    std::fs::write(
-        codex_home.join("config.toml"),
-        format!("chatgpt_base_url = \"{base_url}\"\n"),
     )
 }
 

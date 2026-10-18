@@ -1,35 +1,29 @@
 model_provider = "rcp"
-# Run lemex setup to save a key and URL; LEMEX_API_KEY and LEMEX_BASE_URL override them.
 model = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
 model_catalog_json = "models.json"
-model_reasoning_effort = "max"
-# Use a 200k context window and compact at 90% to leave headroom.
-model_context_window = 200000
-model_auto_compact_token_limit = 180000
-# DeepSeek 1017 defaults to max; the model picker uses each model's supported efforts.
+model_context_window = 240000
+model_auto_compact_token_limit = 220000
+
 show_raw_agent_reasoning = true
-# RCP does not provide OpenAI's hosted web search; use the Exa MCP tools below.
-web_search = "disabled"
-developer_instructions = """
-Use the Exa MCP web tools when information may have changed, when a fact is uncertain,
-or when the user asks to search or verify. Search first, then fetch relevant source
-pages before answering. Prefer official documentation for technical questions and
-use advanced search for domain or date filters. Cite source URLs in the answer.
-If the web tools fail, report the failure and distinguish unverified knowledge
-from retrieved evidence.
-"""
+model_reasoning_effort = "max"
 
-[mcp_servers.exa]
-url = "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa,web_search_advanced_exa"
-enabled = true
-startup_timeout_sec = 30
-tool_timeout_sec = 60
+[model_providers.rcp]
+name = "RCP"
+base_url = "https://inference.rcp.epfl.ch/v1"
+env_key = "LEMEX_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+supports_standalone_web_search = false
 
-[analytics]
-enabled = false
+[projects."/Users/lmilikic"]
+trust_level = "trusted"
 
-[feedback]
-enabled = false
+[projects."/Users/lmilikic/lemex"]
+trust_level = "trusted"
 
-[otel]
-metrics_exporter = "none"
+[tui]
+screen_reader_detection_done = true
+
+[features]
+daemon_auto_start = false

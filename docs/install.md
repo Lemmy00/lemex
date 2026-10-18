@@ -43,6 +43,7 @@ No build environment variables are required. Common overrides are:
 | Variable                  | Purpose                                                                       |
 | ------------------------- | ----------------------------------------------------------------------------- |
 | `LEMEX_BUILD`             | `release` (default) or `debug`.                                               |
+| `LEMEX_PYTHON`            | Select a Python 3.11+ executable; supported versions are detected automatically. |
 | `LEMEX_INSTALL_PREFIX`    | Override npm's global installation prefix; add its `bin` directory to `PATH`. |
 | `CARGO_BUILD_JOBS`        | Build concurrency; defaults to `4`. Lower it if memory is limited.            |
 | `CARGO_TARGET_DIR`        | Reuse a build directory between installs.                                     |

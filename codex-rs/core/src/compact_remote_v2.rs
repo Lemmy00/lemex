@@ -5,10 +5,7 @@ use crate::ResponseStream;
 use crate::client::ModelClientSession;
 use crate::client_common::ResponseEvent;
 use crate::compact::CompactedHistoryMetadata;
-use crate::compact::CompactionAnalyticsAttempt;
-use crate::compact::CompactionAnalyticsDetails;
 use crate::compact::build_compaction_replacement_history;
-use crate::compact::compaction_status_from_result;
 use crate::compact_model_fallback::record_model_fallback;
 use crate::compact_model_fallback::should_retry_with_current_model;
 use crate::compact_remote_history::HistoryItemGroup;
@@ -20,6 +17,10 @@ use crate::hook_runtime::PreCompactHookOutcome;
 use crate::hook_runtime::run_post_compact_hooks;
 use crate::hook_runtime::run_pre_compact_hooks;
 use crate::responses_metadata::CodexResponsesMetadata;
+use crate::responses_metadata::CompactionImplementation;
+use crate::responses_metadata::CompactionPhase;
+use crate::responses_metadata::CompactionReason;
+use crate::responses_metadata::CompactionTrigger;
 use crate::responses_metadata::CompactionTurnMetadata;
 use crate::responses_retry::ResponsesStreamRequest;
 use crate::responses_retry::ResponsesStreamRetryState;
@@ -28,10 +29,6 @@ use crate::session::RequestEffortUsage;
 use crate::session::session::Session;
 use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
-use codex_analytics::CompactionImplementation;
-use codex_analytics::CompactionPhase;
-use codex_analytics::CompactionReason;
-use codex_analytics::CompactionTrigger;
 use codex_context_fragments::set_annotated_content;
 use codex_context_fragments::to_annotated_content;
 use codex_features::Feature;
@@ -134,35 +131,14 @@ async fn run_remote_compact_task_inner(
 ) -> CodexResult<()> {
     let turn_context = &step_context.turn;
     let trigger = compaction_metadata.trigger();
-    let reason = compaction_metadata.reason();
-    let implementation = compaction_metadata.implementation();
+    let _reason = compaction_metadata.reason();
+    let _implementation = compaction_metadata.implementation();
     let phase = compaction_metadata.phase();
-    let mut analytics_details = CompactionAnalyticsDetails {
-        active_context_tokens_before: Some(sess.get_total_token_usage().await),
-        ..Default::default()
-    };
-    let attempt = CompactionAnalyticsAttempt::begin(
-        sess.as_ref(),
-        turn_context.as_ref(),
-        trigger,
-        reason,
-        implementation,
-        phase,
-    )
-    .await;
     let pre_compact_outcome = run_pre_compact_hooks(sess, turn_context, trigger).await;
     match pre_compact_outcome {
         PreCompactHookOutcome::Continue => {}
         PreCompactHookOutcome::Stopped => {
             let error = CodexErr::TurnAborted;
-            attempt
-                .track(
-                    sess.as_ref(),
-                    codex_analytics::CompactionStatus::Interrupted,
-                    Some(&error),
-                    analytics_details,
-                )
-                .await;
             return Err(error);
         }
     }
@@ -173,23 +149,14 @@ async fn run_remote_compact_task_inner(
         client_session,
         world_state,
         compaction_metadata,
-        &mut analytics_details,
     )
     .await;
-    let status = compaction_status_from_result(&result);
-    let codex_error = result.as_ref().err();
     if result.is_ok() {
         let post_compact_outcome = run_post_compact_hooks(sess, turn_context, trigger).await;
         if let PostCompactHookOutcome::Stopped = post_compact_outcome {
-            attempt
-                .track(sess.as_ref(), status, codex_error, analytics_details)
-                .await;
             return Err(CodexErr::TurnAborted);
         }
     }
-    attempt
-        .track(sess.as_ref(), status, codex_error, analytics_details)
-        .await;
     match result {
         Ok(()) => Ok(()),
         Err(err)
@@ -199,7 +166,6 @@ async fn run_remote_compact_task_inner(
             Err(err)
         }
         Err(err) => {
-            sess.track_turn_codex_error(turn_context, &err);
             // Pre-turn failures are reported by run_turn after preserving the incoming prompt.
             if !matches!(phase, CompactionPhase::PreTurn) {
                 let event = EventMsg::Error(
@@ -219,7 +185,6 @@ async fn run_remote_compact_task_inner_impl(
     mut client_session: Option<&mut ModelClientSession>,
     world_state: Arc<WorldState>,
     compaction_metadata: CompactionTurnMetadata,
-    analytics_details: &mut CompactionAnalyticsDetails,
 ) -> CodexResult<()> {
     let turn_context = &step_context.turn;
     let context_compaction_item = ContextCompactionItem::new();
@@ -240,7 +205,6 @@ async fn run_remote_compact_task_inner_impl(
         client_session.as_deref_mut(),
         &compaction_trace,
         compaction_metadata,
-        analytics_details,
     )
     .await;
     let (attempt, compaction_turn_context) = match attempt {
@@ -265,7 +229,6 @@ async fn run_remote_compact_task_inner_impl(
                 client_session,
                 &fallback_compaction_trace,
                 compaction_metadata,
-                analytics_details,
             )
             .await;
             record_model_fallback(
@@ -294,12 +257,8 @@ async fn run_remote_compact_task_inner_impl(
     } = attempt;
     if let Some(token_usage) = token_usage {
         sess.record_rollout_budget_usage(&token_usage).await?;
-        analytics_details.active_context_tokens_before = Some(token_usage.input_tokens);
-        analytics_details.compaction_summary_tokens = Some(token_usage.output_tokens);
-        analytics_details.cached_input_tokens = Some(token_usage.cached_input_tokens);
-        analytics_details.cache_write_input_tokens = Some(token_usage.cache_write_input_tokens);
     }
-    let (compacted_history, retained_images) = build_v2_compacted_history(
+    let (compacted_history, _retained_images) = build_v2_compacted_history(
         prompt_input,
         prompt_input_metadata,
         compaction_output,
@@ -310,7 +269,6 @@ async fn run_remote_compact_task_inner_impl(
             RetainedImageBudget::Disabled
         },
     );
-    analytics_details.retained_image_count = Some(retained_images);
     let (new_window_number, new_window_ids) = sess.advance_auto_compact_window().await;
     let (new_history, world_state_baseline) = build_compaction_replacement_history(
         sess.as_ref(),

@@ -431,6 +431,7 @@ fn build_default_client(builder: HttpClientBuilder) -> HttpClient {
 }
 
 /// Builds an HTTP client for an auth endpoint without Codex default headers.
+#[cfg(test)]
 pub(crate) fn create_raw_auth_client(
     endpoint: &str,
     auth_route_config: &AuthRouteConfig,

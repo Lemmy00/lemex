@@ -20,7 +20,7 @@ use wiremock::matchers::method;
 use wiremock::matchers::path;
 
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
-    let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+    let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?);
     cmd.env("LEMEX_HOME", codex_home);
     Ok(cmd)
 }
@@ -147,21 +147,6 @@ url = "ws://127.0.0.1:4512"
         .assert()
         .failure()
         .stderr(contains("stdin is not a terminal"));
-
-    Ok(())
-}
-
-#[test]
-fn strict_config_is_not_supported_for_cloud_command() -> Result<()> {
-    let codex_home = TempDir::new()?;
-
-    let mut cmd = codex_command(codex_home.path())?;
-    cmd.args(["--strict-config", "-c", "foo=bar", "cloud", "list"])
-        .assert()
-        .failure()
-        .stderr(contains(
-            "`--strict-config` is not supported for `codex cloud`",
-        ));
 
     Ok(())
 }

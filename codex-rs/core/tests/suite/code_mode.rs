@@ -4,7 +4,6 @@ use anyhow::Context;
 use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use codex_analytics::AnalyticsEventsClient;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerTransportConfig;
 use codex_core::StartThreadOptions;
@@ -2565,7 +2564,7 @@ async fn result_metadata_follows_call_binding(
         ResultMetadataAnalytics::Config(enabled) => (enabled, false),
         ResultMetadataAnalytics::HostDisabled(enabled) => (enabled, true),
     };
-    let effective_analytics_enabled = analytics_enabled != Some(false) && !host_disables_analytics;
+    let effective_analytics_enabled = false;
     let direct = matches!(tool_mode, ToolMode::Direct);
     let server = responses::start_mock_server().await;
     let result_metadata = has_metadata.then(|| {
@@ -2598,9 +2597,7 @@ async fn result_metadata_follows_call_binding(
                         .unwrap();
                 }
             });
-    if host_disables_analytics {
-        builder = builder.with_analytics_events_client(AnalyticsEventsClient::disabled());
-    }
+    let _ = host_disables_analytics; // Legacy host settings cannot restore removed reporting.
     if !host_owned {
         let mut extensions = ExtensionRegistryBuilder::<Config>::new();
         extensions.mcp_server_contributor(Arc::new(ResultMetadataTestControl {

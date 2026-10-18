@@ -3,9 +3,6 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::sandboxing::ToolError;
-use codex_analytics::ArtifactOperation;
-use codex_analytics::ArtifactOperationLifecycle;
-use codex_analytics::build_track_events_context;
 use codex_apply_patch::AppliedPatchDelta;
 use codex_core_plugins::PluginCommandAttribution;
 use codex_core_plugins::recognize_artifact_operation;
@@ -140,31 +137,6 @@ async fn emit_exec_command_begin(ctx: ToolEventCtx<'_>, exec_input: &ExecCommand
             i64::from(operation.expected_output_count),
             &metric_tags,
         );
-        ctx.session
-            .services
-            .analytics_events_client
-            .track_artifact_operation(
-                build_track_events_context(
-                    ctx.model_info.slug.clone(),
-                    ctx.session.thread_id.to_string(),
-                    ctx.turn.sub_id.clone(),
-                    ctx.turn.originator.clone(),
-                    /*turn_metadata*/ None,
-                ),
-                ArtifactOperation {
-                    item_id: ctx.call_id.to_string(),
-                    lifecycle: ArtifactOperationLifecycle::Started,
-                    occurred_at_ms: codex_analytics::now_unix_millis(),
-                    plugin_id: attribution.plugin_id.as_key(),
-                    script_path: operation.script_path.to_string(),
-                    skill: operation.plugin_name.to_string(),
-                    artifact_type: operation.artifact_type.to_string(),
-                    operation_kind: operation.operation_kind.to_string(),
-                    expected_output_count: operation.expected_output_count,
-                    output_format: operation.output_format.to_string(),
-                    execution_backend: "unified_exec".to_string(),
-                },
-            );
     }
     let (plugin_id, script_path) = plugin_attribution_fields(exec_input.plugin_attribution);
     ctx.session

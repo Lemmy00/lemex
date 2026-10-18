@@ -9,7 +9,7 @@ use pretty_assertions::assert_eq;
 #[tokio::test]
 async fn user_verification_cancel_only_signals_matching_native_request_contexts() {
     let (tx, _rx) = mpsc::channel(/*buffer*/ 1);
-    let outgoing = OutgoingMessageSender::new(tx, AnalyticsEventsClient::disabled());
+    let outgoing = OutgoingMessageSender::new(tx);
     for method in [
         "userVerification/status",
         "userVerification/enroll",
@@ -65,7 +65,7 @@ async fn user_verification_cancel_only_signals_matching_native_request_contexts(
 async fn user_verification_cancel_remains_effective_until_proof_enqueue_and_cleans_up() {
     for close_receiver in [false, true] {
         let (tx, mut rx) = mpsc::channel(/*buffer*/ 1);
-        let outgoing = OutgoingMessageSender::new(tx, AnalyticsEventsClient::disabled());
+        let outgoing = OutgoingMessageSender::new(tx);
         let target = ConnectionRequestId {
             connection_id: ConnectionId(1),
             request_id: RequestId::String("verify".into()),

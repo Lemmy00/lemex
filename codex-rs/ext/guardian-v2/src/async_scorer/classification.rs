@@ -6,9 +6,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::time::SystemTime;
 
-use codex_analytics::AnalyticsEventsClient;
-use codex_analytics::GuardianV2Event;
-use codex_analytics::GuardianV2EventKind;
 use codex_core::CodexThread;
 use codex_core::GuardianAuthorizationVersion;
 use codex_core::GuardianRootSnapshot;
@@ -64,7 +61,6 @@ pub(super) struct Classification {
     pub(super) score_progress: Arc<GuardianV2ScoreProgress>,
     pub(super) parent_model: Option<Arc<ModelInfo>>,
     pub(super) metrics: Option<Arc<dyn ExtensionMetrics>>,
-    pub(super) analytics: Option<Arc<AnalyticsEventsClient>>,
     pub(super) sampled_at: SystemTime,
     pub(super) tool_call_index: usize,
     pub(super) event_sink: Arc<dyn ExtensionEventSink>,
@@ -129,7 +125,6 @@ impl Classification {
             score_progress,
             parent_model,
             metrics,
-            analytics,
             sampled_at,
             tool_call_index,
             event_sink,
@@ -457,21 +452,6 @@ impl Classification {
             outcome,
             result.is_err().then_some(failure_reason),
         );
-        if let Some(analytics) = analytics {
-            analytics.track_guardian_v2_event(GuardianV2Event {
-                thread_id: thread_id.clone(),
-                turn_id: turn_id.clone(),
-                item_id: Some(call_id),
-                model: parent_model.as_ref().map(|model| model.slug.clone()),
-                occurred_at_ms: codex_analytics::now_unix_millis(),
-                kind: GuardianV2EventKind::Classification {
-                    guardian_context_mode: context_mode.as_str(),
-                    outcome,
-                    risk_level: classification_risk,
-                    duration_ms: u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
-                },
-            });
-        }
         if matches!(result, Ok(ClassificationOutcome::Scored)) {
             truncations.emit(metrics.as_deref());
         }

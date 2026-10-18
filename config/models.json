@@ -42,8 +42,8 @@
         "limit": 10000
       },
       "supports_image_detail_original": false,
-      "context_window": 200000,
-      "max_context_window": 200000,
+      "context_window": 240000,
+      "max_context_window": 240000,
       "input_modalities": [
         "text"
       ],

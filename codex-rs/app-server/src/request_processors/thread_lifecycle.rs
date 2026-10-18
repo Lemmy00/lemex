@@ -889,7 +889,6 @@ pub(super) async fn handle_pending_thread_resume_request(
         workspace_roots,
         reasoning_effort,
         collaboration_mode,
-        originator,
         ..
     } = config_snapshot;
     let instruction_sources = pending.instruction_sources;
@@ -918,9 +917,7 @@ pub(super) async fn handle_pending_thread_resume_request(
         turns_backwards_cursor,
         items_backwards_cursor,
     };
-    outgoing
-        .send_response_with_thread_originator(request_id, response, originator)
-        .await;
+    outgoing.send_response(request_id, response).await;
     // Warm metadata-only resumes skip history reconstruction. Cold paginated children can
     // replay usage using attribution captured before the listener was attached.
     if let Some(token_usage_turn_id) = token_usage_turn_id {

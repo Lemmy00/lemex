@@ -28,16 +28,16 @@ use crate::function_tool::FunctionCallError;
 use crate::hook_mcp_executor::CoreHookMcpExecutor;
 use crate::plugins::plugins_manager_for_config;
 use crate::realtime_conversation::RealtimeConversationSnapshot;
+use crate::responses_metadata::CompactionImplementation;
+use crate::responses_metadata::CompactionPhase;
+use crate::responses_metadata::CompactionReason;
+use crate::responses_metadata::CompactionTrigger;
 use crate::session::step_context::StepContext;
 use crate::shell::default_user_shell;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::test_support::models_manager_with_provider;
 use crate::tools::format_exec_output_str;
 use crate::tools::registry::ToolRegistry;
-use codex_analytics::CompactionImplementation;
-use codex_analytics::CompactionPhase;
-use codex_analytics::CompactionReason;
-use codex_analytics::CompactionTrigger;
 use codex_config::ConfigLayerStack;
 use codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID;
 use codex_config::LoaderOverrides;
@@ -6551,12 +6551,8 @@ async fn response_metadata_builders_capture_fresh_mcp_attribution() {
 #[tokio::test]
 async fn responses_metadata_keeps_external_analytics_disabled() {
     for enabled in [true, false] {
-        let (mut session, mut turn_context) = make_session_and_context().await;
-        session.services.analytics_events_client = AnalyticsEventsClient::new(
-            Arc::clone(&session.services.auth_manager),
-            turn_context.config.chatgpt_base_url.clone(),
-            Some(enabled),
-        );
+        let (session, mut turn_context) = make_session_and_context().await;
+
         Arc::make_mut(&mut turn_context.config).analytics_enabled = Some(!enabled);
         let step_context = StepContext::for_test(Arc::new(turn_context));
         let metadata = session
@@ -6704,11 +6700,6 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             config.background_terminal_max_timeout,
         ),
         elicitations: crate::elicitation::ElicitationService::new(),
-        analytics_events_client: AnalyticsEventsClient::new(
-            Arc::clone(&auth_manager),
-            config.chatgpt_base_url.trim_end_matches('/').to_string(),
-            config.analytics_enabled,
-        ),
         hooks: arc_swap::ArcSwap::from_pointee(hooks),
         rollout_thread_trace: codex_rollout_trace::ThreadTraceContext::disabled(),
         user_shell: Arc::new(default_user_shell()),
@@ -7006,7 +6997,6 @@ async fn make_session_with_config_and_rx(
         /*reserved_thread_id*/ None,
         environment_manager,
         /*inherited_environments*/ None,
-        /*analytics_events_client*/ None,
         crate::passthrough_image_store(),
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
@@ -7141,7 +7131,6 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         /*reserved_thread_id*/ None,
         environment_manager,
         /*inherited_environments*/ None,
-        /*analytics_events_client*/ None,
         crate::passthrough_image_store(),
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
@@ -8971,11 +8960,6 @@ where
             config.background_terminal_max_timeout,
         ),
         elicitations: crate::elicitation::ElicitationService::new(),
-        analytics_events_client: AnalyticsEventsClient::new(
-            Arc::clone(&auth_manager),
-            config.chatgpt_base_url.trim_end_matches('/').to_string(),
-            config.analytics_enabled,
-        ),
         hooks: arc_swap::ArcSwap::from_pointee(hooks),
         rollout_thread_trace: codex_rollout_trace::ThreadTraceContext::disabled(),
         user_shell: Arc::new(default_user_shell()),

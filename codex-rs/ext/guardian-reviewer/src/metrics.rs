@@ -2,13 +2,6 @@
 
 use std::time::Duration;
 
-use codex_analytics::GuardianApprovalRequestSource;
-use codex_analytics::GuardianReviewAnalyticsResult;
-use codex_analytics::GuardianReviewDecision;
-use codex_analytics::GuardianReviewFailureReason;
-use codex_analytics::GuardianReviewSessionKind;
-use codex_analytics::GuardianReviewTerminalStatus;
-use codex_analytics::GuardianReviewedAction;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_otel::GUARDIAN_REVIEW_COUNT_METRIC;
 use codex_otel::GUARDIAN_REVIEW_DURATION_METRIC;
@@ -16,6 +9,13 @@ use codex_otel::GUARDIAN_REVIEW_TOKEN_USAGE_METRIC;
 use codex_otel::GUARDIAN_REVIEW_TTFT_DURATION_METRIC;
 use codex_otel::SessionTelemetry;
 use codex_otel::sanitize_metric_tag_value;
+use codex_protocol::guardian_diagnostics::GuardianApprovalRequestSource;
+use codex_protocol::guardian_diagnostics::GuardianReviewDecision;
+use codex_protocol::guardian_diagnostics::GuardianReviewDiagnostics;
+use codex_protocol::guardian_diagnostics::GuardianReviewFailureReason;
+use codex_protocol::guardian_diagnostics::GuardianReviewSessionKind;
+use codex_protocol::guardian_diagnostics::GuardianReviewTerminalStatus;
+use codex_protocol::guardian_diagnostics::GuardianReviewedAction;
 use codex_protocol::protocol::GuardianAssessmentOutcome;
 use codex_protocol::protocol::GuardianRiskLevel;
 use codex_protocol::protocol::GuardianUserAuthorization;
@@ -23,7 +23,7 @@ use codex_protocol::protocol::TokenUsage;
 
 pub(crate) fn emit_guardian_review_metrics(
     session_telemetry: &SessionTelemetry,
-    result: &GuardianReviewAnalyticsResult,
+    result: &GuardianReviewDiagnostics,
     approval_request_source: GuardianApprovalRequestSource,
     reviewed_action: &GuardianReviewedAction,
     completion_latency_ms: u64,
@@ -101,7 +101,7 @@ fn emit_guardian_token_usage_histograms(
 }
 
 fn guardian_review_metric_tags(
-    result: &GuardianReviewAnalyticsResult,
+    result: &GuardianReviewDiagnostics,
     approval_request_source: GuardianApprovalRequestSource,
     reviewed_action: &GuardianReviewedAction,
 ) -> Vec<(&'static str, String)> {
@@ -405,7 +405,7 @@ mod tests {
         expected_mcp_tags: BTreeMap<String, String>,
     ) {
         let session_telemetry = test_session_telemetry();
-        let result = GuardianReviewAnalyticsResult {
+        let result = GuardianReviewDiagnostics {
             decision: GuardianReviewDecision::Approved,
             terminal_status: GuardianReviewTerminalStatus::Approved,
             risk_level: Some(GuardianRiskLevel::Low),
@@ -426,7 +426,7 @@ mod tests {
                 codex_rollout_budget_units: None,
             }),
             time_to_first_token_ms: Some(123),
-            ..GuardianReviewAnalyticsResult::without_session()
+            ..GuardianReviewDiagnostics::without_session()
         };
 
         emit_guardian_review_metrics(

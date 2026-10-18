@@ -16,8 +16,6 @@ use app_test_support::ChatGptAuthFixture;
 use app_test_support::write_chatgpt_auth;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use codex_analytics::AnalyticsEventsClient;
-use codex_analytics::AppServerRpcTransport;
 use codex_arg0::Arg0DispatchPaths;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::LoaderOverrides;
@@ -149,13 +147,9 @@ impl Harness {
             Arc::new(codex_config::NoopThreadConfigLoader),
         );
         let (sender, messages) = mpsc::channel(/*buffer*/ 16);
-        let outgoing = Arc::new(OutgoingMessageSender::new(
-            sender,
-            AnalyticsEventsClient::disabled(),
-        ));
+        let outgoing = Arc::new(OutgoingMessageSender::new(sender));
         let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
             outgoing: Arc::clone(&outgoing),
-            analytics_events_client: AnalyticsEventsClient::disabled(),
             arg0_paths: Arg0DispatchPaths::default(),
             config,
             config_manager,
@@ -169,13 +163,6 @@ impl Harness {
             user_verification: Arc::clone(&service),
             installation_id: "11111111-1111-4111-8111-111111111111".into(),
             code_mode_session_provider: None,
-            rpc_transport: match origin {
-                ConnectionOrigin::InProcess => AppServerRpcTransport::InProcess,
-                ConnectionOrigin::Stdio | ConnectionOrigin::RemoteControl => {
-                    AppServerRpcTransport::Stdio
-                }
-                ConnectionOrigin::WebSocket => AppServerRpcTransport::Websocket,
-            },
             remote_control_handle: None,
             plugin_startup_tasks: None,
         }));

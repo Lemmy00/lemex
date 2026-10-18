@@ -837,7 +837,7 @@ async fn wait_for_guardian_review_ignores_prior_turn_errors() {
         .await
         .expect("queue current turn completion");
 
-    let mut analytics_result = GuardianReviewAnalyticsResult::without_session();
+    let mut analytics_result = GuardianReviewDiagnostics::without_session();
     let codex_guardian_reviewer::ReviewTurnResult {
         outcome,
         disposition,
@@ -883,7 +883,7 @@ async fn wait_for_guardian_review_preserves_structured_session_error() {
         .await
         .expect("queue current turn completion");
 
-    let mut analytics_result = GuardianReviewAnalyticsResult::without_session();
+    let mut analytics_result = GuardianReviewDiagnostics::without_session();
     let codex_guardian_reviewer::ReviewTurnResult {
         outcome,
         disposition,
@@ -921,7 +921,7 @@ async fn wait_for_guardian_review_ignores_prior_turn_aborts() {
         .await
         .expect("queue current turn completion");
 
-    let mut analytics_result = GuardianReviewAnalyticsResult::without_session();
+    let mut analytics_result = GuardianReviewDiagnostics::without_session();
     let codex_guardian_reviewer::ReviewTurnResult {
         outcome,
         disposition,
@@ -961,7 +961,7 @@ async fn wait_for_guardian_review_timeout_drains_expected_turn_after_stale_termi
             .expect("queue current turn abort");
     });
 
-    let mut analytics_result = GuardianReviewAnalyticsResult::without_session();
+    let mut analytics_result = GuardianReviewDiagnostics::without_session();
     let codex_guardian_reviewer::ReviewTurnResult {
         outcome,
         disposition,
@@ -1002,7 +1002,7 @@ async fn wait_for_guardian_review_cancel_drains_expected_turn_after_stale_termin
     let external_cancel = CancellationToken::new();
     external_cancel.cancel();
 
-    let mut analytics_result = GuardianReviewAnalyticsResult::without_session();
+    let mut analytics_result = GuardianReviewDiagnostics::without_session();
     let codex_guardian_reviewer::ReviewTurnResult {
         outcome,
         disposition,
@@ -1043,7 +1043,7 @@ async fn interrupt_and_drain_turn_ignores_prior_turn_completion() {
         "current-turn",
         tokio::time::Instant::now(),
         Some(&cancellation),
-        &mut GuardianReviewAnalyticsResult::without_session(),
+        &mut GuardianReviewDiagnostics::without_session(),
     )
     .await;
     assert_eq!(result.disposition, SessionDisposition::Reusable);

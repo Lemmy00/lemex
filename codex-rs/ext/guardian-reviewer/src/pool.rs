@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-use codex_analytics::GuardianReviewAnalyticsResult;
-use codex_analytics::GuardianReviewSessionKind;
 use codex_extension_api::ExtensionFuture;
+use codex_protocol::guardian_diagnostics::GuardianReviewDiagnostics;
+use codex_protocol::guardian_diagnostics::GuardianReviewSessionKind;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
@@ -68,7 +68,7 @@ pub trait ReviewerRequest: Send + Sync {
 pub struct ReviewSessionResult {
     pub outcome: GuardianReviewSessionOutcome,
     pub disposition: SessionDisposition,
-    pub analytics: GuardianReviewAnalyticsResult,
+    pub analytics: GuardianReviewDiagnostics,
 }
 
 /// How the pool may reuse a session and its committed history after an attempt.
@@ -184,7 +184,7 @@ impl<S: ReviewerSession> ReviewerPool<S> {
     pub async fn review<R>(
         &self,
         request: R,
-    ) -> (GuardianReviewSessionOutcome, GuardianReviewAnalyticsResult)
+    ) -> (GuardianReviewSessionOutcome, GuardianReviewDiagnostics)
     where
         R: ReviewerRequest<Session = S>,
     {
@@ -242,11 +242,11 @@ impl<S: ReviewerSession> ReviewerPool<S> {
                         Ok(Err(error)) => {
                             return (
                                 GuardianReviewSessionOutcome::PromptBuildFailed(error),
-                                GuardianReviewAnalyticsResult::without_session(),
+                                GuardianReviewDiagnostics::without_session(),
                             );
                         }
                         Err(outcome) => {
-                            return (outcome, GuardianReviewAnalyticsResult::without_session());
+                            return (outcome, GuardianReviewDiagnostics::without_session());
                         }
                     };
                     let review_lock = Arc::new(Semaphore::new(/*permits*/ 1));
@@ -256,7 +256,7 @@ impl<S: ReviewerSession> ReviewerPool<S> {
                         Err(error) => {
                             return (
                                 GuardianReviewSessionOutcome::PromptBuildFailed(error.into()),
-                                GuardianReviewAnalyticsResult::without_session(),
+                                GuardianReviewDiagnostics::without_session(),
                             );
                         }
                     };
@@ -270,14 +270,14 @@ impl<S: ReviewerSession> ReviewerPool<S> {
                 }
                 (state.as_ref().cloned(), context, reserved_permit)
             }
-            Err(outcome) => return (outcome, GuardianReviewAnalyticsResult::without_session()),
+            Err(outcome) => return (outcome, GuardianReviewDiagnostics::without_session()),
         };
         let Some(trunk) = trunk else {
             return (
                 GuardianReviewSessionOutcome::Completed(Err(anyhow::anyhow!(
                     "guardian review session was not available after spawn"
                 ))),
-                GuardianReviewAnalyticsResult::without_session(),
+                GuardianReviewDiagnostics::without_session(),
             );
         };
         if trunk.session.context() != &context || (requires_fresh_session && !spawned_trunk) {
@@ -334,7 +334,7 @@ impl<S: ReviewerSession> ReviewerPool<S> {
         request: &R,
         context: S::Context,
         snapshot: Option<S::Snapshot>,
-    ) -> (GuardianReviewSessionOutcome, GuardianReviewAnalyticsResult)
+    ) -> (GuardianReviewSessionOutcome, GuardianReviewDiagnostics)
     where
         R: ReviewerRequest<Session = S>,
     {
@@ -357,10 +357,10 @@ impl<S: ReviewerSession> ReviewerPool<S> {
             Ok(Err(error)) => {
                 return (
                     GuardianReviewSessionOutcome::PromptBuildFailed(error),
-                    GuardianReviewAnalyticsResult::without_session(),
+                    GuardianReviewDiagnostics::without_session(),
                 );
             }
-            Err(outcome) => return (outcome, GuardianReviewAnalyticsResult::without_session()),
+            Err(outcome) => return (outcome, GuardianReviewDiagnostics::without_session()),
         };
         let ReviewSessionResult {
             outcome, analytics, ..

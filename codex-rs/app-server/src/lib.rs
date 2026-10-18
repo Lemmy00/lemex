@@ -22,7 +22,6 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 
-use crate::analytics_utils::analytics_events_client_from_config;
 use crate::config_manager::ConfigManager;
 use crate::connection_cleanup::ConnectionCleanupTasks;
 use crate::message_processor::MessageProcessor;
@@ -47,7 +46,6 @@ use crate::transport::start_control_socket_acceptor;
 use crate::transport::start_remote_control;
 use crate::transport::start_stdio_connection;
 use crate::transport::start_websocket_acceptor;
-use codex_analytics::AppServerRpcTransport;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::ServerNotification;
@@ -93,7 +91,6 @@ fn is_unsupported_untrusted_approval_policy_error(err: &std::io::Error) -> bool 
     )
 }
 
-mod analytics_utils;
 mod app_info;
 mod app_server_tracing;
 mod attestation;
@@ -114,7 +111,6 @@ mod effective_plugin_change;
 mod error_code;
 mod extensions;
 mod external_agent_migration;
-mod external_auth;
 mod filters;
 mod fs_watch;
 mod fuzzy_file_search;
@@ -703,12 +699,7 @@ pub async fn run_main_with_transport_options(
         });
     }
 
-    let analytics_events_client =
-        analytics_events_client_from_config(Arc::clone(&auth_manager), &config);
-    let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(
-        outgoing_tx,
-        analytics_events_client.clone(),
-    ));
+    let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(outgoing_tx));
     let feedback = CodexFeedback::new();
 
     // Install a simple subscriber so `tracing` output is visible. Users can
@@ -985,7 +976,6 @@ pub async fn run_main_with_transport_options(
         let outbound_control_tx = outbound_control_tx;
         let mut processor = MessageProcessor::new(MessageProcessorArgs {
             outgoing: outgoing_message_sender,
-            analytics_events_client,
             arg0_paths,
             config: Arc::new(config),
             config_manager,
@@ -1001,7 +991,6 @@ pub async fn run_main_with_transport_options(
             auth_manager,
             installation_id,
             code_mode_session_provider,
-            rpc_transport: analytics_rpc_transport(&transport),
             remote_control_handle: Some(remote_control_handle.clone()),
             plugin_startup_tasks: matches!(
                 runtime_options.plugin_startup_tasks,
@@ -1538,15 +1527,6 @@ fn loader_overrides_with_test_user_config_file(
     let _ = test_user_config_file;
 
     Ok(loader_overrides)
-}
-
-fn analytics_rpc_transport(transport: &AppServerTransport) -> AppServerRpcTransport {
-    match transport {
-        AppServerTransport::Stdio => AppServerRpcTransport::Stdio,
-        AppServerTransport::UnixSocket { .. }
-        | AppServerTransport::WebSocket { .. }
-        | AppServerTransport::Off => AppServerRpcTransport::Websocket,
-    }
 }
 
 #[cfg(test)]

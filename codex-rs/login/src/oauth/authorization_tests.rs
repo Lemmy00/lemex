@@ -24,7 +24,7 @@ fn callback_validation_checks_state_before_code_or_provider_errors() {
         let params = CallbackParameters::from_url(&url);
         let actual = params.validate("expected").map_err(|error| match error {
             CallbackError::StateMismatch => "state",
-            CallbackError::Provider { .. } => "provider",
+            CallbackError::Provider => "provider",
             CallbackError::MissingCode => "code",
         });
         assert_eq!(actual, expected, "callback query {query}");

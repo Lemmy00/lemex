@@ -53,15 +53,11 @@ pub(crate) struct CallbackParameters {
     pub code: Option<String>,
     pub state: Option<String>,
     pub error: Option<String>,
-    pub error_description: Option<String>,
 }
 
-pub(crate) enum CallbackError<'a> {
+pub(crate) enum CallbackError {
     StateMismatch,
-    Provider {
-        code: &'a str,
-        description: Option<&'a str>,
-    },
+    Provider,
     MissingCode,
 }
 
@@ -73,7 +69,6 @@ impl CallbackParameters {
                 "code" => params.code = Some(value.into_owned()),
                 "state" => params.state = Some(value.into_owned()),
                 "error" => params.error = Some(value.into_owned()),
-                "error_description" => params.error_description = Some(value.into_owned()),
                 _ => {}
             }
         }
@@ -81,15 +76,12 @@ impl CallbackParameters {
     }
 
     /// Checks state before accepting an authorization code or provider error.
-    pub(crate) fn validate(&self, expected_state: &str) -> Result<&str, CallbackError<'_>> {
+    pub(crate) fn validate(&self, expected_state: &str) -> Result<&str, CallbackError> {
         if self.state.as_deref() != Some(expected_state) {
             return Err(CallbackError::StateMismatch);
         }
-        if let Some(code) = self.error.as_deref() {
-            return Err(CallbackError::Provider {
-                code,
-                description: self.error_description.as_deref(),
-            });
+        if self.error.is_some() {
+            return Err(CallbackError::Provider);
         }
         let code = self
             .code

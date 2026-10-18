@@ -8,9 +8,6 @@ use codex_app_server_daemon::LifecycleCommand as AppServerLifecycleCommand;
 use codex_app_server_daemon::RemoteControlMode as AppServerRemoteControlMode;
 use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
-use codex_chatgpt::apply_command::ApplyCommand;
-use codex_chatgpt::apply_command::run_apply_command;
-use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
 use codex_exec::Command as ExecCommand;
 use codex_exec::ReviewArgs;
@@ -42,13 +39,9 @@ use supports_color::Stream;
 #[global_allocator]
 static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-mod app_cmd;
 mod cloud_config;
 mod daemon_install;
 mod daemon_telemetry;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-mod desktop_app;
 mod doctor;
 #[cfg(test)]
 #[path = "exec_args_tests.rs"]
@@ -173,10 +166,6 @@ enum Subcommand {
     /// [experimental] Manage the app-server daemon with remote control enabled.
     RemoteControl(RemoteControlCommand),
 
-    /// Launch the Desktop app (opens the app installer if missing).
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    App(app_cmd::AppCommand),
-
     /// Generate shell completion scripts.
     Completion(CompletionCommand),
 
@@ -195,10 +184,6 @@ enum Subcommand {
     /// Execpolicy tooling.
     #[clap(hide = true)]
     Execpolicy(ExecpolicyCommand),
-
-    /// Apply the latest diff produced by Lemex agent as a `git apply` to your local working tree.
-    #[clap(visible_alias = "a")]
-    Apply(ApplyCommand),
 
     /// Resume a previous interactive session (picker by default; use --last to continue the most recent).
     Resume(ResumeCommand),
@@ -220,10 +205,6 @@ enum Subcommand {
 
     /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
     Fork(ForkCommand),
-
-    /// [EXPERIMENTAL] Browse tasks from Lemex Cloud and apply changes locally.
-    #[clap(name = "cloud", alias = "cloud-tasks")]
-    Cloud(CloudTasksCli),
 
     /// Internal: run the responses API proxy.
     #[clap(hide = true)]
@@ -258,9 +239,6 @@ enum DebugSubcommand {
     /// Render the raw model catalog as JSON.
     Models(DebugModelsCommand),
 
-    /// Tooling: helps debug the app server.
-    AppServer(DebugAppServerCommand),
-
     /// Render the model-visible prompt input list as JSON.
     PromptInput(DebugPromptInputCommand),
 
@@ -271,24 +249,6 @@ enum DebugSubcommand {
     /// Internal: reset local memory state for a fresh start.
     #[clap(hide = true)]
     ClearMemories,
-}
-
-#[derive(Debug, Parser)]
-struct DebugAppServerCommand {
-    #[command(subcommand)]
-    subcommand: DebugAppServerSubcommand,
-}
-
-#[derive(Debug, clap::Subcommand)]
-enum DebugAppServerSubcommand {
-    // Send message to app server V2.
-    SendMessageV2(DebugAppServerSendMessageV2Command),
-}
-
-#[derive(Debug, Parser)]
-struct DebugAppServerSendMessageV2Command {
-    #[arg(value_name = "USER_MESSAGE", required = true)]
-    user_message: String,
 }
 
 #[derive(Debug, Parser)]
@@ -875,16 +835,6 @@ fn delete_action(target: &str, force: bool) -> anyhow::Result<codex_tui::Session
     Ok(codex_tui::SessionArchiveAction::Delete(confirmation))
 }
 
-async fn run_debug_app_server_command(cmd: DebugAppServerCommand) -> anyhow::Result<()> {
-    match cmd.subcommand {
-        DebugAppServerSubcommand::SendMessageV2(cmd) => {
-            let codex_bin = std::env::current_exe()?;
-            codex_app_server_test_client::send_message_v2(&codex_bin, &[], cmd.user_message, &None)
-                .await
-        }
-    }
-}
-
 #[derive(Debug, Default, Parser, Clone)]
 struct FeatureToggles {
     /// Enable a feature (repeatable). Equivalent to `-c features.<name>=true`.
@@ -1327,15 +1277,6 @@ async fn cli_main(
             )
             .await?;
         }
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        Some(Subcommand::App(app_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "app",
-            )?;
-            app_cmd::run_app(app_cli).await?;
-        }
         Some(Subcommand::Resume(ResumeCommand {
             session_id,
             last,
@@ -1499,19 +1440,6 @@ async fn cli_main(
             )
             .await?;
         }
-        Some(Subcommand::Cloud(mut cloud_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "cloud",
-            )?;
-            prepend_config_flags(
-                &mut cloud_cli.config_overrides,
-                root_config_overrides.clone(),
-            );
-            codex_cloud_tasks::run_main(cloud_cli, arg0_paths.codex_linux_sandbox_exe.clone())
-                .await?;
-        }
         Some(Subcommand::Sandbox(SandboxCommand {
             host: mut sandbox_cli,
             subcommand,
@@ -1583,14 +1511,6 @@ async fn cli_main(
                 )?;
                 run_debug_models_command(cmd, root_config_overrides).await?;
             }
-            DebugSubcommand::AppServer(cmd) => {
-                reject_remote_mode_for_subcommand(
-                    root_remote.as_deref(),
-                    root_remote_auth_token_env.as_deref(),
-                    "debug app-server",
-                )?;
-                run_debug_app_server_command(cmd).await?;
-            }
             DebugSubcommand::PromptInput(cmd) => {
                 reject_remote_mode_for_subcommand(
                     root_remote.as_deref(),
@@ -1632,18 +1552,6 @@ async fn cli_main(
                 run_execpolicycheck(cmd)?
             }
         },
-        Some(Subcommand::Apply(mut apply_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "apply",
-            )?;
-            prepend_config_flags(
-                &mut apply_cli.config_overrides,
-                root_config_overrides.clone(),
-            );
-            run_apply_command(apply_cli, /*cwd*/ None).await?;
-        }
         Some(Subcommand::ResponsesApiProxy(args)) => {
             reject_remote_mode_for_subcommand(
                 root_remote.as_deref(),
@@ -2117,18 +2025,14 @@ fn unsupported_subcommand_name_for_strict_config(
         Some(Subcommand::Mcp(_)) => Some("mcp"),
         Some(Subcommand::Plugin(_)) => Some("plugin"),
         Some(Subcommand::MigrateRollouts(_)) => Some("migrate-rollouts"),
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        Some(Subcommand::App(_)) => Some("app"),
         Some(Subcommand::Setup(_)) => Some("setup"),
         Some(Subcommand::RemovedLogin(_)) => Some("login"),
         Some(Subcommand::RemovedLogout(_)) => Some("logout"),
         Some(Subcommand::Completion(_)) => Some("completion"),
         Some(Subcommand::Update) => Some("update"),
-        Some(Subcommand::Cloud(_)) => Some("cloud"),
         Some(Subcommand::Sandbox(_)) => Some("sandbox"),
         Some(Subcommand::Debug(_)) => Some("debug"),
         Some(Subcommand::Execpolicy(_)) => Some("execpolicy"),
-        Some(Subcommand::Apply(_)) => Some("apply"),
         Some(Subcommand::ResponsesApiProxy(_)) => Some("responses-api-proxy"),
         Some(Subcommand::StdioToUds(_)) => Some("stdio-to-uds"),
         Some(Subcommand::Features(_)) => Some("features"),
@@ -2560,6 +2464,19 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_tui::TokenUsage;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn installed_cli_omits_cloud_desktop_and_test_client_commands() {
+        let command = MultitoolCli::command();
+        for name in ["cloud", "cloud-tasks", "apply", "a", "app"] {
+            assert!(
+                command.find_subcommand(name).is_none(),
+                "unexpected command: {name}"
+            );
+        }
+        let debug = command.find_subcommand("debug").expect("debug command");
+        assert!(debug.find_subcommand("app-server").is_none());
+    }
 
     #[test]
     fn interactive_tui_future_stays_bounded() {

@@ -127,8 +127,4 @@ impl ToolExecutor<ToolInvocation> for CurrentTimeHandler {
     }
 }
 
-impl CoreToolRuntime for CurrentTimeHandler {
-    fn is_builtin_control_tool(&self) -> bool {
-        true
-    }
-}
+impl CoreToolRuntime for CurrentTimeHandler {}

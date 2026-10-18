@@ -213,11 +213,7 @@ impl ViewImageHandler {
     }
 }
 
-impl CoreToolRuntime for ViewImageHandler {
-    fn is_builtin_control_tool(&self) -> bool {
-        true
-    }
-}
+impl CoreToolRuntime for ViewImageHandler {}
 
 pub struct ViewImageOutput {
     image_url: String,

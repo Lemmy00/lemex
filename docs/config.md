@@ -16,7 +16,7 @@ Custom providers read the environment variable named by their `env_key` setting.
 
 ## Settings
 
-The bundled configuration selects the RCP provider, loads `models.json`, uses a 200,000-token context window with compaction at 180,000 tokens, shows raw reasoning, and adds Exa MCP tools for web search. Edit `config.toml` to adapt these defaults:
+The bundled configuration selects the RCP provider, loads `models.json`, uses a 240,000-token context window with compaction at 220,000 tokens, shows raw reasoning, and disables automatic daemon startup. It includes the requested trusted project paths and marks screen-reader detection complete. Edit `config.toml` to adapt these defaults:
 
 | Setting                          | Purpose                                                                     |
 | -------------------------------- | --------------------------------------------------------------------------- |
@@ -110,7 +110,7 @@ initially timed out, then responded after about three minutes and passed the
 effort checks. The configured DeepSeek 1017 / `max` default passed an ephemeral
 Lemex CLI request.
 
-The bundled config uses MCP tools for web search and sets `web_search = "disabled"` for the provider's hosted search. Manage servers with `lemex mcp` and inspect connected tools with `/mcp`. Enable hosted search only if your provider supports it.
+The bundled RCP provider disables standalone hosted web search. Add MCP servers for web search or other tools with `lemex mcp` and inspect connected tools with `/mcp`. Enable hosted search only if your provider supports it.
 
 Lemex shows raw reasoning returned by the provider by default, including for existing configuration files that omit `show_raw_agent_reasoning`. Set it to `false` to hide raw reasoning.
 

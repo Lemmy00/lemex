@@ -3650,7 +3650,7 @@ mod tests {
                 |name| name == LEMEX_API_KEY_ENV_VAR,
                 Some(&chatgpt_auth),
             ),
-            ProviderAuthReachabilityMode::Chatgpt
+            ProviderAuthReachabilityMode::ApiKey
         );
         assert_eq!(
             provider_auth_reachability_mode_from_auth(
@@ -3843,7 +3843,9 @@ mod tests {
         assert_eq!(check.issues.len(), 1);
         assert_eq!(
             check.issues[0].remedy.as_deref(),
-            Some("Set base_url to the provider API root, for example https://api.openai.com/v1")
+            Some(
+                "Set base_url to the provider API root, for example https://inference.rcp.epfl.ch/v1"
+            )
         );
     }
 

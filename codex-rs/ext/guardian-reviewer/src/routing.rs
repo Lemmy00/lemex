@@ -3,13 +3,11 @@
 
 use crate::ReviewDenials;
 use crate::ReviewHost;
-use codex_analytics::AnalyticsEventsClient;
 use codex_extension_api::ApprovalDecision;
 use codex_extension_api::ApprovalDecisionInput;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionMetrics;
 use codex_extension_api::ExtensionRegistry;
-use codex_extension_api::GuardianV2Enabled;
 use codex_extension_api::SynchronousApprovalReviewer;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
@@ -47,7 +45,6 @@ pub struct ReviewRequest<'a, H> {
     pub telemetry: &'a SessionTelemetry,
     /// The host verified the assessment opt-in and an explicit OTLP log destination.
     pub log_assessments: bool,
-    pub analytics: &'a AnalyticsEventsClient,
     pub metrics: Option<Arc<dyn ExtensionMetrics>>,
 }
 
@@ -169,25 +166,12 @@ impl<H: ReviewHost> ReviewRequest<'_, H> {
     }
 
     pub(super) async fn cached_approval(&self) -> ReviewDecision {
-        let (turn_id, item_id) = match self.host.validate_action() {
+        let (_turn_id, _item_id) = match self.host.validate_action() {
             Ok(target) => target,
             Err(decision) => return decision,
         };
         if self.cancellation.is_cancelled() {
             return ReviewDecision::Abort;
-        }
-        if self.thread_store.get::<GuardianV2Enabled>().is_some() {
-            self.analytics
-                .track_guardian_v2_event(codex_analytics::GuardianV2Event {
-                    thread_id: self.thread_id.to_string(),
-                    turn_id: turn_id.to_owned(),
-                    item_id: item_id.map(str::to_owned),
-                    model: Some(self.model.slug.clone()),
-                    occurred_at_ms: codex_analytics::now_unix_millis(),
-                    kind: codex_analytics::GuardianV2EventKind::FastDecision {
-                        decision: "approved",
-                    },
-                });
         }
         if let Some((turn_id, _)) = self.host.servicing_turn().await {
             ReviewDenials::for_thread(self.thread_store)

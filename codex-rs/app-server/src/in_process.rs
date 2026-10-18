@@ -50,7 +50,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::analytics_utils::analytics_events_client_from_config;
 use crate::config_manager::ConfigManager;
 use crate::error_code::OVERLOADED_ERROR_CODE;
 use crate::error_code::internal_error;
@@ -68,7 +67,6 @@ use crate::transport::CHANNEL_CAPACITY;
 use crate::transport::OutboundConnectionState;
 use crate::transport::route_outgoing_envelope;
 pub use bootstrap::EmbeddedNetworkPolicy;
-use codex_analytics::AppServerRpcTransport;
 use codex_app_server_protocol::AgentMessageDelivery;
 use codex_app_server_protocol::ClientNotification;
 use codex_app_server_protocol::ClientRequest;
@@ -104,8 +102,8 @@ mod bootstrap;
 
 const IN_PROCESS_CONNECTION_ID: ConnectionId = ConnectionId(0);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
-// Covers both bounded runtime drains plus the analytics client's 25-second best-effort flush.
-const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(35);
+// Covers both bounded runtime drains, with room for acknowledgement delivery.
+const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(11);
 /// Default bounded channel capacity for in-process runtime queues.
 pub const DEFAULT_IN_PROCESS_CHANNEL_CAPACITY: usize = CHANNEL_CAPACITY;
 
@@ -448,13 +446,8 @@ async fn start_uninitialized(mut args: InProcessStartArgs) -> IoResult<InProcess
 
     let runtime_handle = tokio::spawn(async move {
         let (outgoing_tx, outgoing_rx) = mpsc::channel::<OutgoingEnvelope>(channel_capacity);
-        let analytics_events_client =
-            analytics_events_client_from_config(Arc::clone(&auth_manager), args.config.as_ref());
-        let analytics_events_flush_client = analytics_events_client.clone();
-        let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(
-            outgoing_tx,
-            analytics_events_client.clone(),
-        ));
+
+        let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(outgoing_tx));
 
         let log_write_warning = crate::log_write_warning::LogWriteWarningReporter::new(
             args.feedback.clone(),
@@ -496,7 +489,6 @@ async fn start_uninitialized(mut args: InProcessStartArgs) -> IoResult<InProcess
         let mut processor_handle = tokio::spawn(async move {
             let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
                 outgoing: Arc::clone(&processor_outgoing),
-                analytics_events_client,
                 arg0_paths: args.arg0_paths,
                 config: args.config,
                 config_manager,
@@ -512,7 +504,6 @@ async fn start_uninitialized(mut args: InProcessStartArgs) -> IoResult<InProcess
                 auth_manager,
                 installation_id,
                 code_mode_session_provider: None,
-                rpc_transport: AppServerRpcTransport::InProcess,
                 remote_control_handle: None,
                 plugin_startup_tasks: Some(PluginStartupConfig::Current),
             }));
@@ -800,8 +791,6 @@ async fn start_uninitialized(mut args: InProcessStartArgs) -> IoResult<InProcess
             let _ = outbound_handle.await;
         }
 
-        analytics_events_flush_client.flush().await;
-
         if let Some(done_tx) = shutdown_ack {
             let _ = done_tx.send(());
         }
@@ -995,35 +984,6 @@ mod tests {
             .expect("outbound router should not wait for its retained sender")
             .expect("outbound router should complete successfully");
         assert!(retained_outgoing_tx.is_closed());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn in_process_shutdown_waits_for_analytics_flush_budget() {
-        let (client_tx, mut client_rx) = mpsc::channel(/*buffer*/ 1);
-        let (_event_tx, event_rx) = mpsc::channel(/*buffer*/ 1);
-        let completed = Arc::new(AtomicBool::new(false));
-        let runtime_completed = Arc::clone(&completed);
-        let runtime_handle = tokio::spawn(async move {
-            let done_tx = match client_rx.recv().await {
-                Some(InProcessClientMessage::Shutdown { done_tx }) => done_tx,
-                _ => panic!("expected in-process shutdown request"),
-            };
-            tokio::time::sleep(SHUTDOWN_TIMEOUT + SHUTDOWN_TIMEOUT + Duration::from_secs(24)).await;
-            runtime_completed.store(true, Ordering::Release);
-            let _ = done_tx.send(());
-        });
-        let client = InProcessClientHandle {
-            client: InProcessClientSender { client_tx },
-            event_rx,
-            runtime_handle,
-            _test_codex_home: None,
-        };
-
-        client
-            .shutdown()
-            .await
-            .expect("in-process runtime should shutdown cleanly");
-        assert!(completed.load(Ordering::Acquire));
     }
 
     #[test]

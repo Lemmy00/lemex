@@ -99,11 +99,7 @@ impl PlanHandler {
     }
 }
 
-impl CoreToolRuntime for PlanHandler {
-    fn is_builtin_control_tool(&self) -> bool {
-        true
-    }
-}
+impl CoreToolRuntime for PlanHandler {}
 
 fn parse_update_plan_arguments(arguments: &str) -> Result<UpdatePlanArgs, FunctionCallError> {
     serde_json::from_str::<UpdatePlanArgs>(arguments).map_err(|e| {

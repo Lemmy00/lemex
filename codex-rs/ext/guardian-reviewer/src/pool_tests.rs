@@ -54,7 +54,7 @@ impl ReviewerRequest for Request {
         ReviewSessionResult {
             outcome: GuardianReviewSessionOutcome::Completed(Err(anyhow::anyhow!("test verdict"))),
             disposition: SessionDisposition::Reusable,
-            analytics: GuardianReviewAnalyticsResult::without_session(),
+            analytics: GuardianReviewDiagnostics::without_session(),
         }
     }
 }

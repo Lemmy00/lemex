@@ -5,8 +5,6 @@
 mod request;
 pub(super) use request::ReviewAuthorization;
 
-use codex_analytics::GuardianApprovalRequestSource;
-use codex_analytics::GuardianReviewAnalyticsResult;
 use codex_core_plugins::PluginCommandAttribution;
 use codex_features::Feature;
 use codex_guardian_reviewer::GuardianReviewError;
@@ -15,6 +13,8 @@ use codex_guardian_reviewer::GuardianReviewOutcome;
 use codex_guardian_reviewer::GuardianReviewSessionLimits;
 use codex_guardian_reviewer::ReviewModel;
 use codex_prompts::ResolvedModelMessages;
+use codex_protocol::guardian_diagnostics::GuardianApprovalRequestSource;
+use codex_protocol::guardian_diagnostics::GuardianReviewDiagnostics;
 use codex_protocol::openai_models::GuardianScope;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InternalSessionSource;
@@ -186,13 +186,13 @@ async fn run_guardian_review_session_before_deadline(
     category: GuardianScope,
     reasons: ApprovalRequestReasons,
     options: ReviewAttemptOptions,
-) -> (GuardianReviewOutcome, GuardianReviewAnalyticsResult) {
+) -> (GuardianReviewOutcome, GuardianReviewDiagnostics) {
     let Some(pool) = session.guardian_review_session() else {
         return (
             GuardianReviewOutcome::Error(GuardianReviewError::prompt_build(anyhow::anyhow!(
                 "Guardian extension is not installed for this thread"
             ))),
-            GuardianReviewAnalyticsResult::without_session(),
+            GuardianReviewDiagnostics::without_session(),
         );
     };
     let session_config = match guardian_review_session_config(session.as_ref(), &context).await {
@@ -200,7 +200,7 @@ async fn run_guardian_review_session_before_deadline(
         Err(err) => {
             return (
                 GuardianReviewOutcome::Error(GuardianReviewError::prompt_build(err)),
-                GuardianReviewAnalyticsResult::without_session(),
+                GuardianReviewDiagnostics::without_session(),
             );
         }
     };
@@ -238,7 +238,7 @@ pub(super) async fn run_guardian_review_session_with_retry(
     reasons: ApprovalRequestReasons,
     external_cancel: Option<CancellationToken>,
     max_attempts: i64,
-) -> (GuardianReviewOutcome, GuardianReviewAnalyticsResult) {
+) -> (GuardianReviewOutcome, GuardianReviewDiagnostics) {
     run_guardian_review_session_with_retry_before_deadline(
         session,
         context,
@@ -261,7 +261,7 @@ async fn run_guardian_review_session_with_retry_before_deadline(
     reasons: ApprovalRequestReasons,
     external_cancel: Option<CancellationToken>,
     limits: GuardianReviewSessionLimits,
-) -> (GuardianReviewOutcome, GuardianReviewAnalyticsResult) {
+) -> (GuardianReviewOutcome, GuardianReviewDiagnostics) {
     let context = context.into();
     let (outcome, analytics, _) =
         codex_guardian_reviewer::run_with_retry(limits, external_cancel.as_ref(), |deadline| {

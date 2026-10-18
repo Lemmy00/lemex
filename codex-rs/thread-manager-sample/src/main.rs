@@ -155,7 +155,6 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         environment_manager,
         Arc::new(extensions.build()),
         user_instructions_provider,
-        /*analytics_events_client*/ None,
         passthrough_image_store(),
         Arc::clone(&thread_store),
         local_agent_graph_store_from_state_db(state_db.as_ref()),

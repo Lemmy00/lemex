@@ -1,11 +1,11 @@
 //! Converts reviewer outcomes into decisions and reports. The host publishes these
 //! reports and applies them only to the action whose evidence was reviewed.
 
-use codex_analytics::GuardianReviewAnalyticsResult;
-use codex_analytics::GuardianReviewDecision;
-use codex_analytics::GuardianReviewTerminalStatus;
 use codex_prompts::ResolvedModelMessages;
 use codex_prompts::render_guardian_rejection;
+use codex_protocol::guardian_diagnostics::GuardianReviewDecision;
+use codex_protocol::guardian_diagnostics::GuardianReviewDiagnostics;
+use codex_protocol::guardian_diagnostics::GuardianReviewTerminalStatus;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::GuardianAssessmentOutcome;
@@ -30,7 +30,7 @@ pub struct ReviewCompletion {
     pub decision: Option<ReviewDecision>,
     pub event: GuardianAssessmentEvent,
     pub warning: Option<String>,
-    pub analytics: GuardianReviewAnalyticsResult,
+    pub analytics: GuardianReviewDiagnostics,
     /// Only completed assessments may enter the evidence cache or count as policy denials.
     pub assessment_outcome: Option<GuardianAssessmentOutcome>,
 }
@@ -40,7 +40,7 @@ pub fn complete_review(
     model: &ModelInfo,
     require_guardian: bool,
     mut event: GuardianAssessmentEvent,
-    mut analytics: GuardianReviewAnalyticsResult,
+    mut analytics: GuardianReviewDiagnostics,
 ) -> ReviewCompletion {
     let completed_assessment = match &outcome {
         GuardianReviewOutcome::Completed(assessment) => Some(assessment.outcome),

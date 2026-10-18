@@ -7,14 +7,11 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 use tokio::time::Sleep;
 
-use super::SharedPluginMetricsSidecar;
 use super::UnifiedExecContext;
 use super::process::OutputBuffers;
 use super::process::OutputHandles;
 use super::process::UnifiedExecProcess;
-use super::take_plugin_metrics_sidecar;
 use crate::exec::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
-use crate::plugins::metrics::finish_and_track_measurements;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tools::events::ToolEmitter;
@@ -165,12 +162,11 @@ pub(crate) fn spawn_exit_watcher(
     output_buffer: Arc<Mutex<OutputBuffers>>,
     started_at: Instant,
     network_denial_monitor: Option<tokio::task::JoinHandle<()>>,
-    plugin_metrics_sidecar: Option<SharedPluginMetricsSidecar>,
 ) {
     let session_ref = Arc::clone(&context.session);
     let turn_ref = Arc::clone(&context.step_context.turn);
     let model_info = Arc::clone(&context.step_context.settings.model_info);
-    let model_context = context.step_context.model_context();
+    let _model_context = context.step_context.model_context();
     let call_id = context.call_id.clone();
     let exit_token = process.cancellation_token();
     let output_drained = process.output_drained_notify();
@@ -188,11 +184,7 @@ pub(crate) fn spawn_exit_watcher(
         let _interaction_guard = interaction_lock.lock_owned().await;
 
         let duration = Instant::now().saturating_duration_since(started_at);
-        let plugin_metrics_sidecar = plugin_metrics_sidecar
-            .as_ref()
-            .and_then(take_plugin_metrics_sidecar);
         if let Some(message) = process.failure_message() {
-            drop(plugin_metrics_sidecar);
             emit_failed_exec_end_for_unified_exec(
                 process.sandbox_type(),
                 session_ref,
@@ -212,15 +204,6 @@ pub(crate) fn spawn_exit_watcher(
         } else {
             let exit_code = process.exit_code().unwrap_or(-1);
             let timed_out = process.timed_out();
-            finish_and_track_measurements(
-                plugin_metrics_sidecar,
-                exit_code,
-                &session_ref,
-                &turn_ref,
-                &model_context,
-                &call_id,
-            )
-            .await;
             emit_exec_end_for_unified_exec(
                 process.sandbox_type(),
                 session_ref,

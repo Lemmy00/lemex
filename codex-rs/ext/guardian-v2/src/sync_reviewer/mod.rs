@@ -82,7 +82,7 @@ impl ThreadLifecycleContributor<Config> for GuardianExtension {
                             let (mut options, state) = context.thread_options(kind, snapshot).await;
                             if matches!(
                                 kind,
-                                codex_analytics::GuardianReviewSessionKind::EphemeralForked
+                                codex_protocol::guardian_diagnostics::GuardianReviewSessionKind::EphemeralForked
                             ) {
                                 options.config.ephemeral = true;
                             }

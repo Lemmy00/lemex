@@ -2,11 +2,6 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::ErrorKind;
 
-use codex_analytics::CompactionImplementation;
-use codex_analytics::CompactionPhase;
-use codex_analytics::CompactionReason;
-use codex_analytics::CompactionStrategy;
-use codex_analytics::CompactionTrigger;
 use codex_git_utils::SanitizedGitUrl;
 use codex_protocol::ThreadId;
 use codex_protocol::mcp::McpAttribution;
@@ -606,4 +601,42 @@ struct CodexTurnMetadataPayload<'a> {
     compaction: Option<CompactionTurnMetadata>,
     #[serde(flatten)]
     extra: &'a BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CompactionTrigger {
+    Manual,
+    Auto,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CompactionReason {
+    UserRequested,
+    ContextLimit,
+    ModelDownshift,
+    CompHashChanged,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CompactionImplementation {
+    Responses,
+    ResponsesCompactionV2,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CompactionPhase {
+    StandaloneTurn,
+    PreTurn,
+    MidTurn,
+    PostTurn,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CompactionStrategy {
+    Memento,
 }
