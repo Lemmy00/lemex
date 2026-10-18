@@ -193,7 +193,7 @@ async fn model_commands_use_live_ids_and_validate_each_models_reasoning() -> Res
         .mount(&server)
         .await;
     let output = command(home.path())?
-        .args(["models", "--json"])
+        .args(["models", "--all", "--json"])
         .assert()
         .success()
         .get_output()
@@ -202,6 +202,69 @@ async fn model_commands_use_live_ids_and_validate_each_models_reasoning() -> Res
     let listing: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(listing["source"], "live");
     assert_eq!(listing["models"].as_array().unwrap().len(), 2);
+    let saved_listing = command(home.path())?
+        .args(["models", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let saved_listing: Value = serde_json::from_slice(&saved_listing)?;
+    assert_eq!(saved_listing["models"].as_array().unwrap().len(), 6);
+    assert!(
+        saved_listing["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|model| model["added"] == true)
+    );
+    assert!(
+        saved_listing["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["available"] == false)
+    );
+    assert!(
+        !saved_listing["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["id"] == "Qwen/Qwen3.5-397B-A17B")
+    );
+    let search = command(home.path())?
+        .args(["models", "--search", "QWEN3.5", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let search: Value = serde_json::from_slice(&search)?;
+    assert_eq!(search["models"].as_array().unwrap().len(), 1);
+    assert_eq!(search["models"][0]["added"], false);
+    let before_add: toml::Value =
+        toml::from_str(&std::fs::read_to_string(home.path().join("config.toml"))?)?;
+    for _ in 0..2 {
+        command(home.path())?
+            .args(["models", "add", "Qwen/Qwen3.5-397B-A17B"])
+            .assert()
+            .success();
+    }
+    let after_add: toml::Value =
+        toml::from_str(&std::fs::read_to_string(home.path().join("config.toml"))?)?;
+    assert_eq!(after_add["model"], before_add["model"]);
+    assert_eq!(
+        after_add["model_picker_models"].as_array().unwrap().len(),
+        7
+    );
+    command(home.path())?
+        .args(["models", "remove", "Qwen/Qwen3.5-397B-A17B"])
+        .assert()
+        .success();
+    command(home.path())?
+        .args(["models", "reset"])
+        .assert()
+        .success();
     let deepseek = listing["models"]
         .as_array()
         .unwrap()
@@ -255,6 +318,15 @@ async fn model_commands_use_live_ids_and_validate_each_models_reasoning() -> Res
         toml::from_str(&std::fs::read_to_string(home.path().join("config.toml"))?)?;
     assert_eq!(config["model"].as_str(), Some("Qwen/Qwen3.5-397B-A17B"));
     assert!(config.get("model_reasoning_effort").is_none());
+    assert_eq!(
+        config["model_picker_models"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .as_str(),
+        Some("Qwen/Qwen3.5-397B-A17B")
+    );
     Ok(())
 }
 

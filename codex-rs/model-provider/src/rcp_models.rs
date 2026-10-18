@@ -11,7 +11,8 @@ use codex_protocol::openai_models::ReasoningEffortPreset;
 use serde_json::Value;
 use std::collections::HashSet;
 
-pub(crate) fn bundled_catalog() -> ModelsResponse {
+/// Curated RCP models and verified metadata shipped with Lemex.
+pub fn bundled_catalog() -> ModelsResponse {
     serde_json::from_str(include_str!("../../../config/models.json")).unwrap_or_else(|error| {
         tracing::error!(%error, "failed to load bundled RCP catalog");
         ModelsResponse::default()
@@ -72,11 +73,14 @@ pub(crate) fn decode_catalog(
             .models
             .iter()
             .find(|model| model.slug == id)
+            .or_else(|| profiles.models.iter().find(|model| model.slug == id))
             .or_else(|| {
                 deployed_model.and_then(|deployed| {
                     seed.models
                         .iter()
-                        .find(|model| deployed.starts_with(&model.slug))
+                        .chain(profiles.models.iter())
+                        .filter(|model| deployed.starts_with(&model.slug))
+                        .max_by_key(|model| model.slug.len())
                 })
             });
         let mut model = known.cloned().unwrap_or_else(|| {

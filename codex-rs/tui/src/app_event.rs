@@ -1349,6 +1349,12 @@ pub(crate) enum AppEvent {
     /// Open the full model picker (non-auto models).
     OpenAllModelsPopup,
 
+    /// Return to the saved model list.
+    OpenModelPopup,
+
+    /// Search the full model inventory available to the API key.
+    OpenAddModelsPopup,
+
     /// Open the confirmation prompt before enabling full access mode.
     OpenFullAccessConfirmation {
         preset: ApprovalPreset,

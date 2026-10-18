@@ -405,6 +405,10 @@ pub struct ConfigToml {
     /// Per-thread `config` overrides are accepted but do not reapply this (no-ops).
     pub model_catalog_json: Option<AbsolutePathBuf>,
 
+    /// Saved model IDs shown in the main picker. RCP defaults to the bundled curated list.
+    /// Other models available to the API key can be searched and added separately.
+    pub model_picker_models: Option<Vec<String>>,
+
     /// Deprecated: `friendly` and `pragmatic` no longer select a style.
     pub personality: Option<Personality>,
 

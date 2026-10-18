@@ -84,6 +84,10 @@ impl ChatWidget {
             self.open_luna_reserve_model_popup(presets, MODEL_SELECTION_VIEW_ID);
             return;
         }
+        if self.config.model_picker_models.is_some() {
+            self.open_saved_models_popup(presets);
+            return;
+        }
         let presets: Vec<ModelPreset> = presets
             .into_iter()
             .filter(|preset| preset.show_in_picker)

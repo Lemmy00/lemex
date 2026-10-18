@@ -1493,7 +1493,7 @@ impl BottomPane {
     }
 
     /// Replace the newest matching selection view without disturbing views stacked above it.
-    /// Preserve pending parent cleanup when an already-open child is accepted.
+    /// Preserve the search query and pending parent cleanup for an already-open child.
     pub(crate) fn replace_selection_view_if_present(
         &mut self,
         view_id: &'static str,
@@ -1508,6 +1508,10 @@ impl BottomPane {
         };
 
         let replaces_active_view = index + 1 == self.view_stack.len();
+        let search_query = params
+            .is_searchable
+            .then(|| self.view_stack[index].search_query().map(str::to_string))
+            .flatten();
         self.apply_standard_popup_hint(&mut params);
         let mut view = list_selection_view::ListSelectionView::new(
             params,
@@ -1515,6 +1519,9 @@ impl BottomPane {
             self.keymap.list.clone(),
         );
         view.dismiss_after_child_accept = self.view_stack[index].dismiss_after_child_accept();
+        if let Some(query) = search_query {
+            view.set_search_query(query);
+        }
         self.view_stack[index] = Box::new(view);
         if replaces_active_view {
             self.key_chord_reset_requested = true;
@@ -1589,6 +1596,12 @@ impl BottomPane {
             .iter()
             .rfind(|view| view.view_id() == Some(view_id))
             .and_then(|view| view.selected_index())
+    }
+
+    pub(crate) fn has_view(&self, view_id: &'static str) -> bool {
+        self.view_stack
+            .iter()
+            .any(|view| view.view_id() == Some(view_id))
     }
 
     pub(crate) fn active_tab_id_for_active_view(&self, view_id: &'static str) -> Option<&str> {

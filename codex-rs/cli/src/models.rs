@@ -1,4 +1,4 @@
-//! User-facing discovery and persistent model/reasoning selection.
+//! Saved model lists, live discovery, and persistent model/reasoning selection.
 
 use anyhow::Context;
 use anyhow::bail;
@@ -6,12 +6,14 @@ use clap::Parser;
 use codex_core::config::Config;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_login::AuthManager;
+use codex_model_provider::bundled_rcp_model_catalog;
 use codex_model_provider::discover_model_catalog;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_utils_cli::CliConfigOverrides;
 use serde_json::json;
+use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::io::Write;
 
@@ -19,12 +21,30 @@ use std::io::Write;
 pub(crate) struct ModelsCommand {
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
-    /// Print model IDs and supported reasoning settings as JSON.
+    /// Print models, availability, and reasoning settings as JSON.
     #[arg(long)]
     json: bool,
-    /// Use the configured catalog without contacting the endpoint.
+    /// Browse all models available to your API key.
+    #[arg(long)]
+    all: bool,
+    /// Search available models by name or ID (implies --all).
+    #[arg(long, value_name = "QUERY")]
+    search: Option<String>,
+    /// Use configured metadata without contacting the endpoint.
     #[arg(long)]
     offline: bool,
+    #[command(subcommand)]
+    action: Option<ModelsAction>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum ModelsAction {
+    /// Add an available model to your saved list without switching models.
+    Add { model: String },
+    /// Remove a model from your saved list.
+    Remove { model: String },
+    /// Restore the default model list.
+    Reset,
 }
 
 #[derive(Debug, Parser)]
@@ -36,9 +56,15 @@ pub(crate) struct ModelCommand {
     /// A supported effort, or 'default' to clear the previous override.
     #[arg(long, value_name = "EFFORT")]
     reasoning: Option<String>,
-    /// Choose from the configured catalog without a network request.
+    /// Choose using configured metadata without a network request.
     #[arg(long)]
     offline: bool,
+}
+
+struct ModelRow {
+    model: ModelInfo,
+    available: Option<bool>,
+    added: bool,
 }
 
 async fn load(overrides: &CliConfigOverrides) -> anyhow::Result<Config> {
@@ -59,21 +85,128 @@ async fn catalog(config: &Config, offline: bool) -> anyhow::Result<ModelsRespons
         .await.context("Could not fetch models from your endpoint. Check `lemex setup` and try again, or use --offline.")
 }
 
-pub(crate) async fn list(command: ModelsCommand) -> anyhow::Result<()> {
-    let config = load(&command.config_overrides).await?;
-    let catalog = catalog(&config, command.offline).await?;
-    if command.json {
-        let models = catalog
+fn saved_ids(config: &Config, catalog: &ModelsResponse) -> Vec<String> {
+    let mut ids = config.model_picker_models.clone().unwrap_or_else(|| {
+        catalog
             .models
             .iter()
-            .map(|model| {
-                json!({
-                    "id":model.slug, "name":model.display_name, "description":model.description,
-                    "reasoning_efforts":model.supported_reasoning_levels,
-                    "default_reasoning_effort":model.default_reasoning_level,
-                })
+            .map(|model| model.slug.clone())
+            .collect()
+    });
+    let mut seen = HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
+    ids
+}
+
+fn model_rows(
+    config: &Config,
+    catalog: &ModelsResponse,
+    all: bool,
+    offline: bool,
+) -> Vec<ModelRow> {
+    let saved = saved_ids(config, catalog);
+    if all {
+        return catalog
+            .models
+            .iter()
+            .map(|model| ModelRow {
+                model: model.clone(),
+                available: (!offline).then_some(true),
+                added: saved.contains(&model.slug),
             })
-            .collect::<Vec<_>>();
+            .collect();
+    }
+    let bundled = bundled_rcp_model_catalog();
+    saved
+        .into_iter()
+        .map(|id| {
+            let available = catalog.models.iter().find(|model| model.slug == id);
+            let model = available
+                .or_else(|| bundled.models.iter().find(|model| model.slug == id))
+                .or_else(|| {
+                    config
+                        .model_catalog
+                        .as_ref()
+                        .and_then(|catalog| catalog.models.iter().find(|model| model.slug == id))
+                })
+                .cloned()
+                .unwrap_or_else(|| codex_models_manager::model_info::model_info_from_slug(&id));
+            ModelRow {
+                model,
+                available: (!offline).then_some(available.is_some()),
+                added: true,
+            }
+        })
+        .collect()
+}
+
+fn matches_query(model: &ModelInfo, query: &str) -> bool {
+    let text = format!("{} {}", model.display_name, model.slug).to_lowercase();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|part| text.contains(part))
+}
+
+pub(crate) async fn list(command: ModelsCommand) -> anyhow::Result<()> {
+    let config = load(&command.config_overrides).await?;
+    match command.action {
+        Some(ModelsAction::Reset) => {
+            ConfigEditsBuilder::for_config(&config)
+                .set_model_picker_models(None)
+                .apply()
+                .await?;
+            eprintln!("Restored the default model list.");
+            return Ok(());
+        }
+        Some(ModelsAction::Remove { model }) => {
+            let empty = config.model_catalog.clone().unwrap_or_default();
+            let mut ids = saved_ids(&config, &empty);
+            let before = ids.len();
+            ids.retain(|id| id != &model);
+            if ids.len() == before {
+                bail!("Model '{model}' is not in your saved list.");
+            }
+            ConfigEditsBuilder::for_config(&config)
+                .set_model_picker_models(Some(&ids))
+                .apply()
+                .await?;
+            eprintln!("Removed {model} from your model list.");
+            return Ok(());
+        }
+        _ => {}
+    }
+    let catalog = catalog(&config, command.offline).await?;
+    if let Some(ModelsAction::Add { model }) = command.action {
+        find_model(&catalog, &model)?;
+        let mut ids = saved_ids(&config, &catalog);
+        if !ids.contains(&model) {
+            ids.push(model.clone());
+        }
+        ConfigEditsBuilder::for_config(&config)
+            .set_model_picker_models(Some(&ids))
+            .apply()
+            .await?;
+        eprintln!("Added {model}. Choose it with `lemex model` or /model.");
+        return Ok(());
+    }
+    let all = command.all || command.search.is_some();
+    let rows = model_rows(&config, &catalog, all, command.offline)
+        .into_iter()
+        .filter(|row| {
+            command
+                .search
+                .as_ref()
+                .is_none_or(|query| matches_query(&row.model, query))
+        })
+        .collect::<Vec<_>>();
+    if command.json {
+        let models = rows.iter().map(|row| json!({
+            "id":row.model.slug, "name":row.model.display_name, "description":row.model.description,
+            "available":row.available, "added":row.added,
+            "reasoning_efforts":row.model.supported_reasoning_levels,
+            "default_reasoning_effort":row.model.default_reasoning_level,
+        })).collect::<Vec<_>>();
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
@@ -83,28 +216,36 @@ pub(crate) async fn list(command: ModelsCommand) -> anyhow::Result<()> {
         );
     } else {
         println!(
-            "{} models for {}:",
-            if command.offline {
-                "Configured (offline)"
+            "{} · {}\n",
+            if all {
+                "Available models"
             } else {
-                "Live"
+                "Your models"
             },
             config.model_provider.name
         );
-        for model in &catalog.models {
-            let current = if config.model.as_deref() == Some(model.slug.as_str()) {
+        for row in &rows {
+            let marker = if config.model.as_deref() == Some(&row.model.slug) {
                 "*"
             } else {
                 " "
             };
-            println!(
-                "{current} {}  [reasoning: {}]",
-                model.slug,
-                effort_labels(model)
-            );
+            let status = match row.available {
+                None => "offline",
+                Some(false) => "not listed for this key",
+                Some(true) if all && row.added => "available · added",
+                Some(true) => "available",
+            };
+            println!("{marker} {}  · {status}", row.model.display_name);
+            println!("    {}", row.model.slug);
+            println!("    Reasoning: {}\n", effort_labels(&row.model));
         }
-        println!("\nChoose: lemex model MODEL --reasoning EFFORT");
-        println!("Use --reasoning default to clear a saved override, or /model inside Lemex.");
+        if rows.is_empty() {
+            println!("No matching models.\n");
+        }
+        println!(
+            "Choose: lemex model\nSearch: lemex models --search QUERY\nAdd:    lemex models add MODEL_ID"
+        );
     }
     Ok(())
 }
@@ -127,22 +268,41 @@ pub(crate) async fn select(command: ModelCommand) -> anyhow::Result<()> {
     }
     let catalog = catalog(&config, command.offline).await?;
     let model = match command.model.as_deref() {
-        Some(id) => find_model(&catalog, id)?,
+        Some(id) => find_model(&catalog, id)?.clone(),
         None if command.reasoning.is_some() => find_model(
             &catalog,
             config
                 .model
                 .as_deref()
                 .context("No default model is saved. Choose one with `lemex model MODEL`.")?,
-        )?,
-        None => choose_model(&catalog, config.model.as_deref())?,
+        )?
+        .clone(),
+        None => choose_model(&config, &catalog, command.offline)?,
     };
     let effort = if command.model.is_none() && command.reasoning.is_none() {
-        choose_effort(model)?
+        choose_effort(&model)?
     } else {
-        resolve_effort(model, command.reasoning.as_deref())?
+        resolve_effort(&model, command.reasoning.as_deref())?
     };
-    save(&config, model, effort).await
+    let mut edits =
+        ConfigEditsBuilder::for_config(&config).set_model(Some(&model.slug), effort.clone());
+    if config.model_picker_models.is_some() {
+        let mut ids = saved_ids(&config, &catalog);
+        if !ids.contains(&model.slug) {
+            ids.push(model.slug.clone());
+            edits = edits.set_model_picker_models(Some(&ids));
+        }
+    }
+    edits.apply().await?;
+    eprintln!("Default model: {}", model.slug);
+    eprintln!(
+        "Reasoning: {}",
+        effort
+            .as_ref()
+            .map_or("model default", ReasoningEffort::as_str)
+    );
+    eprintln!("Run `lemex` to start. Use /model to switch within a session.");
+    Ok(())
 }
 
 pub(crate) async fn select_interactively(overrides: &CliConfigOverrides) -> anyhow::Result<()> {
@@ -155,34 +315,14 @@ pub(crate) async fn select_interactively(overrides: &CliConfigOverrides) -> anyh
     .await
 }
 
-async fn save(
-    config: &Config,
-    model: &ModelInfo,
-    effort: Option<ReasoningEffort>,
-) -> anyhow::Result<()> {
-    ConfigEditsBuilder::for_config(config)
-        .set_model(Some(&model.slug), effort.clone())
-        .apply()
-        .await?;
-    eprintln!("Default model: {}", model.slug);
-    eprintln!(
-        "Reasoning: {}",
-        effort
-            .as_ref()
-            .map_or("model default", ReasoningEffort::as_str)
-    );
-    eprintln!("Run `lemex` to start. Use /model to switch within a session.");
-    Ok(())
-}
-
 fn find_model<'a>(catalog: &'a ModelsResponse, id: &str) -> anyhow::Result<&'a ModelInfo> {
     catalog.models.iter().find(|model| model.slug == id)
-        .with_context(|| format!("Model '{id}' is not listed by the selected endpoint. Run `lemex models` to see current IDs."))
+        .with_context(|| format!("Model '{id}' is not listed by the selected endpoint. Run `lemex models --all` to see current IDs."))
 }
 
 fn effort_labels(model: &ModelInfo) -> String {
     if model.supported_reasoning_levels.is_empty() {
-        return "model default; explicit efforts not advertised".to_string();
+        return "model default".to_string();
     }
     model
         .supported_reasoning_levels
@@ -224,44 +364,96 @@ fn read_choice(prompt: &str) -> anyhow::Result<String> {
     Ok(value.trim().to_string())
 }
 
-fn choose_model<'a>(
-    catalog: &'a ModelsResponse,
-    current: Option<&str>,
-) -> anyhow::Result<&'a ModelInfo> {
-    if catalog.models.is_empty() {
-        bail!("The endpoint listed no models.")
-    }
-    eprintln!("\nModels listed by your endpoint:");
-    for (index, model) in catalog.models.iter().enumerate() {
-        eprintln!(
-            "  {}. {}  [{}]",
-            index + 1,
-            model.slug,
-            effort_labels(model)
-        );
-    }
-    let default = current
-        .and_then(|id| catalog.models.iter().position(|model| model.slug == id))
-        .unwrap_or(0);
-    if current.is_some_and(|id| !catalog.models.iter().any(|model| model.slug == id)) {
-        eprintln!("Your previous model is no longer listed. Choose an available model below.");
-    }
+fn search_model(catalog: &ModelsResponse) -> anyhow::Result<Option<ModelInfo>> {
     loop {
-        let choice = read_choice(&format!("Model number or ID [{}]: ", default + 1))?;
-        if choice.is_empty() {
-            return Ok(&catalog.models[default]);
+        let query = read_choice("Search model name or ID (Enter to go back): ")?;
+        if query.is_empty() {
+            return Ok(None);
         }
+        let matches = catalog
+            .models
+            .iter()
+            .filter(|model| matches_query(model, &query))
+            .collect::<Vec<_>>();
+        if matches.is_empty() {
+            eprintln!("No available models match '{query}'.");
+            continue;
+        }
+        for (index, model) in matches.iter().take(12).enumerate() {
+            eprintln!(
+                "  {}. {}\n     {}",
+                index + 1,
+                model.display_name,
+                model.slug
+            );
+        }
+        if matches.len() > 12 {
+            eprintln!(
+                "{} matches; showing 12. Enter a narrower search to see more.",
+                matches.len()
+            );
+        }
+        let choice = read_choice("Model number or ID (Enter to search again): ")?;
         if let Ok(index) = choice.parse::<usize>()
             && let Some(model) = index
                 .checked_sub(1)
-                .and_then(|index| catalog.models.get(index))
+                .and_then(|index| matches.iter().take(12).nth(index))
         {
-            return Ok(model);
+            return Ok(Some((*model).clone()));
         }
         if let Ok(model) = find_model(catalog, &choice) {
-            return Ok(model);
+            return Ok(Some(model.clone()));
         }
-        eprintln!("Choose a number or model ID from the list.");
+    }
+}
+
+fn choose_model(
+    config: &Config,
+    catalog: &ModelsResponse,
+    offline: bool,
+) -> anyhow::Result<ModelInfo> {
+    let rows = model_rows(config, catalog, false, offline);
+    let default = rows
+        .iter()
+        .position(|row| {
+            Some(row.model.slug.as_str()) == config.model.as_deref() && row.available != Some(false)
+        })
+        .or_else(|| rows.iter().position(|row| row.available != Some(false)));
+    eprintln!("\nYour models:");
+    for (index, row) in rows.iter().enumerate() {
+        let status = if row.available == Some(false) {
+            "not listed for this key"
+        } else {
+            "available"
+        };
+        eprintln!("  {}. {}  · {status}", index + 1, row.model.display_name);
+    }
+    eprintln!("  a. Search and add a model available to your key");
+    loop {
+        let default_label =
+            default.map_or_else(|| "a".to_string(), |index| (index + 1).to_string());
+        let choice = read_choice(&format!("Model number or ID [{default_label}]: "))?;
+        let choice = if choice.is_empty() {
+            default_label
+        } else {
+            choice
+        };
+        if choice == "a" || choice == "add" {
+            if let Some(model) = search_model(catalog)? {
+                return Ok(model);
+            }
+        } else if let Ok(index) = choice.parse::<usize>() {
+            if let Some(row) = index.checked_sub(1).and_then(|index| rows.get(index)) {
+                if row.available != Some(false) {
+                    return Ok(row.model.clone());
+                }
+                eprintln!(
+                    "That model is not listed for this key. Choose another model or search with 'a'."
+                );
+            }
+        } else if let Ok(model) = find_model(catalog, &choice) {
+            return Ok(model.clone());
+        }
     }
 }
 

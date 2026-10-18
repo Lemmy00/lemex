@@ -814,6 +814,24 @@ impl ConfigEditsBuilder {
         self
     }
 
+    pub fn set_model_picker_models(mut self, models: Option<&[String]>) -> Self {
+        let segments = vec!["model_picker_models".to_string()];
+        self.edits.push(match models {
+            Some(models) => {
+                let mut values = toml_edit::Array::new();
+                for model in models {
+                    values.push(model.as_str());
+                }
+                ConfigEdit::SetPath {
+                    segments,
+                    value: value(values),
+                }
+            }
+            None => ConfigEdit::ClearPath { segments },
+        });
+        self
+    }
+
     pub fn set_hide_full_access_warning(mut self, acknowledged: bool) -> Self {
         self.edits
             .push(ConfigEdit::SetNoticeHideFullAccessWarning(acknowledged));

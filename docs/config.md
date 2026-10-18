@@ -23,6 +23,7 @@ The bundled configuration selects the RCP provider, loads `models.json`, uses a 
 | `model`                          | Default model ID. Choose one available from your provider and catalog.      |
 | `model_provider`                 | Provider selected from `model_providers` or the built-in providers.         |
 | `model_catalog_json`             | Model catalog path, relative to the configuration file or absolute.         |
+| `model_picker_models`            | Saved model IDs in `/model`; RCP defaults to the six bundled curated models. |
 | `model_context_window`           | Context window to use, within the model's supported limit.                  |
 | `model_auto_compact_token_limit` | Token threshold for automatic context compaction.                           |
 | `model_reasoning_effort`         | Optional reasoning effort; leave unset to use each model's catalog default. |
@@ -81,7 +82,9 @@ Set `MY_PROVIDER_API_KEY` in your environment and adapt `models.json` to match t
 
 To add a model, copy a suitable entry in `models.json` and update its `slug`, display name, reasoning levels, context limits, and capabilities to match the deployment. The default `model` must match a catalog entry. Lemex limits `model_context_window` to the catalog's `max_context_window`.
 
-Use `lemex models` for current endpoint availability and `lemex model` to choose a default interactively. `lemex model MODEL --reasoning EFFORT` validates the model and its effort before saving; omitting `--reasoning` clears the previous model's override. The in-app `/model` picker uses the same live catalog. The bundled catalog supplies verified reasoning profiles and an offline fallback.
+Use `lemex models` for the saved list and current availability. `lemex models --all` browses everything available to your key, and `lemex models --search QUERY` searches names and IDs. Add an entry with `lemex models add MODEL_ID`, or choose **Add model…** in `/model` to search and add interactively. The default saved list contains only the six curated models below; `lemex models reset` restores it. The bundled catalog supplies verified reasoning profiles and an offline fallback.
+
+`lemex model MODEL --reasoning EFFORT` validates the model and its effort before saving and adds it to the list. Omitting `--reasoning` clears the previous model's override. `lemex model` opens the saved-list and search flow in the terminal.
 
 The bundled RCP catalog was checked on 2026-10-18:
 

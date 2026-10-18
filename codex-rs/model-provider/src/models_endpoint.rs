@@ -46,6 +46,8 @@ const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
 const MODELS_ENDPOINT: &str = "/models";
 // Bound downloads from explicitly configured catalogs before decoding or caching them.
 const MAX_MODEL_CATALOG_BYTES: usize = 1024 * 1024;
+// RCP deployment metadata includes many pricing and capability fields per model.
+const MAX_RCP_METADATA_BYTES: usize = 4 * 1024 * 1024;
 
 /// Provider-owned OpenAI-compatible `/models` endpoint.
 #[derive(Debug)]
@@ -184,7 +186,7 @@ impl OpenAiModelsEndpoint {
                     client.list_models_raw(
                         metadata_url.into(),
                         HeaderMap::new(),
-                        Some(MAX_MODEL_CATALOG_BYTES),
+                        Some(MAX_RCP_METADATA_BYTES),
                     ),
                 )
                 .await
@@ -609,6 +611,47 @@ mod tests {
             "max"
         );
         server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn rcp_large_metadata_still_filters_non_chat_models() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "provider/chat"}, {"id": "BAAI/bge-m3"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/model/info"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {"model_name": "provider/chat", "model_info": {"mode": "completion"}},
+                    {"model_name": "BAAI/bge-m3", "model_info": {"mode": "embedding"}}
+                ],
+                "additional_metadata": "x".repeat(MAX_MODEL_CATALOG_BYTES + 1)
+            })))
+            .mount(&server)
+            .await;
+        let endpoint = OpenAiModelsEndpoint::new(
+            ModelProviderInfo {
+                env_key: None,
+                experimental_bearer_token: Some("rcp-test-key".into()),
+                ..ModelProviderInfo::create_rcp_provider(Some(format!("{}/v1", server.uri())))
+            },
+            None,
+            None,
+        );
+        let catalog = endpoint
+            .list_models(
+                "0.0.0",
+                HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            )
+            .await
+            .unwrap();
+        assert_eq!(catalog.models.len(), 1);
+        assert_eq!(catalog.models[0].slug, "provider/chat");
     }
 
     #[tokio::test]

@@ -12,6 +12,39 @@ fn all_model_presets() -> Vec<ModelPreset> {
     crate::test_support::TEST_MODEL_PRESETS.clone()
 }
 
+#[tokio::test]
+async fn selecting_discovered_model_persists_it_in_the_saved_list_once() -> Result<()> {
+    let (mut app, _events, _ops) = Box::pin(make_test_app_with_channels()).await;
+    app.config.model_picker_models = Some(vec!["gpt-5.5".to_string()]);
+    app.chat_widget
+        .set_model_picker_models(vec!["gpt-5.5".to_string()]);
+    let server = Box::pin(start_config_write_test_app_server(&app)).await?;
+    for _ in 0..2 {
+        Box::pin(app.persist_model_defaults(
+            server.request_handle(),
+            crate::config_update::build_model_selection_edits(
+                "provider/new-model",
+                None::<ReasoningEffortConfig>,
+            ),
+            "default model",
+        ))
+        .await?;
+    }
+    let expected = Some(vec![
+        "gpt-5.5".to_string(),
+        "provider/new-model".to_string(),
+    ]);
+    assert_eq!(app.config.model_picker_models, expected);
+    assert_eq!(app.chat_widget.config_ref().model_picker_models, expected);
+    let saved: toml::Value = toml::from_str(&std::fs::read_to_string(
+        app.config.codex_home.join("config.toml"),
+    )?)?;
+    assert_eq!(saved["model_picker_models"].as_array().unwrap().len(), 2);
+    assert_eq!(saved["model"].as_str(), Some("provider/new-model"));
+    server.shutdown().await?;
+    Ok(())
+}
+
 fn bedrock_model_presets() -> Vec<ModelPreset> {
     create_model_provider(
         ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None),
@@ -25,6 +58,10 @@ fn bedrock_model_presets() -> Vec<ModelPreset> {
 #[tokio::test]
 async fn model_picker_refresh_updates_app_catalog_from_app_server() -> Result<()> {
     let (mut app, mut rx, _op_rx) = make_test_app_with_channels().await;
+    // This test exercises GPT service tiers independently of the default RCP catalog.
+    app.config.model_provider_id = "openai".to_string();
+    app.config.model_provider = ModelProviderInfo::create_openai_provider(None);
+    app.config.model_catalog = Some(codex_models_manager::bundled_models_response()?);
     let mut app_server = start_config_write_test_app_server(&app).await?;
     let mut tui = crate::tui::test_support::make_test_tui()?;
     let fast = Some(ServiceTier::Fast.request_value());

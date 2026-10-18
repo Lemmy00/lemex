@@ -1,19 +1,20 @@
 //! Accept current account-scoped model replies and refresh present pickers without reopening them.
 //! Preserve highlighted models by wire slug, independent of their display names.
 
+use super::model_library::ADD_MODELS_SELECTION_VIEW_ID;
 use super::model_popups::ALL_MODELS_SELECTION_VIEW_ID;
 use super::model_popups::MODEL_SELECTION_VIEW_ID;
 use super::*;
 
 impl ChatWidget {
     fn model_popup_view_id(&self) -> Option<&'static str> {
-        [MODEL_SELECTION_VIEW_ID, ALL_MODELS_SELECTION_VIEW_ID]
-            .into_iter()
-            .find(|view_id| {
-                self.bottom_pane
-                    .selected_index_for_present_view(view_id)
-                    .is_some()
-            })
+        [
+            MODEL_SELECTION_VIEW_ID,
+            ALL_MODELS_SELECTION_VIEW_ID,
+            ADD_MODELS_SELECTION_VIEW_ID,
+        ]
+        .into_iter()
+        .find(|view_id| self.bottom_pane.has_view(view_id))
     }
 
     pub(crate) fn model_popup_request_is_current(&self, request_id: uuid::Uuid) -> bool {
@@ -52,6 +53,7 @@ impl ChatWidget {
                 self.model_catalog.try_list_models().unwrap_or_default(),
             ),
             Some(ALL_MODELS_SELECTION_VIEW_ID) => self.open_all_models_popup(),
+            Some(ADD_MODELS_SELECTION_VIEW_ID) => self.show_add_models_popup(),
             _ => {}
         }
     }
@@ -69,7 +71,7 @@ impl ChatWidget {
             .iter()
             .position(|model| Some(model) == selected_model);
         self.model_popup_model_ids = model_ids;
-        if let Some(view_id) = params.view_id.filter(|_| selected_index.is_some()) {
+        if let Some(view_id) = params.view_id.filter(|id| self.bottom_pane.has_view(id)) {
             self.bottom_pane
                 .replace_selection_view_if_present(view_id, params);
         } else {

@@ -42,6 +42,7 @@ pub use provider::ProviderAuthRecoveryMessages;
 pub use provider::ProviderUnauthorizedRecovery;
 pub use provider::SharedModelProvider;
 pub use provider::create_model_provider;
+pub use rcp_models::bundled_catalog as bundled_rcp_model_catalog;
 
 #[cfg(test)]
 #[path = "workspace_routing_tests.rs"]
