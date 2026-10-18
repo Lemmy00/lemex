@@ -20,7 +20,7 @@ cd lemex
 
 The installer builds and installs `lemex` globally, installs Rust if needed, and copies the bundled configuration and model catalog into `~/.lemex`. Existing configuration files are preserved. Temporary build and packaging caches are removed automatically, including after a failed or interrupted install.
 
-Fresh installations default to RCP's `deepseek-ai/DeepSeek-V4.1-Flash-1017` with `max` reasoning. The bundled catalog includes DeepSeek V4.1, Qwen 3.8, GLM 5.3 Flash, and Leanstral; see [available models and reasoning efforts](docs/config.md#model-catalog-and-tools).
+Fresh installations use RCP's `deepseek-ai/DeepSeek-V4.1-Flash-1017` with `max` reasoning, a 240k-token context, and compaction at 220k. The bundled catalog includes DeepSeek V4.1, Qwen 3.8, GLM 5.3 Flash, and Leanstral; see [available models and reasoning efforts](docs/config.md#model-catalog-and-tools).
 
 ## Run
 
@@ -31,9 +31,9 @@ lemex setup
 lemex
 ```
 
-Setup prompts for a hidden API key and an API URL, defaulting to `https://inference.rcp.epfl.ch/v1`. It saves the key in your configured credential store, separately from `config.toml`. Lemex uses API keys; there is no OpenAI or ChatGPT login.
+Setup shows the RCP endpoint (`https://inference.rcp.epfl.ch/v1`), asks for a hidden API key, then lets you choose a model and its supported reasoning level. Run it again to replace the key; Enter keeps the saved key. Keys stay in the credential store, outside `config.toml`; no OpenAI or ChatGPT login is needed.
 
-For scripts, you can instead set `LEMEX_API_KEY` in the environment. To change the saved URL or model, run `lemex setup --base-url "https://api.example.com/v1" --model "your-model-id"`.
+For scripts, `LEMEX_API_KEY` overrides the saved key. After replacing a key, run `unset LEMEX_API_KEY` if your terminal still exports an old one. Change the endpoint with `lemex setup --base-url "https://api.example.com/v1"`.
 
 For a single task, run from your project's Git repository:
 
