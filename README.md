@@ -43,11 +43,38 @@ lemex exec "Explain this codebase"
 
 Outside a Git repository, add `--skip-git-repo-check`.
 
+## Models
+
+The `/model` picker starts with six curated models and shows availability for your key. To add another:
+
+1. Open `/model` and choose **Add model…**.
+2. Search by model name or ID.
+3. Select a result and choose its supported reasoning level. Lemex saves the model to your list and switches to it.
+
+<details>
+<summary>See the model picker and search</summary>
+
+![Saved-model picker showing the six defaults, availability, and Add model option](docs/images/model-picker.png)
+
+![Searching Qwen 3.8 models, with an additional FP8 model and its supported reasoning levels selected](docs/images/add-model-search.png)
+
+Available models depend on your API key.
+
+</details>
+
+Or use the terminal, replacing `MODEL_ID` with an exact ID from the search results:
+
+```sh
+lemex models --search qwen
+lemex models add MODEL_ID   # Save without switching
+lemex model                # Choose a model and reasoning
+```
+
+See [model selection](docs/authentication.md#model-selection) for reasoning settings and removing or resetting saved models.
+
 ## Customize
 
-Edit `~/.lemex/config.toml` to change the default model, provider, context limits, reasoning display, or MCP servers. Lemex refreshes RCP's model list; the installed `models.json` supplies metadata and an offline fallback. Use `/model` in Lemex to choose a model, or `lemex -m "<model-id>"` for one launch.
-
-The default `/model` picker shows the six curated models and their availability. Choose **Add model…** to search models available to your key and add one to the saved list. In the terminal, use `lemex models --search QUERY`, `lemex models add MODEL_ID`, and `lemex model`. See [model selection](docs/authentication.md#model-selection) for reasoning settings and list management.
+Edit `~/.lemex/config.toml` to change the default model, provider, context limits, reasoning display, or MCP servers. Lemex refreshes RCP's model list; the installed `models.json` supplies metadata and an offline fallback. Use `lemex -m "<model-id>"` for one launch.
 
 Optional environment variables:
 
