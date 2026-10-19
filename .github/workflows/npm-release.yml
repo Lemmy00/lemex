@@ -172,7 +172,10 @@ jobs:
 
   publish:
     needs: assemble
-    if: inputs.publish
+    # Reusing artifacts skips build; publication must not inherit that skip.
+    if: >-
+      always() && !cancelled() && inputs.publish &&
+      needs.assemble.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
