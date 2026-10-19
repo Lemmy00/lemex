@@ -99,6 +99,7 @@ use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout_trace::InferenceTraceAttempt;
 use codex_rollout_trace::InferenceTraceContext;
+use codex_tools::create_tools_json_for_responses_api;
 use codex_tools::create_tools_json_for_responses_lite;
 use codex_tools::create_tools_raw_json_for_responses_api;
 use eventsource_stream::Event;
@@ -520,6 +521,25 @@ fn sideband_websocket_auth_headers(api_auth: &dyn AuthProvider) -> ApiHeaderMap 
     let mut headers = ApiHeaderMap::new();
     api_auth.add_auth_headers(&mut headers);
     headers
+}
+
+fn use_text_custom_tool_formats(tools: &mut [serde_json::Value]) {
+    for tool in tools {
+        match tool.get("type").and_then(serde_json::Value::as_str) {
+            Some("custom") if tool["format"]["type"] == "grammar" => {
+                tool["format"] = serde_json::json!({ "type": "text" });
+            }
+            Some("namespace") => {
+                if let Some(tools) = tool
+                    .get_mut("tools")
+                    .and_then(serde_json::Value::as_array_mut)
+                {
+                    use_text_custom_tool_formats(tools);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl ModelClient {
@@ -980,9 +1000,13 @@ impl ModelClient {
             self.state.thread_id.to_string().as_bytes(),
         );
         let mut prefix = Vec::new();
+        let custom_tool_grammar = self.state.provider.capabilities().custom_tool_grammar;
         let tools = if model_info.use_responses_lite {
             if !prompt.tools.is_empty() {
-                let tools = create_tools_json_for_responses_lite(&prompt.tools)?;
+                let mut tools = create_tools_json_for_responses_lite(&prompt.tools)?;
+                if !custom_tool_grammar {
+                    use_text_custom_tool_formats(&mut tools);
+                }
                 prefix.push(ResponseItem::AdditionalTools {
                     id: Some(ResponseItemId::with_suffix(
                         "at",
@@ -993,8 +1017,15 @@ impl ModelClient {
                 });
             }
             None
-        } else {
+        } else if custom_tool_grammar {
             Some(create_tools_raw_json_for_responses_api(&prompt.tools)?.into())
+        } else {
+            let mut tools = create_tools_json_for_responses_api(&prompt.tools)?;
+            use_text_custom_tool_formats(&mut tools);
+            Some(
+                Arc::<serde_json::value::RawValue>::from(serde_json::value::to_raw_value(&tools)?)
+                    .into(),
+            )
         };
         if !prompt.base_instructions.text.is_empty() {
             let mut instructions = ContextualUserFragment::into(BaseInstructionsFragment(
@@ -1007,6 +1038,15 @@ impl ModelClient {
             prefix.push(instructions);
         }
         input.splice(0..0, prefix);
+        if !custom_tool_grammar {
+            // Saved and dynamically loaded tool definitions use the same provider format.
+            // Only rewrite the request copy, preserving the prompt and persisted history.
+            for item in &mut input {
+                if let ResponseItem::AdditionalTools { tools, .. } = item {
+                    use_text_custom_tool_formats(tools);
+                }
+            }
+        }
         if !is_openai {
             for item in &mut input {
                 item.clear_internal_chat_message_metadata_passthrough();

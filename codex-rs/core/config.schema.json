@@ -2744,6 +2744,10 @@
       "additionalProperties": false,
       "description": "Overrides for the optional API features supported by a custom provider.",
       "properties": {
+        "custom_tool_grammar": {
+          "description": "Whether custom tools accept grammar-constrained input instead of plain text.",
+          "type": "boolean"
+        },
         "external_web_access": {
           "description": "Whether hosted web search may access the live web.",
           "type": "boolean"

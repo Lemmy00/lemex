@@ -76,6 +76,12 @@ wire_api = "responses"
 requires_openai_auth = false
 ```
 
+RCP automatically sends custom tools such as `apply_patch` as plain text because
+its serving backend rejects grammar formats. Other Responses providers can opt
+into this compatibility mode with
+`model_providers.custom.capabilities.custom_tool_grammar = false` (or the same
+path in a `-c` override). Patch validation still runs locally.
+
 Set `MY_PROVIDER_API_KEY` in your environment, then run `lemex models --all`.
 Lemex discovers models from the selected provider's authenticated `/models`
 endpoint. Both standard `data` lists and rich Lemex catalogs are accepted;

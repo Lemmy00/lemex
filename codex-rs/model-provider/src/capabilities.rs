@@ -10,6 +10,7 @@ use codex_model_provider_info::RemoteCompactionSupport;
 /// can further restrict the functionality exposed to the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderCapabilities {
+    pub custom_tool_grammar: bool,
     pub image_generation: bool,
     pub web_search: bool,
     pub external_web_access: bool,
@@ -19,6 +20,7 @@ pub struct ProviderCapabilities {
 impl Default for ProviderCapabilities {
     fn default() -> Self {
         Self {
+            custom_tool_grammar: true,
             image_generation: true,
             web_search: true,
             external_web_access: true,
@@ -30,6 +32,7 @@ impl Default for ProviderCapabilities {
 impl ProviderCapabilities {
     pub(crate) fn from_config(info: &ModelProviderInfo) -> Self {
         let defaults = Self {
+            custom_tool_grammar: !info.is_rcp(),
             remote_compaction: if info.is_openai()
                 || is_azure_responses_provider(&info.name, info.base_url.as_deref())
             {
@@ -41,6 +44,9 @@ impl ProviderCapabilities {
         };
         let overrides = info.capabilities.unwrap_or_default();
         Self {
+            custom_tool_grammar: overrides
+                .custom_tool_grammar
+                .unwrap_or(defaults.custom_tool_grammar),
             external_web_access: overrides
                 .external_web_access
                 .unwrap_or(defaults.external_web_access),

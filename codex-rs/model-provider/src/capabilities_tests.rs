@@ -8,6 +8,7 @@ fn capability_overrides_preserve_unspecified_provider_defaults() {
     for info in [
         ModelProviderInfo::default(),
         ModelProviderInfo::create_openai_provider(/*base_url*/ None),
+        ModelProviderInfo::create_rcp_provider(/*base_url*/ None),
         ModelProviderInfo {
             name: "Azure".to_string(),
             ..Default::default()
@@ -31,5 +32,34 @@ fn capability_overrides_preserve_unspecified_provider_defaults() {
                 ..defaults
             },
         );
+    }
+}
+
+#[test]
+fn custom_tool_grammar_defaults_and_overrides() {
+    for (info, expected) in [
+        (ModelProviderInfo::default(), true),
+        (ModelProviderInfo::create_openai_provider(None), true),
+        (ModelProviderInfo::create_rcp_provider(None), false),
+    ] {
+        assert_eq!(
+            create_model_provider(info.clone(), None)
+                .capabilities()
+                .custom_tool_grammar,
+            expected,
+        );
+        for enabled in [false, true] {
+            let mut configured = info.clone();
+            configured.capabilities = Some(ModelProviderCapabilities {
+                custom_tool_grammar: Some(enabled),
+                ..Default::default()
+            });
+            assert_eq!(
+                create_model_provider(configured, None)
+                    .capabilities()
+                    .custom_tool_grammar,
+                enabled,
+            );
+        }
     }
 }

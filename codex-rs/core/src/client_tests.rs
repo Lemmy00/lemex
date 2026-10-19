@@ -1087,6 +1087,124 @@ async fn responses_http_preserves_raw_tool_metadata_for_openai_custom_endpoint()
 
 #[test_case::test_case(false; "standard")]
 #[test_case::test_case(true; "responses_lite")]
+fn custom_tool_formats_follow_provider_capabilities(responses_lite: bool) -> anyhow::Result<()> {
+    let custom: codex_tools::FreeformTool = serde_json::from_value(json!({
+        "name": "apply_patch",
+        "description": "Apply a patch",
+        "defer_loading": true,
+        "format": {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"},
+    }))?;
+    let function = codex_tools::ResponsesApiTool {
+        name: "example".to_string(),
+        description: "Preserve function schemas".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: serde_json::from_value(
+            json!({"type": "object", "properties": {"format": {"type": "string"}}}),
+        )?,
+        output_schema: None,
+    };
+    let prompt = Prompt {
+        base_instructions: BaseInstructions {
+            text: String::new(),
+            ..Default::default()
+        },
+        tools: vec![
+            codex_tools::ToolSpec::Freeform(custom.clone()),
+            codex_tools::ToolSpec::Namespace(codex_tools::ResponsesApiNamespace {
+                name: "nested".to_string(),
+                description: "Nested tools".to_string(),
+                tools: vec![
+                    codex_tools::ResponsesApiNamespaceTool::Custom(custom),
+                    codex_tools::ResponsesApiNamespaceTool::Function(function.clone()),
+                ],
+            }),
+        ]
+        .into(),
+        input: vec![ResponseItem::AdditionalTools {
+            id: None,
+            role: "developer".to_string(),
+            tools: vec![json!({
+                "type": "namespace", "name": "saved", "tools": [{
+                    "type": "custom", "name": "exec", "description": "Run code",
+                    "format": {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"},
+                }],
+            })],
+        }],
+        ..Default::default()
+    };
+    let original_tools = serde_json::to_value(&prompt.tools)?;
+    let original_input = prompt.input.clone();
+    let mut model = test_model_info();
+    model.use_responses_lite = responses_lite;
+    for (mut provider, grammar) in [
+        (ModelProviderInfo::create_rcp_provider(None), false),
+        (ModelProviderInfo::create_openai_provider(None), true),
+        (ModelProviderInfo::default(), false),
+        (ModelProviderInfo::create_rcp_provider(None), true),
+    ] {
+        if provider.name.is_empty() || (provider.is_rcp() && grammar) {
+            provider.capabilities = Some(codex_model_provider_info::ModelProviderCapabilities {
+                custom_tool_grammar: Some(grammar),
+                ..Default::default()
+            });
+        }
+        let mut client = test_model_client(SessionSource::Cli);
+        Arc::get_mut(&mut client.state).unwrap().provider = create_model_provider(provider, None);
+        let request = client.build_responses_request(
+            &prompt,
+            &model,
+            None,
+            codex_protocol::config_types::ReasoningSummary::None,
+            None,
+            &test_responses_metadata_for_client(
+                &client,
+                None,
+                format!("{}:0", client.state.thread_id),
+                None,
+                TestCodexResponsesRequestKind::Turn,
+            ),
+            false,
+        )?;
+        let body = serde_json::to_value(request)?;
+        let tools = if responses_lite {
+            &body["input"][0]["tools"]
+        } else {
+            &body["tools"]
+        };
+        let direct = if responses_lite {
+            &tools[0]["tools"][0]
+        } else {
+            &tools[0]
+        };
+        let expected_format = if grammar {
+            json!({"type": "grammar", "syntax": "lark", "definition": "start: /.+/"})
+        } else {
+            json!({"type": "text"})
+        };
+        assert_eq!(direct["format"], expected_format);
+        assert_eq!(direct["name"], "apply_patch");
+        assert_eq!(direct["defer_loading"], true);
+        assert_eq!(tools[1]["tools"][0]["format"], expected_format);
+        assert_eq!(
+            tools[1]["tools"][1],
+            serde_json::to_value(codex_tools::ResponsesApiNamespaceTool::Function(
+                function.clone()
+            ))?,
+        );
+        let saved_index = usize::from(responses_lite);
+        assert_eq!(
+            body["input"][saved_index]["tools"][0]["tools"][0]["format"],
+            expected_format,
+        );
+        assert_eq!(serde_json::to_value(&prompt.tools)?, original_tools);
+        assert_eq!(prompt.input, original_input);
+    }
+    Ok(())
+}
+
+#[test_case::test_case(false; "standard")]
+#[test_case::test_case(true; "responses_lite")]
 fn prefix_ids_track_thread_and_payload(responses_lite: bool) -> anyhow::Result<()> {
     let thread_id = ThreadId::new();
     let client = test_model_client_with_thread_id(thread_id, SessionSource::Cli);

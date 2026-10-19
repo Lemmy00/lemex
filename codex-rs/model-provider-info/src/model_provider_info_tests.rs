@@ -6,6 +6,19 @@ use std::num::NonZeroU64;
 use tempfile::tempdir;
 
 #[test]
+fn custom_tool_grammar_capability_is_configurable() {
+    let provider: ModelProviderInfo =
+        toml::from_str("name = 'Custom'\n[capabilities]\ncustom_tool_grammar = false\n").unwrap();
+    assert_eq!(
+        provider.capabilities,
+        Some(ModelProviderCapabilities {
+            custom_tool_grammar: Some(false),
+            ..Default::default()
+        }),
+    );
+}
+
+#[test]
 fn runtime_internal_metadata_opt_in_is_not_serialized_or_configurable() {
     let trusted = ModelProviderInfo {
         include_internal_metadata: true,
