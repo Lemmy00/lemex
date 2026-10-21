@@ -1972,7 +1972,7 @@ Run lemex doctor without --summary for detailed diagnostics.
     #[test]
     fn copyable_items_use_check_status() {
         let description =
-            "/tmp/logs_2.sqlite, ~/goals_1.sqlite integrity check; try --summary or `codex doctor`";
+            "/tmp/logs_2.sqlite, ~/goals_1.sqlite integrity check; try --summary or `lemex doctor`";
         let details = r"see ./logs, ../goals. C:\logs, D:/goals. c:\logs, \\server\share\logs, \\?\C:\logs, \\?\UNC\server\share\logs, \\.\pipe\codex, \??\C:\logs, \DosDevices\C:\logs, \rooted. http://localhost:8080: https://example.com; wss://example.com) and `/tmp/my data/logs_2.sqlite`";
         let mut rendered = String::new();
 

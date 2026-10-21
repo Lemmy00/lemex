@@ -73,7 +73,7 @@ async fn voice_composer_preserves_normal_colors_across_microphone_states() {
             insta::assert_snapshot!(rows, @"
             0:
             1:  voice ● listening     f9 mute     /voice stop
-            2:    mic ▁▁▁▁▁▁  codex ▁▁▁▁▁▁
+            2:    mic ▁▁▁▁▁▁  Lemex ▁▁▁▁▁▁
             3:
             4: › typed
             ");

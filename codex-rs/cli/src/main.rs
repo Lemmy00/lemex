@@ -697,7 +697,7 @@ fn run_update_action(
 ) -> anyhow::Result<()> {
     if let UpdateAction::Daemon(source) = action {
         let executable = cli_executable
-            .ok_or_else(|| anyhow::anyhow!("Cannot locate the launching Codex CLI"))?;
+            .ok_or_else(|| anyhow::anyhow!("Cannot locate the launching Lemex CLI"))?;
         println!("Updating the local background server...");
         let status = std::process::Command::new(executable)
             .args(source.command_args())
@@ -707,7 +707,7 @@ fn run_update_action(
             status.success(),
             "Daemon update failed with status {status}"
         );
-        println!("Relaunch Codex to reconnect.");
+        println!("Relaunch Lemex to reconnect.");
         return Ok(());
     }
     println!();
@@ -767,7 +767,7 @@ fn resolve_windows_update_command_from_path(
         std::env::join_paths(std::env::split_paths(path_env).filter(|path| path.is_absolute()))?;
     if path_env.is_empty() {
         anyhow::bail!(
-            "Could not find an absolute update command `{command}` on PATH. Please update manually: https://developers.openai.com/codex/cli/"
+            "Could not find an absolute update command `{command}` on PATH. Please update manually: https://github.com/Lemmy00/lemex#install"
         );
     }
     which::which_in_global(command, Some(&path_env))?
@@ -787,7 +787,7 @@ fn run_update_command() -> anyhow::Result<()> {
     {
         let Some(action) = codex_tui::get_update_action() else {
             anyhow::bail!(
-                "Could not detect the Lemex installation method. Please update manually: https://developers.openai.com/codex/cli/"
+                "Could not detect the Lemex installation method. Please update manually: https://github.com/Lemmy00/lemex#install"
             );
         };
         run_update_action(action, /*cli_executable*/ None)
@@ -1979,12 +1979,12 @@ fn reject_unsupported_worktree_for_subcommand(
         None => Ok(()),
         Some(Subcommand::Fork(command)) if command.session_id.is_some() && !command.last => Ok(()),
         Some(Subcommand::Fork(_)) => {
-            anyhow::bail!("`codex fork --worktree` requires an explicit session ID")
+            anyhow::bail!("`lemex fork --worktree` requires an explicit session ID")
         }
         Some(Subcommand::Exec(command)) => match &command.command {
             None | Some(ExecCommand::Fork(_)) => Ok(()),
             Some(ExecCommand::Resume(_)) => anyhow::bail!(
-                "`--worktree` cannot resume an existing session; use `codex exec fork --worktree`"
+                "`--worktree` cannot resume an existing session; use `lemex exec fork --worktree`"
             ),
             Some(ExecCommand::Review(_)) => {
                 anyhow::bail!("`--worktree` is not supported for code review")
@@ -1992,7 +1992,7 @@ fn reject_unsupported_worktree_for_subcommand(
         },
         _ => {
             anyhow::bail!(
-                "`--worktree` supports new interactive sessions, `codex fork`, `codex exec`, and `codex exec fork`"
+                "`--worktree` supports new interactive sessions, `lemex fork`, `lemex exec`, and `lemex exec fork`"
             )
         }
     }
@@ -2168,7 +2168,7 @@ async fn run_interactive_tui(
     if interactive.no_daemon {
         if interactive.agents_overview {
             return Ok(AppExitInfo::fatal(
-                "--no-daemon cannot be used with codex agents. The agents overview requires a shared server. Use codex --no-daemon to work without it.",
+                "--no-daemon cannot be used with lemex agents. The agents overview requires a shared server. Use lemex --no-daemon to work without it.",
             ));
         }
         if remote.is_some() {
@@ -2214,7 +2214,7 @@ async fn run_interactive_tui(
         codex_app_server_daemon::run(AppServerLifecycleCommand::Start)
             .await
             .map_err(|err| std::io::Error::other(format!(
-                "{err:#}\nThe agents overview requires a shared server. Use codex --no-daemon to work without it."
+                "{err:#}\nThe agents overview requires a shared server. Use lemex --no-daemon to work without it."
             )))?;
     }
 
@@ -2559,7 +2559,7 @@ mod tests {
         assert_eq!(
             err.to_string(),
             format!(
-                "Could not find an absolute update command `{command}` on PATH. Please update manually: https://developers.openai.com/codex/cli/"
+                "Could not find an absolute update command `{command}` on PATH. Please update manually: https://github.com/Lemmy00/lemex#install"
             )
         );
     }
@@ -2843,14 +2843,14 @@ mod tests {
     fn worktree_flag_rejects_unsupported_session_and_management_commands() {
         let arguments = [
             vec!["lemex", "--worktree", "setup"],
-            vec!["codex", "fork", "--worktree"],
-            vec!["codex", "fork", "--worktree", "--last"],
-            vec!["codex", "exec", "resume", "--worktree", "session"],
-            vec!["codex", "exec", "review", "--worktree"],
-            vec!["codex", "resume", "--worktree", "session"],
-            vec!["codex", "archive", "session", "--worktree"],
+            vec!["lemex", "fork", "--worktree"],
+            vec!["lemex", "fork", "--worktree", "--last"],
+            vec!["lemex", "exec", "resume", "--worktree", "session"],
+            vec!["lemex", "exec", "review", "--worktree"],
+            vec!["lemex", "resume", "--worktree", "session"],
+            vec!["lemex", "archive", "session", "--worktree"],
             vec![
-                "codex",
+                "lemex",
                 "queue",
                 "--thread",
                 "session",

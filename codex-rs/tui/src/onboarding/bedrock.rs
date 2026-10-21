@@ -49,9 +49,9 @@ impl BedrockState {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let mut lines: Vec<Line> = vec!["Using Codex with AWS GovCloud".bold().into(), "".into()];
+        let mut lines: Vec<Line> = vec!["Using Lemex with AWS GovCloud".bold().into(), "".into()];
         lines.push(Line::from(vec![
-            "You are using Codex with AWS GovCloud. Please ensure you or your administrator have read the ".into(),
+            "You are using Lemex with AWS GovCloud. Please ensure you or your administrator have read the ".into(),
             "application configuration and security guidance".cyan().underlined(),
             " before proceeding.".into(),
         ]));

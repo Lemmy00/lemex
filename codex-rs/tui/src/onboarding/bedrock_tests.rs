@@ -45,14 +45,14 @@ fn gov_cloud_guidance_scrolls_in_short_panes() {
                 !state.handle_guidance_key_event(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
             );
         }
-        assert!(seen.contains("Using Codex with AWS"));
+        assert!(seen.contains("Using Lemex with AWS"));
         assert!(seen.contains("proceeding."));
         assert!(seen.contains(GOV_CLOUD_GUIDANCE_URL));
         for _ in 0..20 {
             state.handle_guidance_key_event(&KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
             render_visible_at(&state, area);
         }
-        assert!(render_visible_at(&state, area).starts_with("Using Codex with AWS"));
+        assert!(render_visible_at(&state, area).starts_with("Using Lemex with AWS"));
     }
     assert_eq!(render_visible_at(&state, area), initial);
     state.handle_guidance_key_event(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));

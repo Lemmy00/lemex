@@ -532,7 +532,7 @@ async fn build_report(
                             CheckStatus::Fail,
                             "config could not be loaded",
                         )
-                        .remediation("Fix the reported config error, then rerun codex doctor.");
+                        .remediation("Fix the reported config error, then rerun lemex doctor.");
                         // Error messages can echo config values. Report only typed metadata,
                         // including errors wrapped by io::Error, whose source skips the wrapper.
                         let config_error = err.chain().find_map(|cause| {
@@ -636,7 +636,7 @@ async fn load_config(
     .await?
     .build()
     .await
-    .context("failed to load Codex config")
+    .context("failed to load Lemex config")
 }
 
 fn config_overrides_from_interactive(
@@ -935,14 +935,14 @@ fn installation_check(show_details: bool) -> DoctorCheck {
     let mut remediation = None;
 
     if path_entries.len() > 1 {
-        details.push(format!("PATH codex entries: {}", path_entries.len()));
+        details.push(format!("PATH lemex entries: {}", path_entries.len()));
     }
     if show_details || path_entries.len() > 1 {
         details.extend(
             path_entries
                 .iter()
                 .enumerate()
-                .map(|(index, path)| format!("PATH codex #{}: {path}", index + 1)),
+                .map(|(index, path)| format!("PATH lemex #{}: {path}", index + 1)),
         );
     }
 
@@ -953,7 +953,7 @@ fn installation_check(show_details: bool) -> DoctorCheck {
             status = status.max(CheckStatus::Warning);
             summary = "npm-managed launch is missing package-root provenance".to_string();
             remediation = Some(
-                "Reinstall or update Codex so the JS shim provides CODEX_MANAGED_PACKAGE_ROOT."
+                "Reinstall or update Lemex so the launcher provides package-root information."
                     .to_string(),
             );
         }

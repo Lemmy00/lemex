@@ -402,9 +402,9 @@ fn no_daemon_rejects_agents_and_explicit_remote_targets() -> Result<()> {
         let args = args.split_whitespace().collect::<Vec<_>>();
         let home = TempDir::new()?;
         let expected = if args.contains(&"agents") {
-            "--no-daemon cannot be used with codex agents."
+            "--no-daemon cannot be used with lemex agents."
         } else if args.contains(&"queue") && !args.contains(&"--remote") {
-            "--no-daemon cannot be used with codex queue."
+            "--no-daemon cannot be used with lemex queue."
         } else {
             "--no-daemon cannot be used with --remote."
         };

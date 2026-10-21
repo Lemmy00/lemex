@@ -901,7 +901,7 @@ mod tests {
                     /*has_input_focus*/ true,
                     sender,
                     /*enhanced_keys_supported*/ true,
-                    "Ask Codex to do anything".to_string(),
+                    "Ask Lemex to do anything".to_string(),
                     /*disable_paste_burst*/ false,
                 );
                 composer

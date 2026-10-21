@@ -328,8 +328,8 @@ mod tests {
             .unwrap()
             .stage = codex_features::Stage::Experimental {
             name: "Voice conversations",
-            menu_description: "Talk with Codex using /voice.",
-            announcement: "NEW: Voice conversations can now be enabled from /experimental. Restart Codex after enabling, then use /voice.",
+            menu_description: "Talk with Lemex using /voice.",
+            announcement: "NEW: Voice conversations can now be enabled from /experimental. Restart Lemex after enabling, then use /voice.",
         };
         let unavailable = experimental_tooltips(&features, || false);
         let available = experimental_tooltips(&features, || true);
