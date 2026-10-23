@@ -208,7 +208,10 @@ jobs:
 
   build:
     needs: [check, security, voice, binaries]
-    if: inputs.reuse_run_id == ''
+    # A failed platform must not discard completed packages for other platforms.
+    if: >-
+      always() && !cancelled() && inputs.reuse_run_id == '' &&
+      needs.check.result == 'success' && needs.security.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     strategy:
