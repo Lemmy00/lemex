@@ -115,6 +115,9 @@ jobs:
           fi
           bazel build "${options[@]}" \
             //codex-rs/voice-host:codex-voice-host //third_party/voice:native_runtime
+          bazel test "${options[@]}" \
+            //codex-rs/voice-host:codex-voice-host-bin-unit-tests \
+            //codex-rs/voice-host:voice-host-installed_client-test
           case "$TARGET" in
             x86_64-unknown-linux-musl) prefix=linux_x86_64 ;;
             aarch64-unknown-linux-musl) prefix=linux_aarch64 ;;

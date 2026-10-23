@@ -92,7 +92,8 @@ publisher to complete its first publication within two days. See
 Each platform must pass an actual global npm installation in an isolated prefix,
 using its compiled native package. The install check exercises the launcher,
 exact optional-dependency aliases, OS/CPU selection, version, and setup/exec help.
-It relocates the installed native package to a path containing spaces, checks
+Native helper unit tests and installed-client UDP/TCP negotiation tests also run
+on each platform. The install check relocates the installed native package to a path containing spaces, checks
 the voice helper build commit, initializes the packaged GStreamer libraries,
 creates an audio SDP offer, and shuts the helper down. This does not open audio
 devices or prove a live backend conversation. The public-release receipt seals
