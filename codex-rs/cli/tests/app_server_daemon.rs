@@ -4,6 +4,7 @@
 #[path = "app_server_daemon/support.rs"]
 mod support;
 
+use codex_utils_cargo_bin::copy_executable;
 use support::TestDaemon;
 use support::signal;
 use support::wait_for_exit;
@@ -18,106 +19,6 @@ use anyhow::Result;
 use anyhow::ensure;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
-use tempfile::TempDir;
-
-struct TestDaemon {
-    home: TempDir,
-    codex: PathBuf,
-    unmanaged: Option<Child>,
-}
-
-impl TestDaemon {
-    fn new() -> Result<Self> {
-        let home = tempfile::Builder::new().tempdir_in("/tmp")?;
-        let codex = codex_utils_cargo_bin::cargo_bin("lemex")?;
-        let codex_source = std::fs::canonicalize(&codex)?;
-        let target = if cfg!(target_os = "macos") {
-            format!("{}-apple-darwin", std::env::consts::ARCH)
-        } else {
-            format!("{}-unknown-linux-musl", std::env::consts::ARCH)
-        };
-        let standalone = home.path().join("packages/standalone");
-        let release_name = format!("0.0.0-{target}");
-        let managed = standalone
-            .join("releases")
-            .join(&release_name)
-            .join("bin/codex");
-        std::fs::create_dir_all(managed.parent().context("managed bin parent")?)?;
-        // Preserve the installed path without invalidating the shared CLI's Rosetta cache.
-        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-        {
-            copy_executable(&codex_source, &managed)?;
-            // Translate the fixture before timed daemon capability and readiness checks.
-            ensure!(
-                Command::new(&managed)
-                    .env("LEMEX_HOME", home.path())
-                    .arg("--version")
-                    .output()?
-                    .status
-                    .success(),
-                "failed to prepare managed test executable"
-            );
-        }
-        #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
-        if std::fs::hard_link(&codex_source, &managed).is_err() {
-            copy_executable(&codex_source, &managed)?;
-        }
-        std::fs::write(standalone.join("auto-update-version"), &release_name)?;
-        std::os::unix::fs::symlink(
-            PathBuf::from("releases").join(release_name),
-            standalone.join("current"),
-        )?;
-        // Model a daemon that was previously launched and is currently stopped.
-        let state = home.path().join("app-server-daemon");
-        std::fs::create_dir(&state)?;
-        std::fs::write(state.join("app-server.stderr.log"), b"")?;
-        Ok(Self {
-            home,
-            codex,
-            unmanaged: None,
-        })
-    }
-
-    fn command(&self) -> Command {
-        let mut command = Command::new(&self.codex);
-        command.env("LEMEX_HOME", self.home.path());
-        command
-    }
-
-    fn lifecycle(&self, action: &str) -> Result<Value> {
-        let output = self
-            .command()
-            .args(["app-server", "daemon", action])
-            .output()?;
-        ensure!(
-            output.status.success(),
-            "daemon {action} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(serde_json::from_slice(&output.stdout)?)
-    }
-
-    fn pid(&self, name: &str) -> Result<u32> {
-        let record = std::fs::read(self.home.path().join("app-server-daemon").join(name))
-            .with_context(|| format!("failed to read {name}"))?;
-        Ok(serde_json::from_slice::<Value>(&record)?["pid"]
-            .as_u64()
-            .context("pid missing")? as u32)
-    }
-}
-
-impl Drop for TestDaemon {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.unmanaged.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        let _ = self.lifecycle("stop");
-        if let Ok(pid) = self.pid("app-server-updater.pid") {
-            let _ = signal(pid, libc::SIGTERM);
-        }
-    }
-}
 
 #[test]
 fn managed_daemon_restarts_from_deleted_working_directory() -> Result<()> {

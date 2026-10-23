@@ -60,9 +60,7 @@ fn review_completion_uses_one_monotonic_duration() {
             reasoning_effort: None,
         },
     });
-    report.tracking.started_at_ms = 1_654_073_807_000;
-    report.started.started_at_ms =
-        i64::try_from(report.tracking.started_at_ms).expect("start timestamp");
+    report.started.started_at_ms = 1_654_073_807_000;
     report.started_instant = Instant::now() - Duration::from_millis(456);
     let model: ModelInfo = serde_json::from_value(json!({
         "slug": "test-model",
@@ -101,7 +99,6 @@ fn review_completion_uses_one_monotonic_duration() {
     report.started_instant -= Duration::from_secs(1);
     report.track(
         &telemetry,
-        &AnalyticsEventsClient::disabled(),
         completed.analytics,
         /*completed_at_ms*/ 1_792_141_011_000,
         elapsed,

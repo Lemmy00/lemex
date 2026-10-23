@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 #[tokio::test]
 async fn thread_sample_cancel_only_signals_matching_request_contexts() {
     let (tx, _rx) = mpsc::channel(/*buffer*/ 1);
-    let outgoing = OutgoingMessageSender::new(tx, AnalyticsEventsClient::disabled());
+    let outgoing = OutgoingMessageSender::new(tx);
     for method in [
         "thread/sample",
         "thread/sample/cancel",

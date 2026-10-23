@@ -1186,7 +1186,7 @@ async fn v2_implicit_and_explicit_invocations_retain_their_step_catalog() -> Tes
     let original = detect(&harness.step_store).expect("prepared step skill");
     assert_eq!(original.remote_plugin_id, cloud.remote_plugin_id);
     assert_eq!(original.plugin_id.as_deref(), Some("matching"));
-    assert_matches!(&original.location, codex_analytics::SkillInvocationLocation::Resource { id, .. } if id == cloud.main_prompt.as_str());
+    assert_matches!(&original.location, codex_skills_extension::SkillInvocationLocation::Resource { id, .. } if id == cloud.main_prompt.as_str());
 
     let next_step = ExtensionData::new("step-2");
     harness.turn_store.insert(SelectedPluginSnapshot::default());

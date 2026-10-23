@@ -58,15 +58,10 @@ async fn background_routing_call_sites_skip_config(api_key: Option<&str>) -> any
         loader,
     );
     let (outgoing_tx, mut outgoing_rx) = mpsc::channel(/*buffer*/ 16);
-    let analytics_events_client = AnalyticsEventsClient::disabled();
-    let outgoing = Arc::new(OutgoingMessageSender::new(
-        outgoing_tx,
-        analytics_events_client.clone(),
-    ));
+    let outgoing = Arc::new(OutgoingMessageSender::new(outgoing_tx));
     let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
         cloud_skill_provider: None,
         outgoing,
-        analytics_events_client,
         arg0_paths: Arg0DispatchPaths::default(),
         startup_cwd: Some(config.cwd.to_path_buf()),
         config,
@@ -83,7 +78,6 @@ async fn background_routing_call_sites_skip_config(api_key: Option<&str>) -> any
         auth_manager,
         installation_id: "11111111-1111-4111-8111-111111111111".to_string(),
         code_mode_session_provider: None,
-        rpc_transport: AppServerRpcTransport::Stdio,
         remote_control_handle: None,
         // Isolate routing from unrelated plugin startup configuration loads.
         plugin_startup_tasks: None,

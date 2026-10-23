@@ -134,10 +134,7 @@ fn save_preserves_report_and_log_consent() -> Result<()> {
             )?;
         let mut archive = ZipArchive::new(File::open(path)?)?;
         let report: serde_json::Value = serde_json::from_reader(archive.by_name("report.json")?)?;
-        assert_eq!(
-            report["exception"]["values"][0]["value"],
-            "synthetic feedback"
-        );
+        assert_eq!(report["reason"], "synthetic feedback");
         let logs = archive
             .file_names()
             .collect::<zip::result::ZipResult<Vec<_>>>()?

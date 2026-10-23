@@ -12,7 +12,14 @@ use std::time::Duration;
 use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use codex_analytics::CompactionTrigger;
+use codex_protocol::openai_models::ReasoningEffort;
+
+#[derive(Clone, Copy)]
+enum CompactionTrigger {
+    Auto,
+    Manual,
+}
+
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
 use codex_config::types::McpServerConfig;

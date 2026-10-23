@@ -94,10 +94,7 @@ async fn background_routing_skips_config_until_chatgpt_sign_in(
         ),
     );
     let (sender, _receiver) = tokio::sync::mpsc::channel(16);
-    let outgoing = Arc::new(OutgoingMessageSender::new(
-        sender,
-        codex_analytics::AnalyticsEventsClient::disabled(),
-    ));
+    let outgoing = Arc::new(OutgoingMessageSender::new(sender));
     let model_catalog = Arc::new(crate::model_catalog::ModelCatalog::new(
         manager.clone(),
         Some(config.cwd.to_path_buf()),

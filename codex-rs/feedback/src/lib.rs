@@ -49,6 +49,7 @@ pub const CODEX_APPS_TOOLS_CACHE_ATTACHMENT_FILENAME: &str = "codex-apps-tools-c
 pub const CODEX_APP_DIRECTORY_CACHE_ATTACHMENT_FILENAME: &str = "codex-app-directory-cache.json";
 /// Filename used for the Windows sandbox log feedback attachment.
 pub const WINDOWS_SANDBOX_LOG_ATTACHMENT_FILENAME: &str = "windows-sandbox.log";
+const MAX_EVENT_BYTES: usize = 1024 * 1024;
 const DEFAULT_MAX_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 pub(crate) const REPORTING_REMOVED: &str =
     "External feedback reporting is not available in Lemex; diagnostics remain local.";
@@ -578,6 +579,10 @@ impl FeedbackSnapshot {
             "tags": options.tags,
             "session_source": options.session_source,
         }))?;
+        anyhow::ensure!(
+            report.len() <= MAX_EVENT_BYTES,
+            "feedback event exceeds the size limit"
+        );
         let logs = options
             .include_logs
             .then(|| self.log_attachment(options.logs_override));

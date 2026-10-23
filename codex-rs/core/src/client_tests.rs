@@ -1130,7 +1130,8 @@ fn custom_tool_formats_follow_provider_capabilities(responses_lite: bool) -> any
                     "type": "custom", "name": "exec", "description": "Run code",
                     "format": {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"},
                 }],
-            })],
+            })]
+            .into(),
         }],
         ..Default::default()
     };

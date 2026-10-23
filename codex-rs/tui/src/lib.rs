@@ -2286,9 +2286,6 @@ mod daemon_telemetry;
 pub(crate) mod tests;
 
 #[cfg(test)]
-#[path = "lib_tests.rs"]
-mod tests;
-#[cfg(test)]
 pub(crate) use tests::test_backend;
 #[cfg(test)]
 pub(crate) use tests::test_support;
