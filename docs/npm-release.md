@@ -106,6 +106,25 @@ lockfile entries without changing third-party dependency pins. The source npm
 manifest is private so a direct publish from the checkout cannot accidentally
 release a launcher without native packages; only staged packages are public.
 
+## Recovering a failed platform build
+
+A completed unsuccessful run can retain successful platform artifacts. Use the
+same package version and select its run ID:
+
+```sh
+gh workflow run npm-release.yml --ref main -f version=0.1.2 -f publish=true -f recover_run_id=RUN_ID
+```
+
+Recovery validates the source repository, branch, workflow, completed run and
+successful job for each retained artifact. Native source/build inputs must be
+unchanged. Only missing platforms rebuild, from the original source commit;
+helpers, runtime receipts and CLI build commits stay consistent. The complete
+four-platform release is validated before publication. Recovery and full
+artifact reuse are mutually exclusive. Voice and CLI compile in independent parallel jobs before a native installation
+check. Jobs have a four-hour ceiling to accommodate cold Intel Mac builds; the
+ceiling is not an expected duration. Successful native packages are retained
+when another platform fails, so recovery does not rebuild completed platforms.
+
 ## Packaging regression checks
 
 ```sh
