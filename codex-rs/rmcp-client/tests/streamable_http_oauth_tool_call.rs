@@ -87,7 +87,7 @@ async fn run_scenarios(scenarios: &[&str]) -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "spawned by OAuth recovery tests with an isolated CODEX_HOME"]
+#[ignore = "spawned by OAuth recovery tests with an isolated LEMEX_HOME"]
 async fn runtime_oauth_child() -> anyhow::Result<()> {
     let scenario = std::env::var(SCENARIO_ENV)?;
     let mcp = MockServer::start().await;
@@ -312,7 +312,7 @@ async fn runtime_oauth_child() -> anyhow::Result<()> {
         .call_tool(
             "echo".to_string(),
             /*arguments*/ None,
-            /*meta*/ None,
+            |_| Ok(None),
             Some(Duration::from_secs(5)),
         )
         .await;

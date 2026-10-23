@@ -1,6 +1,6 @@
 //! Exercises lazy feedback attachment reads across rollout representations.
 
-use super::*;
+use crate::*;
 use pretty_assertions::assert_eq;
 
 const JSONL: &[u8] = b"{\"message\":\"old diagnostic\"}\n{\"message\":\"more details\"}\n";
@@ -148,6 +148,34 @@ fn compressed_attachment_bounds_decoded_bytes() {
         JSONL
     );
     assert!(!fixture.plain.exists());
+}
+
+#[test]
+fn undecodable_attachment_preserves_raw_bytes_with_bounds_and_filename_override() {
+    let fixture = Fixture::new();
+    let damaged_bytes = &COMPRESSED[..10];
+    fs::write(&fixture.compressed, damaged_bytes).unwrap();
+    for path in [&fixture.plain, &fixture.compressed] {
+        let attachment = FeedbackAttachmentPath {
+            path: path.clone(),
+            attachment_filename_override: Some("diagnostic.jsonl".to_string()),
+        };
+        assert!(
+            attachment
+                .read_attachment(damaged_bytes.len() - 1)
+                .unwrap()
+                .is_none()
+        );
+        let uploaded = attachment
+            .read_attachment(damaged_bytes.len())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (uploaded.filename, uploaded.buffer),
+            ("diagnostic.jsonl.zst".to_string(), damaged_bytes.to_vec())
+        );
+    }
+    assert_eq!(fs::read(&fixture.compressed).unwrap(), damaged_bytes);
 }
 
 #[test]

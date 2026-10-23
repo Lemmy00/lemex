@@ -47,7 +47,6 @@ async fn worktree_creation_rejects_untrusted_source_before_allocation() -> Resul
     use crate::app_event::ManagedWorktreeMode;
 
     let (mut app, mut events, _op_rx) = make_test_app_with_channels().await;
-    app.config.features.enable(Feature::Worktrees)?;
     app.config.active_project.trust_level =
         Some(codex_protocol::config_types::TrustLevel::Untrusted);
     let thread_id = ThreadId::new();
@@ -97,7 +96,6 @@ async fn worktree_creation_rejects_running_agent_before_allocation() -> Result<(
     let (mut app, mut events, _op_rx) = make_test_app_with_channels().await;
     let home = tempfile::tempdir()?;
     app.config.codex_home = home.path().to_path_buf().abs();
-    app.config.features.enable(Feature::Worktrees)?;
     app.config.active_project.trust_level = Some(codex_protocol::config_types::TrustLevel::Trusted);
     let primary = ThreadId::new();
     app.primary_thread_id = Some(primary);

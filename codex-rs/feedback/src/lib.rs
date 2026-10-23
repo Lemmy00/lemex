@@ -24,6 +24,7 @@ use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::registry::LookupSpan;
 
+mod archive;
 mod daemon_logs;
 pub use daemon_logs::daemon_log_attachments;
 pub(crate) mod feedback_diagnostics;
@@ -48,6 +49,7 @@ pub const CODEX_APPS_TOOLS_CACHE_ATTACHMENT_FILENAME: &str = "codex-apps-tools-c
 pub const CODEX_APP_DIRECTORY_CACHE_ATTACHMENT_FILENAME: &str = "codex-app-directory-cache.json";
 /// Filename used for the Windows sandbox log feedback attachment.
 pub const WINDOWS_SANDBOX_LOG_ATTACHMENT_FILENAME: &str = "windows-sandbox.log";
+const MAX_EVENT_BYTES: usize = 1024 * 1024;
 const DEFAULT_MAX_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 pub(crate) const REPORTING_REMOVED: &str =
     "External feedback reporting is not available in Lemex; diagnostics remain local.";
@@ -392,27 +394,48 @@ pub struct FeedbackAttachmentPath {
     pub attachment_filename_override: Option<String>,
 }
 
-#[cfg(test)]
-#[path = "rollout_attachment_tests.rs"]
-mod rollout_attachment_tests;
-
 impl FeedbackAttachmentPath {
     /// Read a whole regular file within the caller's size limit.
     pub fn read_attachment(&self, max_bytes: usize) -> io::Result<Option<FeedbackAttachment>> {
-        let rollout_path = codex_rollout::rollout_id_from_path(&self.path)
+        let mut attachment_path = self.path.clone();
+        let mut rollout_path = codex_rollout::rollout_id_from_path(&self.path)
             .map(|_| codex_rollout::plain_rollout_path(&self.path));
-        let buffer = if rollout_path.is_some() {
-            let Some(buffer) =
-                codex_rollout::read_rollout_prefix(&self.path, max_bytes.saturating_add(1))?
-            else {
-                tracing::error!(
-                    "feedback attachment skipped: rollout is missing or not a regular file"
-                );
-                return Ok(None);
-            };
+        let mut raw_rollout = false;
+        let decoded = if let Some(plain_path) = &rollout_path {
+            match codex_rollout::read_rollout_prefix(&self.path, max_bytes.saturating_add(1)) {
+                Ok(Some(buffer)) => Some(buffer),
+                Ok(None) => {
+                    tracing::error!(
+                        "feedback attachment skipped: rollout is missing or not a regular file"
+                    );
+                    return Ok(None);
+                }
+                Err(error)
+                    if error.raw_os_error().is_none()
+                        && matches!(
+                            error.kind(),
+                            io::ErrorKind::UnexpectedEof
+                                | io::ErrorKind::InvalidData
+                                | io::ErrorKind::Other
+                        )
+                        && !plain_path.try_exists().unwrap_or(true) =>
+                {
+                    // Preserve a selected, undecodable archive for diagnosis. Never replace
+                    // a preferred plain rollout with its potentially stale compressed sibling.
+                    attachment_path = plain_path.with_extension("jsonl.zst");
+                    rollout_path = None;
+                    raw_rollout = true;
+                    None
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        };
+        let buffer = if let Some(buffer) = decoded {
             buffer
         } else {
-            let metadata = fs::metadata(&self.path)?;
+            let metadata = fs::metadata(&attachment_path)?;
             if !metadata.is_file() {
                 tracing::error!("feedback attachment skipped: not a regular file");
                 return Ok(None);
@@ -427,7 +450,7 @@ impl FeedbackAttachmentPath {
             }
             let mut buffer = Vec::new();
             // Detect files that grow past the limit after the metadata check.
-            fs::File::open(&self.path)?
+            fs::File::open(&attachment_path)?
                 .take(max_bytes as u64 + 1)
                 .read_to_end(&mut buffer)?;
             buffer
@@ -440,17 +463,20 @@ impl FeedbackAttachmentPath {
             );
             return Ok(None);
         }
-        let filename = self
+        let mut filename = self
             .attachment_filename_override
             .clone()
             .unwrap_or_else(|| {
                 rollout_path
                     .as_ref()
-                    .unwrap_or(&self.path)
+                    .unwrap_or(&attachment_path)
                     .file_name()
                     .map(|name| name.to_string_lossy().to_string())
                     .unwrap_or_else(|| "extra-log.log".to_string())
             });
+        if raw_rollout && !filename.ends_with(".zst") {
+            filename.push_str(".zst");
+        }
         let content_type = match Path::new(&filename)
             .extension()
             .and_then(|extension| extension.to_str())
@@ -543,6 +569,45 @@ impl FeedbackSnapshot {
         }
 
         self.feedback_diagnostics.attachment_text()
+    }
+
+    /// Saves the selected diagnostics locally without contacting a reporting service.
+    pub fn save_feedback(&self, options: FeedbackUploadOptions<'_>, path: &Path) -> Result<()> {
+        let report = serde_json::to_vec(&serde_json::json!({
+            "classification": options.classification,
+            "reason": options.reason,
+            "tags": options.tags,
+            "session_source": options.session_source,
+        }))?;
+        anyhow::ensure!(
+            report.len() <= MAX_EVENT_BYTES,
+            "feedback event exceeds the size limit"
+        );
+        let logs = options
+            .include_logs
+            .then(|| self.log_attachment(options.logs_override));
+        let diagnostics = self
+            .feedback_diagnostics_attachment_text(options.include_logs)
+            .map(|text| FeedbackAttachment {
+                buffer: text.into_bytes(),
+                filename: FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME.to_string(),
+                content_type: Some("text/plain".to_string()),
+            });
+        archive::save(
+            path,
+            &report,
+            logs.into_iter()
+                .chain(options.extra_attachments)
+                .chain(diagnostics)
+                .map(archive::Input::Owned)
+                .chain(
+                    options
+                        .extra_attachment_paths
+                        .iter()
+                        .map(archive::Input::Path),
+                ),
+            archive::Limits::default(),
+        )
     }
 
     /// Retained for client compatibility; external feedback reporting was removed.

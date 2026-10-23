@@ -917,9 +917,12 @@ async fn guardian_v2_routes_scoped_tool_approvals(
     } else {
         "prompt"
     };
-    let classifier_mode = match classifier_mode {
-        codex_protocol::openai_models::AsyncClassifierMode::Snapshot => "snapshot",
-        codex_protocol::openai_models::AsyncClassifierMode::Conversation => "conversation",
+    // Exercise the default conversation path and the explicit snapshot rollback.
+    let classifier_config = match classifier_mode {
+        codex_protocol::openai_models::AsyncClassifierMode::Snapshot => {
+            "\nasync_classifier_mode = \"snapshot\""
+        }
+        codex_protocol::openai_models::AsyncClassifierMode::Conversation => "",
     };
     let mut mock_config = MockResponsesConfig::new(&responses_url)
         .with_model(MODEL)
@@ -930,7 +933,7 @@ async fn guardian_v2_routes_scoped_tool_approvals(
             analytics_server.uri(),
         ))
         .with_extra_config(&format!(
-            "[mcp_servers.{server_name}]\nurl = \"{mcp_server_url}/mcp\"\ndefault_tools_approval_mode = \"{tool_approval_mode}\"\n\n[analytics]\nenabled = true\n\n[otel]\nmetrics_exporter = {{ otlp-http = {{ endpoint = \"{responses_url}/metrics\", protocol = \"json\" }} }}\n\n[features.guardianv2]\nenabled = true\nasync_classifier_mode = \"{classifier_mode}\"{guardian_scope_config}"
+            "[mcp_servers.{server_name}]\nurl = \"{mcp_server_url}/mcp\"\ndefault_tools_approval_mode = \"{tool_approval_mode}\"\n\n[analytics]\nenabled = true\n\n[otel]\nmetrics_exporter = {{ otlp-http = {{ endpoint = \"{responses_url}/metrics\", protocol = \"json\" }} }}\n\n[features.guardianv2]\nenabled = true{classifier_config}{guardian_scope_config}"
         ))
         .enable_feature(Feature::GuardianApproval);
     if lifecycle.has_user_input() || lifecycle.has_root_user_input() {
@@ -1257,7 +1260,8 @@ async fn guardian_v2_routes_scoped_tool_approvals(
                 | ThreadLifecycle::RootUserRestriction
                 | ThreadLifecycle::RootRestrictionDuringClassification
         ) {
-            let retention_allowed = classifier_mode == "conversation"
+            let retention_allowed = classifier_mode
+                == codex_protocol::openai_models::AsyncClassifierMode::Conversation
                 && !fail_after_classification
                 && !matches!(risk, GuardianRisk::InvalidResponse)
                 && !late_root_restriction;
@@ -1551,7 +1555,7 @@ async fn guardian_v2_routes_scoped_tool_approvals(
                 .filter_map(|item| item["id"].as_str())
                 .filter(|id| id.starts_with("luna-score-message-"))
                 .collect::<Vec<_>>();
-            if classifier_mode == "conversation"
+            if classifier_mode == codex_protocol::openai_models::AsyncClassifierMode::Conversation
                 && !fail_after_classification
                 && let Some(latest) = retained_ids.last()
             {
@@ -1750,7 +1754,7 @@ async fn guardian_v2_routes_scoped_tool_approvals(
         && !late_root_restriction
     {
         let state_db = StateRuntime::init(
-            codex_state::SqliteConfig::new_for_testing(codex_home.path().abs()),
+            load_default_config_for_test(&codex_home).await.sqlite,
             "mock_provider".to_owned(),
         )
         .await?;
@@ -1905,7 +1909,7 @@ async fn guardian_v2_routes_scoped_tool_approvals(
         }
         let post_authorization_change_sample =
             wait_for_luna_request(responses_state.as_ref(), /*index*/ 2).await?;
-        if classifier_mode == "conversation"
+        if classifier_mode == codex_protocol::openai_models::AsyncClassifierMode::Conversation
             && matches!(lifecycle, ThreadLifecycle::RootUserRestriction)
         {
             let input = post_authorization_change_sample["input"]

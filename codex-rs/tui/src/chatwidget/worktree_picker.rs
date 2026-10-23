@@ -1,4 +1,4 @@
-//! Worktree choices for local, feature-enabled session commands.
+//! Worktree choices for local session commands.
 //!
 //! Shared picker presentation preserves request identity and action safety checks.
 
@@ -14,9 +14,7 @@ const BROWSER_VIEW_ID: &str = "managed-worktrees";
 
 impl ChatWidget {
     pub(super) fn managed_worktree_available(&self) -> bool {
-        self.config.features.enabled(Feature::Worktrees)
-            && self.local_worktree_operations
-            && get_git_repo_root(self.config.cwd.as_path()).is_some()
+        self.local_worktree_operations && get_git_repo_root(self.config.cwd.as_path()).is_some()
     }
 
     pub(super) fn show_session_checkout_picker(

@@ -25,6 +25,7 @@ use codex_login::default_client::ClientRedirectPolicy;
 use codex_login::default_client::create_client_for_route_async;
 use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_models_manager::ModelCatalogOriginator;
 use codex_models_manager::manager::ModelsEndpointClient;
 use codex_models_manager::manager::ModelsEndpointFuture;
 use codex_models_manager::manager::ModelsEndpointResponse;
@@ -145,7 +146,8 @@ impl OpenAiModelsEndpoint {
             // Strict APIs may reject the Codex-only client_version query.
             None => api_provider.build_request(http::Method::GET, "models").url,
         };
-        let auth_telemetry = auth_header_telemetry(api_auth.as_ref());
+        let auth_telemetry = auth_header_telemetry(api_auth.as_ref())
+            .map_err(|error| map_api_error(error.into()))?;
         let agent_identity_telemetry = if let Some(CodexAuth::AgentIdentity(auth)) = auth.as_ref() {
             Some(agent_identity_telemetry(auth))
         } else {
@@ -241,6 +243,26 @@ impl OpenAiModelsEndpoint {
 }
 
 impl ModelsEndpointClient for OpenAiModelsEndpoint {
+    fn for_originator(
+        &self,
+        originator: ModelCatalogOriginator,
+    ) -> Option<Arc<dyn ModelsEndpointClient>> {
+        let mut provider_info = self.provider_info.clone();
+        let headers = provider_info.http_headers.get_or_insert_default();
+        headers.retain(|name, _| !name.eq_ignore_ascii_case("originator"));
+        headers.insert("originator".to_string(), originator.as_str().into());
+        if let Some(headers) = &mut provider_info.env_http_headers {
+            headers.retain(|name, _| !name.eq_ignore_ascii_case("originator"));
+        }
+        Some(Arc::new(Self {
+            provider_info,
+            rcp_catalog: self.rcp_catalog.clone(),
+            auth_manager: self.auth_manager.clone(),
+            gateway_auth_manager: self.gateway_auth_manager.clone(),
+            transport_builder: Arc::clone(&self.transport_builder),
+        }))
+    }
+
     fn supports_api_key_models(&self) -> bool {
         self.provider_info.base_url.is_some()
             || self.provider_info.model_catalog_url.is_some()
@@ -456,6 +478,10 @@ impl RequestTelemetry for ModelsRequestTelemetry {
 mod timeout_tests;
 
 #[cfg(test)]
+#[path = "models_originator_tests.rs"]
+mod originator_tests;
+
+#[cfg(test)]
 mod tests {
     use std::num::NonZeroU64;
     use std::sync::Mutex;
@@ -540,6 +566,11 @@ mod tests {
                 name: "Custom provider".into(),
                 base_url: Some(format!("{}/v1", server.uri())),
                 experimental_bearer_token: Some("custom-discovery-key".into()),
+                // Keep this fixture's cache identity stable during process-wide residency tests.
+                http_headers: Some(std::collections::HashMap::from([(
+                    RESIDENCY_HEADER_NAME.to_string(),
+                    "us".into(),
+                )])),
                 ..Default::default()
             },
             None,
@@ -1037,6 +1068,12 @@ mod tests {
         let bundled = codex_models_manager::bundled_models_response().unwrap();
         assert_eq!(manager.get_remote_models().await, bundled.models);
         assert_eq!(manager.try_get_remote_models().unwrap(), bundled.models);
+        assert_eq!(
+            manager
+                .get_model_info(&model.slug, &Default::default())
+                .await,
+            model_info_from_slug(&model.slug)
+        );
         assert_eq!(
             manager
                 .raw_model_catalog(

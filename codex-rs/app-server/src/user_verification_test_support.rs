@@ -149,8 +149,10 @@ impl Harness {
         let (sender, messages) = mpsc::channel(/*buffer*/ 16);
         let outgoing = Arc::new(OutgoingMessageSender::new(sender));
         let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
+            cloud_skill_provider: None,
             outgoing: Arc::clone(&outgoing),
             arg0_paths: Arg0DispatchPaths::default(),
+            startup_cwd: Some(config.cwd.to_path_buf()),
             config,
             config_manager,
             environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
