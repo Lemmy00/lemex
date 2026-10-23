@@ -1177,7 +1177,7 @@ async fn codex_instances_share_board_with_fixed_access() -> anyhow::Result<()> {
     insta::assert_snapshot!(
         "board_connections",
         context_snapshot::format_context_snapshot(
-            "Independent Codex runtimes share a local board: a writer publishes, an isolated Guardian reads and cannot publish.",
+            "Independent Lemex runtimes share a local board: a writer publishes, an isolated Guardian reads and cannot publish.",
             &bodies.iter().map(SnapshotEntry::body).collect::<Vec<_>>(),
             &ContextSnapshotOptions::default().rewrite_known_segments(),
         )

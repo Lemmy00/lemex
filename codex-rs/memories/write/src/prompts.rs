@@ -104,7 +104,7 @@ pub(crate) fn build_consolidation_prompt_for_version(
         .unwrap_or_else(|err| {
             warn!("failed to render memories consolidation prompt template: {err}");
             format!(
-                "## Memory Phase 2 (Consolidation)\nConsolidate Codex memories in: {memory_root}\n\nRead {phase2_workspace_diff_file} first."
+                "## Memory Phase 2 (Consolidation)\nConsolidate Lemex memories in: {memory_root}\n\nRead {phase2_workspace_diff_file} first."
             )
         })
 }

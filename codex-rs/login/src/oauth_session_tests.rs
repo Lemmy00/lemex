@@ -36,7 +36,7 @@ fn client(
     config: OAuthSessionConfig,
     keyring: Arc<MockKeyringStore>,
 ) -> (OAuthSessionManager, tempfile::TempDir) {
-    let home = tempfile::tempdir().expect("Codex home");
+    let home = tempfile::tempdir().expect("Lemex home");
     let manager = OAuthSessionManager::new(
         config,
         home.path().to_path_buf(),
@@ -485,7 +485,7 @@ async fn query_credentials_are_not_exposed_by_echoed_errors_or_truncated_request
 
 #[tokio::test]
 async fn gateway_credentials_use_a_dedicated_encrypted_file_and_reload_large_tokens() {
-    let codex_home = tempfile::tempdir().expect("Codex home");
+    let codex_home = tempfile::tempdir().expect("Lemex home");
     let keyring = Arc::new(MockKeyringStore::default());
     let access_token = "gateway-token-".repeat(/*n*/ 512);
     let config = loopback_config();

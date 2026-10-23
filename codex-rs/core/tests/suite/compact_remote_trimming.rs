@@ -91,7 +91,7 @@ async fn remote_compact_v2_trims_tool_search_output_to_empty_tools_array() -> Re
 
     let call_id = "tool-search-1";
     let tools = json!([{
-        "type": "namespace", "name": "codex_app", "description": "Codex app tools.",
+        "type": "namespace", "name": "codex_app", "description": "Lemex app tools.",
         "tools": [{
             "type": "function", "name": "oversized_dynamic_tool", "description": "x".repeat(20_000),
             "parameters": {"type": "object", "properties": {}, "additionalProperties": false},

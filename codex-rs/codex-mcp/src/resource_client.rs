@@ -305,7 +305,7 @@ impl McpResourceClient {
         params: CodexAppsResourceListParams,
     ) -> Result<McpResourcePage> {
         let params = serde_json::to_value(params)
-            .context("failed to serialize Codex Apps resource params")?;
+            .context("failed to serialize Lemex Apps resource params")?;
         let connections = self.runtime.latest_host_owned_codex_apps_connections()?;
         let (managed, timeout) = connections
             .client_by_name(CODEX_APPS_MCP_SERVER_NAME)

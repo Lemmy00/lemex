@@ -300,7 +300,7 @@ fn policy_event_excludes_real_parser_values_but_retains_safe_codes() {
         assert!(!is_config_parse_error(&error));
         assert_eq!(
             policy_rejection_diagnostic(&error),
-            "Codex sandbox provisioning was rejected by administrator policy: stage=managed io=InvalidData win32=None"
+            "Lemex sandbox provisioning was rejected by administrator policy: stage=managed io=InvalidData win32=None"
         );
     }
 
@@ -326,7 +326,7 @@ fn policy_event_excludes_real_parser_values_but_retains_safe_codes() {
     ] {
         assert_eq!(
             policy_rejection_diagnostic(&error),
-            format!("Codex sandbox provisioning was rejected by administrator policy: {expected}")
+            format!("Lemex sandbox provisioning was rejected by administrator policy: {expected}")
         );
     }
 }
@@ -334,7 +334,7 @@ fn policy_event_excludes_real_parser_values_but_retains_safe_codes() {
 #[test]
 fn provisioning_request_preserves_home_spaces_and_unicode() {
     let request = framed_request(SandboxProvisioningRequest {
-        codex_home: "D:\\Codex Homes\\Jos\u{00e9}\\.codex".to_string(),
+        codex_home: "D:\\Lemex Homes\\Jos\u{00e9}\\.codex".to_string(),
         registered_core: false,
         refresh_only: false,
         settings: WindowsSandboxProvisioningSettings::default(),
@@ -343,7 +343,7 @@ fn provisioning_request_preserves_home_spaces_and_unicode() {
     assert_eq!(
         validate_request(&request).unwrap(),
         ServiceRequest::ProvisionSandbox(ProvisioningRequest {
-            codex_home: PathBuf::from("D:\\Codex Homes\\Jos\u{00e9}\\.codex"),
+            codex_home: PathBuf::from("D:\\Lemex Homes\\Jos\u{00e9}\\.codex"),
             registered_core: false,
             refresh_only: false,
             listeners: WindowsSandboxProxyListeners::default(),
@@ -358,7 +358,7 @@ fn structured_provisioning_request_carries_normalized_proxy_settings() {
         [(8081, 3128, vec![3128, 8081]), (8081, 8081, vec![8081])]
     {
         let request = framed_request(SandboxProvisioningRequest {
-            codex_home: "D:\\Codex Homes\\Jos\u{00e9}\\.codex".to_string(),
+            codex_home: "D:\\Lemex Homes\\Jos\u{00e9}\\.codex".to_string(),
             registered_core: false,
             refresh_only: false,
             settings: WindowsSandboxProvisioningSettings {
@@ -373,7 +373,7 @@ fn structured_provisioning_request_carries_normalized_proxy_settings() {
         assert_eq!(
             validate_request(&request).unwrap(),
             ServiceRequest::ProvisionSandbox(ProvisioningRequest {
-                codex_home: PathBuf::from("D:\\Codex Homes\\Jos\u{00e9}\\.codex"),
+                codex_home: PathBuf::from("D:\\Lemex Homes\\Jos\u{00e9}\\.codex"),
                 registered_core: false,
                 refresh_only: false,
                 listeners: WindowsSandboxProxyListeners {
@@ -598,7 +598,7 @@ fn unpackaged_pipe_clients_are_rejected_before_sending_a_request() {
     assert!(
         error
             .to_string()
-            .contains("installed Codex package identity"),
+            .contains("installed Lemex package identity"),
         "unexpected package authorization failure: {error:#}"
     );
 }

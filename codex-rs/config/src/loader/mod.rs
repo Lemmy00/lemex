@@ -189,7 +189,7 @@ pub async fn load_config_layers_state(
         let config = toml::from_str(raw_toml).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("invalid embedded packaged defaults; this is a Codex build error: {error}"),
+                format!("invalid embedded packaged defaults; this is a Lemex build error: {error}"),
             )
         })?;
         ConfigLayerEntry::new_with_raw_toml(
@@ -812,14 +812,14 @@ fn windows_codex_system_dir() -> PathBuf {
         );
         PathBuf::from(DEFAULT_PROGRAM_DATA_DIR_WINDOWS)
     });
-    program_data.join("OpenAI").join("Codex")
+    program_data.join("Lemex")
 }
 
 #[cfg(windows)]
 fn windows_system_requirements_toml_file() -> io::Result<AbsolutePathBuf> {
     if let Ok(path) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
         .open_subkey_with_flags(
-            r"SOFTWARE\Policies\OpenAI\Codex",
+            r"SOFTWARE\Policies\Lemex",
             winreg::enums::KEY_READ | winreg::enums::KEY_WOW64_64KEY,
         )
         .and_then(|key| key.get_value::<std::ffi::OsString, _>("RequirementsPath"))
@@ -2170,10 +2170,9 @@ foo = "xyzzy"
     fn windows_codex_system_dir_uses_expected_suffix() {
         let expected = windows_program_data_dir_from_known_folder()
             .unwrap_or_else(|_| PathBuf::from(DEFAULT_PROGRAM_DATA_DIR_WINDOWS))
-            .join("OpenAI")
-            .join("Codex");
+            .join("Lemex");
         assert_eq!(windows_codex_system_dir(), expected);
-        assert!(windows_codex_system_dir().ends_with(Path::new("OpenAI").join("Codex")));
+        assert!(windows_codex_system_dir().ends_with(Path::new("Lemex")));
     }
 
     #[cfg(windows)]
@@ -2181,8 +2180,7 @@ foo = "xyzzy"
     fn windows_system_config_toml_file_uses_expected_suffix() {
         let expected = windows_program_data_dir_from_known_folder()
             .unwrap_or_else(|_| PathBuf::from(DEFAULT_PROGRAM_DATA_DIR_WINDOWS))
-            .join("OpenAI")
-            .join("Codex")
+            .join("Lemex")
             .join("config.toml");
         assert_eq!(
             windows_system_config_toml_file()
@@ -2194,7 +2192,7 @@ foo = "xyzzy"
             windows_system_config_toml_file()
                 .expect("config.toml path")
                 .as_path()
-                .ends_with(Path::new("OpenAI").join("Codex").join("config.toml"))
+                .ends_with(Path::new("Lemex").join("config.toml"))
         );
     }
 }

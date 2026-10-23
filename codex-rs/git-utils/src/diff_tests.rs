@@ -27,7 +27,7 @@ async fn tracked_and_untracked_patches_preserve_order_and_apply() {
         repo.path(),
         &[
             "-c",
-            "user.name=Codex Tests",
+            "user.name=Lemex Tests",
             "-c",
             "user.email=codex-tests@example.com",
             "-c",

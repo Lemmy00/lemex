@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+expression: "rendered_cases.join(\"\\n---\\n\")"
+---
+■ Usage limit reached.
+
+---
+■ Usage limit reached.

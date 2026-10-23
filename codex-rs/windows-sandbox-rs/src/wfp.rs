@@ -64,11 +64,11 @@ use filter_specs::ConditionSpec;
 use filter_specs::FILTER_SPECS;
 use filter_specs::FilterSpec;
 
-const SESSION_NAME: &str = "Codex Windows Sandbox WFP";
-const PROVIDER_NAME: &str = "Codex Windows Sandbox WFP";
-const PROVIDER_DESCRIPTION: &str = "Persistent WFP provider for Codex Windows sandbox filters";
-const SUBLAYER_NAME: &str = "Codex Windows Sandbox WFP";
-const SUBLAYER_DESCRIPTION: &str = "Persistent WFP sublayer for Codex Windows sandbox filters";
+const SESSION_NAME: &str = "Lemex Windows Sandbox WFP";
+const PROVIDER_NAME: &str = "Lemex Windows Sandbox WFP";
+const PROVIDER_DESCRIPTION: &str = "Persistent WFP provider for Lemex Windows sandbox filters";
+const SUBLAYER_NAME: &str = "Lemex Windows Sandbox WFP";
+const SUBLAYER_DESCRIPTION: &str = "Persistent WFP sublayer for Lemex Windows sandbox filters";
 
 // WFP identifies persistent providers, sublayers, and filters by stable GUIDs.
 // These values are Codex-owned identities; do not regenerate them unless we

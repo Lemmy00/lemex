@@ -22,7 +22,18 @@ pub(crate) fn parse(text: &str) -> Option<Vec<AsyncQuestionReply>> {
     let text = text.trim();
     // JSON strings escape newlines, so this cannot match a delimiter inside an answer.
     let text = if text.starts_with("# Context from my IDE setup:\n") {
-        text.rsplit_once("\n## My request for Codex:\n")?.1.trim()
+        [
+            "\n## My request for Lemex:\n",
+            "\n## My request for Codex:\n",
+        ]
+        .into_iter()
+        .filter_map(|delimiter| {
+            text.rfind(delimiter)
+                .map(|offset| (offset, &text[offset + delimiter.len()..]))
+        })
+        .max_by_key(|(offset, _)| *offset)?
+        .1
+        .trim()
     } else {
         text
     };

@@ -38,7 +38,7 @@ fn runtime_internal_metadata_opt_in_is_not_serialized_or_configurable() {
 fn test_api_provider_applies_current_managed_residency() {
     let info = ModelProviderInfo {
         http_headers: Some(maplit::hashmap! {
-            "X-OpenAI-Internal-Codex-Residency".to_string() => "eu".into(),
+            "X-OpenAI-Internal-Lemex-Residency".to_string() => "eu".into(),
             "x-provider-header".to_string() => "preserved".into(),
         }),
         ..ModelProviderInfo::create_openai_provider(/*base_url*/ None)

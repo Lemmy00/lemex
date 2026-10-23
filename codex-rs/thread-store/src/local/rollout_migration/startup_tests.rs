@@ -112,7 +112,7 @@ async fn indexed_store(home: &Path) -> LocalThreadStore {
 
 #[tokio::test]
 async fn records_and_advances_checked_thread() {
-    let home = TempDir::new().expect("create Codex home");
+    let home = TempDir::new().expect("create Lemex home");
     let legacy_thread_id = ThreadId::new();
     let legacy_path = write_rollout(home.path(), legacy_thread_id, ThreadHistoryMode::Legacy);
     let store = indexed_store(home.path()).await;
@@ -161,7 +161,7 @@ async fn records_and_advances_checked_thread() {
 
 #[tokio::test]
 async fn checks_rollouts_within_the_cursor_lookback() {
-    let home = TempDir::new().expect("create Codex home");
+    let home = TempDir::new().expect("create Lemex home");
     let older_thread_id = ThreadId::new();
     let older_path = move_to_timestamp(
         home.path(),
@@ -202,7 +202,7 @@ async fn checks_rollouts_within_the_cursor_lookback() {
 
 #[tokio::test]
 async fn recovers_pending_migrations_after_retrying_busy_rollouts() {
-    let home = TempDir::new().expect("create Codex home");
+    let home = TempDir::new().expect("create Lemex home");
     let pending_thread_id = ThreadId::new();
     write_rollout(home.path(), pending_thread_id, ThreadHistoryMode::Legacy);
     let busy_thread_id = ThreadId::new();
@@ -262,7 +262,7 @@ async fn recovers_pending_migrations_after_retrying_busy_rollouts() {
 
 #[tokio::test]
 async fn waits_for_a_live_writer_before_migrating() {
-    let home = TempDir::new().expect("create Codex home");
+    let home = TempDir::new().expect("create Lemex home");
     let thread_id = ThreadId::new();
     let path = write_rollout(home.path(), thread_id, ThreadHistoryMode::Legacy);
     let store = indexed_store(home.path()).await;
@@ -296,7 +296,7 @@ async fn waits_for_a_live_writer_before_migrating() {
 
 #[tokio::test]
 async fn waits_for_rollout_maintenance_before_migrating() {
-    let home = TempDir::new().expect("create Codex home");
+    let home = TempDir::new().expect("create Lemex home");
     let thread_id = ThreadId::new();
     let path = write_rollout(home.path(), thread_id, ThreadHistoryMode::Legacy);
     let mut store = indexed_store(home.path()).await;
@@ -351,7 +351,7 @@ async fn waits_for_rollout_maintenance_before_migrating() {
 
 #[tokio::test]
 async fn permanently_skips_failed_rollouts_without_blocking_the_cursor() {
-    let home = TempDir::new().expect("create Codex home");
+    let home = TempDir::new().expect("create Lemex home");
     let failed_thread_id = ThreadId::new();
     let failed_path = write_rollout(home.path(), failed_thread_id, ThreadHistoryMode::Legacy);
     let store = indexed_store(home.path()).await;
@@ -418,7 +418,7 @@ async fn permanently_skips_failed_rollouts_without_blocking_the_cursor() {
 
 #[tokio::test]
 async fn retries_busy_rollouts_after_archive_and_compression_move() {
-    let home = TempDir::new().expect("create Codex home");
+    let home = TempDir::new().expect("create Lemex home");
     let thread_id = ThreadId::new();
     let path = move_to_timestamp(
         home.path(),
@@ -501,7 +501,7 @@ async fn retries_busy_rollouts_after_archive_and_compression_move() {
 
 #[tokio::test]
 async fn treats_writer_owned_empty_rollouts_as_busy() {
-    let home = TempDir::new().expect("create Codex home");
+    let home = TempDir::new().expect("create Lemex home");
     write_rollout(home.path(), ThreadId::new(), ThreadHistoryMode::Paginated);
     let store = indexed_store(home.path()).await;
     store

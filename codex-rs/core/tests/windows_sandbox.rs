@@ -1335,7 +1335,7 @@ async fn windows_elevated_approved_git_pull_preserves_deny_read() -> anyhow::Res
     let init = ["init", "--initial-branch=main"];
     let commit = ["commit", "-am", "fixture"];
     git(upstream, &init)?;
-    git(upstream, &["config", "user.name", "Codex Test"])?;
+    git(upstream, &["config", "user.name", "Lemex Test"])?;
     git(upstream, &["config", "user.email", "codex@test.com"])?;
     std::fs::write(upstream.join("tracked.txt"), "before\n")?;
     git(upstream, &["add", "tracked.txt"])?;

@@ -431,8 +431,6 @@ impl ChatWidget {
         });
         self.backend_banner_state.presented = banner.cloned();
         if content.is_some() {
-            self.bottom_pane
-                .dismiss_view_by_id(super::rate_limits::WORKSPACE_NUDGE_VIEW_ID);
             if self
                 .bottom_pane
                 .dismiss_view_by_id(super::rate_limits::RATE_LIMIT_SWITCH_PROMPT_VIEW_ID)

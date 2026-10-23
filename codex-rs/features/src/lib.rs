@@ -96,8 +96,6 @@ impl Stage {
 /// Unique features toggled via configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Feature {
-    /// Preview consumer five-hour and weekly allowance history.
-    AnalyticsPlanHistory,
     /// Discover model catalogs for OpenAI API-key authentication.
     ApiKeyModelDiscovery,
     /// Forward explicit programs with builtin OpenAI API keys.
@@ -1045,16 +1043,6 @@ pub struct FeatureSpec {
 }
 
 pub const FEATURES: &[FeatureSpec] = &[
-    FeatureSpec {
-        id: Feature::AnalyticsPlanHistory,
-        key: "analytics_plan_history",
-        stage: Stage::Experimental {
-            name: "Analytics plan history",
-            menu_description: "Preview five-hour and weekly allowance history for consumer accounts in /analytics.",
-            announcement: "",
-        },
-        default_enabled: false,
-    },
     FeatureSpec {
         id: Feature::DaemonAutoStart,
         key: "daemon_auto_start",

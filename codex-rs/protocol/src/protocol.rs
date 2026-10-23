@@ -145,14 +145,19 @@ pub const CONTEXT_WINDOW_OPEN_TAG: &str = "<context_window>";
 pub const CONTEXT_WINDOW_CLOSE_TAG: &str = "</context_window>";
 pub const CONTEXT_WINDOW_GUIDANCE_OPEN_TAG: &str = "<context_window_guidance>";
 pub const CONTEXT_WINDOW_GUIDANCE_CLOSE_TAG: &str = "</context_window_guidance>";
-pub const USER_MESSAGE_BEGIN: &str = "## My request for Codex:";
+pub const USER_MESSAGE_BEGIN: &str = "## My request for Lemex:";
+const LEGACY_USER_MESSAGE_BEGIN: &str = "## My request for Codex:";
 
 /// Removes the model-context prefix from a user message before displaying it.
 pub fn strip_user_message_prefix(text: &str) -> &str {
-    match text.find(USER_MESSAGE_BEGIN) {
-        Some(idx) => text[idx + USER_MESSAGE_BEGIN.len()..].trim(),
-        None => text.trim(),
-    }
+    [USER_MESSAGE_BEGIN, LEGACY_USER_MESSAGE_BEGIN]
+        .into_iter()
+        .filter_map(|delimiter| {
+            text.rfind(delimiter)
+                .map(|offset| (offset, delimiter.len()))
+        })
+        .max_by_key(|(offset, _)| *offset)
+        .map_or_else(|| text.trim(), |(offset, len)| text[offset + len..].trim())
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, TS)]
@@ -4658,6 +4663,24 @@ mod conversation_start_params_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn user_prompt_branding_preserves_new_and_legacy_transcripts() {
+        for delimiter in [super::USER_MESSAGE_BEGIN, super::LEGACY_USER_MESSAGE_BEGIN] {
+            assert_eq!(
+                super::strip_user_message_prefix(&format!(
+                    "IDE context\n{delimiter}\nCount tokens"
+                )),
+                "Count tokens"
+            );
+        }
+        assert_eq!(
+            super::strip_user_message_prefix(
+                "## My request for Codex: old\n## My request for Lemex: current"
+            ),
+            "current"
+        );
+    }
+
     use super::*;
     use crate::items::CommandExecutionItem;
     use crate::items::CommandExecutionStatus;

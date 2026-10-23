@@ -1907,7 +1907,7 @@ async fn reload_user_config_layer_refreshes_hooks() -> anyhow::Result<()> {
         config
             .features
             .enable(Feature::CodexHooks)
-            .expect("enable Codex hooks");
+            .expect("enable Lemex hooks");
     })
     .await?;
     let codex_home = session.codex_home().await;
@@ -1985,7 +1985,7 @@ async fn refresh_runtime_config_refreshes_hooks() -> anyhow::Result<()> {
         config
             .features
             .enable(Feature::CodexHooks)
-            .expect("enable Codex hooks");
+            .expect("enable Lemex hooks");
         state.session_configuration.original_config_do_not_use = Arc::new(config);
     }
     let codex_home = session.codex_home().await;
@@ -2118,7 +2118,7 @@ disabled_tools = [
     next_config
         .features
         .set_enabled(Feature::CodexAppsMcp20260728, apps_protocol_enabled)
-        .expect("set Codex Apps MCP protocol rollout");
+        .expect("set Lemex Apps MCP protocol rollout");
 
     let _ = session
         .refresh_runtime_config(Arc::clone(&original), next_config)
@@ -2221,7 +2221,7 @@ async fn refresh_mcp_config_replaces_managed_server_and_plugin_requirements(reje
     next_config
         .features
         .set_enabled(Feature::CodexAppsMcp20260728, apps_protocol_enabled)
-        .expect("set Codex Apps MCP protocol rollout");
+        .expect("set Lemex Apps MCP protocol rollout");
     next_config.mcp_servers = codex_config::Constrained::normalized(
         HashMap::from([("beta".to_string(), server.clone())]),
         |mut servers: HashMap<String, McpServerConfig>| {

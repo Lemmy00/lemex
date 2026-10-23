@@ -88,9 +88,9 @@ impl CommandPopup {
         )
         .into_iter()
         .filter_map(|command| match command {
-            SlashCommandItem::Builtin(cmd) => (!cmd.command().starts_with("debug")
-                && cmd != SlashCommand::Apps)
-                .then_some(CommandItem::Builtin(cmd)),
+            SlashCommandItem::Builtin(cmd) => {
+                (!cmd.command().starts_with("debug")).then_some(CommandItem::Builtin(cmd))
+            }
             SlashCommandItem::ServiceTier(command) => Some(CommandItem::ServiceTier(command)),
         })
         .collect();

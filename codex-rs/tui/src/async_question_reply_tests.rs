@@ -33,3 +33,19 @@ fn malformed_or_embedded_question_envelopes_remain_ordinary_text() {
         assert_eq!(parse(text), None, "{text}");
     }
 }
+
+#[test]
+fn lemex_and_legacy_context_prefixes_keep_question_replies_readable() {
+    for brand in ["Lemex", "Codex"] {
+        let text = format!(
+            r#"# Context from my IDE setup:
+
+## My request for {brand}:
+<send_user_message_question_reply>{{"questionItemId":"one","question":"Keep tokens?","answer":"Yes"}}</send_user_message_question_reply>"#
+        );
+        assert_eq!(
+            display_text(&text).as_deref(),
+            Some("> Keep tokens?\n\nYes")
+        );
+    }
+}

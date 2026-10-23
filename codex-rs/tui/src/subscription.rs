@@ -1,41 +1,33 @@
-//! Subscription labels for TUI surfaces, preserving status-specific plan detail.
-
+//! Plan labels used by local session status.
 use codex_protocol::account::PlanType;
 use codex_protocol::auth::KnownPlan;
 
 pub(crate) enum SubscriptionDisplay {
     Status,
-    Analytics,
 }
 
 impl SubscriptionDisplay {
     pub(crate) fn label(&self, plan: PlanType) -> &'static str {
-        match (plan, self) {
-            (PlanType::Free, _) => "Free",
-            (PlanType::Go, _) => "Go",
-            (PlanType::Plus, _) => "Plus",
-            (PlanType::Pro, _) => "Pro 200",
-            (PlanType::ProLite, _) => "Pro 100",
-            (PlanType::ProMax, _) => "Pro 500",
-            (PlanType::Team | PlanType::SelfServeBusinessUsageBased, _) => "Business",
-            (PlanType::Business, Self::Status) => "Enterprise",
-            (PlanType::SelfServeBusinessProLite, Self::Status) => "Business Premium",
-            (PlanType::Business | PlanType::SelfServeBusinessProLite, Self::Analytics) => {
-                "Business"
-            }
-            (PlanType::EnterpriseCbpAutomation, Self::Status) => "Enterprise (Automation)",
-            (PlanType::EnterpriseCbpAutomation, Self::Analytics)
-            | (PlanType::Enterprise | PlanType::Ent26 | PlanType::EnterpriseCbpUsageBased, _) => {
-                "Enterprise"
-            }
-            (PlanType::Edu, Self::Status) => "Edu",
-            (PlanType::EduPlus, Self::Status) => "Edu Plus",
-            (PlanType::EduPro, Self::Status) => "Edu Pro",
-            (PlanType::Edu | PlanType::EduPlus | PlanType::EduPro, Self::Analytics) => "Education",
-            (PlanType::Sci, _) => KnownPlan::Sci.display_name(),
-            (PlanType::SciPlus, _) => KnownPlan::SciPlus.display_name(),
-            (PlanType::Unknown, Self::Status) => "Unknown",
-            (PlanType::Unknown, Self::Analytics) => "Account",
+        match plan {
+            PlanType::Free => "Free",
+            PlanType::Go => "Go",
+            PlanType::Plus => "Plus",
+            PlanType::Pro => "Pro 200",
+            PlanType::ProLite => "Pro 100",
+            PlanType::ProMax => "Pro 500",
+            PlanType::Team | PlanType::SelfServeBusinessUsageBased => "Business",
+            PlanType::Business
+            | PlanType::Enterprise
+            | PlanType::Ent26
+            | PlanType::EnterpriseCbpUsageBased => "Enterprise",
+            PlanType::SelfServeBusinessProLite => "Business Premium",
+            PlanType::EnterpriseCbpAutomation => "Enterprise (Automation)",
+            PlanType::Edu => "Edu",
+            PlanType::EduPlus => "Edu Plus",
+            PlanType::EduPro => "Edu Pro",
+            PlanType::Sci => KnownPlan::Sci.display_name(),
+            PlanType::SciPlus => KnownPlan::SciPlus.display_name(),
+            PlanType::Unknown => "Unknown",
         }
     }
 }

@@ -10,13 +10,9 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use tokio_util::sync::CancellationToken;
 
 use crate::inline_visualization::InlineVisualizationContext;
-use codex_app_server_protocol::AddCreditsNudgeCreditType;
-use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
-use codex_app_server_protocol::ConsumeAccountRateLimitResetCreditResponse;
 use codex_app_server_protocol::DynamicToolCallResponse;
 use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::MarketplaceAddResponse;
@@ -54,7 +50,6 @@ use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::AstraModelPickerAction;
-use crate::chatwidget::ConfiguredPetLoadGeneration;
 use crate::chatwidget::ConnectorScopeGeneration;
 use crate::chatwidget::ThreadUsageOutcome;
 use crate::chatwidget::UserMessage;
@@ -213,27 +208,13 @@ pub(crate) struct PluginRemoteSectionError {
 /// Distinguishes why a rate-limit refresh was requested so the completion
 /// handler can route the result correctly.
 ///
-/// A `StartupPrefetch` fires once, concurrently with the rest of TUI init, and
-/// updates the cached snapshots and any available reset-credit notice (no
-/// status card to finalize). A `StatusCommand` is tied to a specific `/status`
-/// invocation and must call `finish_status_rate_limit_refresh` when done so the
-/// card stops showing a "refreshing" state. A `UsageMenu` refreshes a cached
-/// zero reset count so the disabled menu entry can become available without a
-/// restart. A `ResetPicker` refreshes the rate limits and detailed reset-credit
-/// rows before showing redemption choices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RateLimitRefreshOrigin {
-    /// Eagerly fetched after bootstrap for `/status` data and reset availability.
-    StartupPrefetch { reset_hint_request_id: u64 },
     /// User-initiated via `/status`; the `request_id` correlates with the
     /// status card that should be updated when the fetch completes.
     StatusCommand { request_id: u64 },
-    /// User reopened `/usage` while the cached reset-credit count was zero.
-    UsageMenu { request_id: u64 },
-    /// User opened the reset-credit picker.
-    ResetPicker { request_id: u64 },
-    /// Refresh requested after a reset credit was successfully consumed.
-    ResetConsume { request_id: u64 },
+    /// Fetch initial account quota information.
+    StartupPrefetch,
     /// Refresh backend recovery after an inference limit error.
     Recovery,
     /// Background account usage read, scheduled more frequently near exhaustion.
@@ -765,38 +746,6 @@ pub(crate) enum AppEvent {
         result: Result<GetAccountRateLimitsResponse, String>,
     },
 
-    /// Open the authenticated account analytics dashboard.
-    OpenAnalytics {
-        view: Option<crate::analytics::TokenActivityView>,
-    },
-
-    /// Open the reset-credit flow selected from the `/usage` menu.
-    OpenRateLimitResetCredits,
-
-    /// Confirm the reset credit selected from the reset-credit picker.
-    OpenRateLimitResetConfirmation {
-        picker_request_id: u64,
-        confirmation_gate: Arc<AtomicBool>,
-        credit_id: Option<String>,
-        reset_title: String,
-        reset_detail: Option<String>,
-        reset_description: String,
-    },
-
-    /// Consume one reset credit using a stable idempotency key.
-    ConsumeRateLimitResetCredit {
-        idempotency_key: String,
-        credit_id: Option<String>,
-    },
-
-    /// Result of consuming one reset credit.
-    RateLimitResetCreditConsumed {
-        request_id: u64,
-        idempotency_key: String,
-        credit_id: Option<String>,
-        result: Result<ConsumeAccountRateLimitResetCreditResponse, String>,
-    },
-
     /// Fetch backend-estimated usage for the currently visible enterprise thread.
     RefreshThreadUsage {
         thread_id: ThreadId,
@@ -820,23 +769,6 @@ pub(crate) enum AppEvent {
     /// Fetch workspace messages for the status-line headline item.
     RefreshStatusLineWorkspaceHeadline {
         request_id: u64,
-    },
-
-    /// Commit settled asynchronous usage output after active-output barriers clear.
-    CommitPendingUsageOutput,
-
-    /// Commit settled asynchronous usage output after stream shutdown.
-    CommitPendingUsageOutputAfterStreamShutdown,
-
-    /// Send a user-confirmed request to notify the workspace owner.
-    SendAddCreditsNudgeEmail {
-        credit_type: AddCreditsNudgeCreditType,
-    },
-
-    /// Result of notifying the workspace owner.
-    AddCreditsNudgeEmailFinished {
-        request_id: Uuid,
-        result: Result<AddCreditsNudgeEmailStatus, String>,
     },
 
     /// Result of prefetching connectors.
@@ -873,39 +805,6 @@ pub(crate) enum AppEvent {
     /// Open the provided URL in the user's browser.
     OpenUrlInBrowser {
         url: String,
-    },
-
-    /// Persist a pet selection and reload the ambient pet.
-    PetSelected {
-        pet_id: String,
-    },
-
-    /// Persist terminal pets as disabled and remove the ambient pet.
-    PetDisabled,
-
-    /// Start loading the side preview for the pet picker.
-    PetPreviewRequested {
-        pet_id: String,
-    },
-
-    /// Result of loading the side preview for the pet picker.
-    PetPreviewLoaded {
-        request_id: u64,
-        result: Result<crate::pets::AmbientPet, String>,
-    },
-
-    /// Result of loading the selected ambient pet before config persistence.
-    PetSelectionLoaded {
-        request_id: u64,
-        pet_id: String,
-        result: Result<Option<crate::pets::AmbientPet>, String>,
-    },
-
-    /// Result of restoring the configured ambient pet during startup.
-    ConfiguredPetLoaded {
-        generation: ConfiguredPetLoadGeneration,
-        pet_id: String,
-        result: Result<Option<crate::pets::AmbientPet>, String>,
     },
 
     /// Refresh app connector state and mention bindings.

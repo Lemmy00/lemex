@@ -73,7 +73,7 @@ async fn quota_exceeded_emits_single_error_event(code: &str) -> Result<()> {
         }
     }
 
-    assert_eq!(error_events, 1, "expected exactly one Codex:Error event");
+    assert_eq!(error_events, 1, "expected exactly one Lemex:Error event");
     let requests = server.received_requests().await.expect("recorded requests");
     assert_eq!(
         requests

@@ -560,7 +560,7 @@ async fn run_login(config: &Config, login_args: LoginArgs) -> Result<()> {
 
     if matches!(server.auth, codex_config::types::McpServerAuth::EmaAuth) {
         bail!(
-            "Enterprise MCP authorization is managed by Codex account sign-in. Open Codex to sign in."
+            "Enterprise MCP authorization is managed by Lemex account sign-in. Open Lemex to sign in."
         );
     }
 
@@ -640,7 +640,7 @@ async fn run_logout(config: &Config, logout_args: LogoutArgs) -> Result<()> {
             AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ true).await?;
         let auth = auth_manager.auth().await;
         let scope = ema_auth_scope(auth.as_ref())
-            .context("Sign in to your Codex account before removing enterprise authorization")?;
+            .context("Sign in to your Lemex account before removing enterprise authorization")?;
         // Cleanup must remain available even when this server is no longer eligible
         // for EMA (for example, after disabling the feature or changing its transport).
         let profile = config

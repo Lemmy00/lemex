@@ -157,7 +157,7 @@ async fn split_homes_support_backfill_listing_and_paginated_history() {
 
     let runtime = codex_rollout::state_db::try_init(&rollout_config)
         .await
-        .expect("backfill state from Codex home");
+        .expect("backfill state from Lemex home");
     assert!(
         runtime
             .get_thread(thread_id)
@@ -296,7 +296,7 @@ async fn split_homes_support_backfill_listing_and_paginated_history() {
         let filename = sqlite_path.file_name().expect("SQLite database filename");
         assert!(
             !codex_home.join(filename).exists(),
-            "SQLite database should not be created under Codex home"
+            "SQLite database should not be created under Lemex home"
         );
     }
 }
@@ -1284,7 +1284,7 @@ async fn paginated_fork_reads_compressed_shared_lineage_without_materializing() 
         .expect_err("external shared source cannot be referenced by rollout id");
     assert!(matches!(
         error,
-        crate::ThreadStoreError::InvalidRequest { message } if message.contains("must be in Codex home")
+        crate::ThreadStoreError::InvalidRequest { message } if message.contains("must be in Lemex home")
     ));
     store
         .shutdown_thread(source_thread_id)

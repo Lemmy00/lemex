@@ -34,7 +34,6 @@ fn refreshed_mouse_policy_applies_to_fullscreen_and_overlays() {
                 .store(disabled, Ordering::Relaxed);
             for next in [
                 OverlayInput::Transcript,
-                OverlayInput::Usage,
                 OverlayInput::Onboarding,
                 OverlayInput::Default,
                 OverlayInput::StaticPager,
@@ -43,7 +42,7 @@ fn refreshed_mouse_policy_applies_to_fullscreen_and_overlays() {
                 terminal.process(&std::mem::take(&mut output));
                 let capture = match next {
                     OverlayInput::Default => owned,
-                    OverlayInput::Transcript | OverlayInput::Usage => true,
+                    OverlayInput::Transcript => true,
                     OverlayInput::StaticPager | OverlayInput::Onboarding => false,
                 };
                 let expected = if !disabled && capture {
@@ -436,7 +435,6 @@ fn pager_capture_restores_picker_input_without_a_screen_transition() {
     for requested in [
         super::super::OverlayInput::Transcript,
         super::super::OverlayInput::StaticPager,
-        super::super::OverlayInput::Usage,
     ] {
         input
             .apply(&screen, &mut output, requested, /*owned*/ false)
@@ -489,10 +487,7 @@ fn pager_capture_restores_picker_input_without_a_screen_transition() {
 #[cfg(not(windows))]
 #[test]
 fn failed_pager_capture_setup_restores_requested_and_actual_picker_policy() {
-    for requested in [
-        super::super::OverlayInput::Transcript,
-        super::super::OverlayInput::Usage,
-    ] {
+    for requested in [super::super::OverlayInput::Transcript] {
         let screen = AlternateScreen::default();
         let mut output = Vec::new();
         enter_with_mouse_enabled(&screen, &mut output, /*capture_mouse*/ false).unwrap();

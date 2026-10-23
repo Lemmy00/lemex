@@ -959,7 +959,6 @@ See the Lemex keymap documentation for supported actions and examples."
             config_notification_test_pending: None,
             model_catalog,
             session_telemetry: session_telemetry.clone(),
-            terminal_size_tags: tui.terminal_size_tags.clone(),
             app_event_tx,
             chat_widget,
             workspace_command_runner: Some(workspace_command_runner),
@@ -989,7 +988,6 @@ See the Lemex keymap documentation for supported actions and examples."
             last_thread_usage_status_cell: None,
             pending_thread_usage_history_refresh: false,
             overlay: None,
-            retained_analytics: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),
@@ -1224,18 +1222,9 @@ See the Lemex keymap documentation for supported actions and examples."
                 app.app_event_tx.clone(),
                 app.chat_widget.security_setup_request_id,
             );
-            let reset_hint_request_id = app.chat_widget.start_rate_limit_reset_startup_check();
-            app.refresh_rate_limits(
-                &app_server,
-                RateLimitRefreshOrigin::StartupPrefetch {
-                    reset_hint_request_id,
-                },
-            );
+            app.refresh_rate_limits(&app_server, RateLimitRefreshOrigin::StartupPrefetch);
         }
 
-        let mut last_screen_size = tui.terminal.last_known_screen_size;
-        let mut settled_size_tags = crate::terminal_size_telemetry::tags(last_screen_size);
-        let mut pending_resize: Option<(ratatui::layout::Size, Instant)> = None;
         let mut reconnect = None;
         let mut waiting_for_initial_session_configured = wait_for_initial_session_configured;
         let mut waiting_for_initial_session_header = true;
@@ -1396,19 +1385,6 @@ See the Lemex keymap documentation for supported actions and examples."
                             && has_pending_app_events
                         || (!waiting_for_initial_session_configured
                             && app.has_queued_startup_protected_request());
-                // The screen cache is physical geometry, not the inline viewport. This also
-                // notices the final size after returning from a standalone nested screen.
-                let size = tui.terminal.last_known_screen_size;
-                if !crate::terminal_size_telemetry::enabled(&app.config)
-                    || app.terminal_size_tags.is_empty()
-                {
-                    pending_resize = None;
-                    settled_size_tags = crate::terminal_size_telemetry::tags(size);
-                } else if size != last_screen_size {
-                    pending_resize =
-                        Some((size, Instant::now() + Duration::from_secs(/*secs*/ 15)));
-                }
-                last_screen_size = size;
                 let rate_limit_poll_deadline = app
                     .chat_widget
                     .rate_limit_refresh_interval()
@@ -1569,28 +1545,6 @@ See the Lemex keymap documentation for supported actions and examples."
                         AppRunControl::Continue
                     }
                     () = async {
-                        match pending_resize {
-                            Some((_, deadline)) => tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await,
-                            None => std::future::pending().await,
-                        }
-                    } => {
-                        if let Some((expected, _)) = pending_resize.take()
-                            && crate::terminal_size_telemetry::enabled(&app.config)
-                        {
-                            let actual = crate::terminal_size_telemetry::read_size();
-                            if actual != expected {
-                                pending_resize = Some((actual, Instant::now() + Duration::from_secs(/*secs*/ 15)));
-                            } else {
-                                let tags = crate::terminal_size_telemetry::tags(actual);
-                                if tags != settled_size_tags {
-                                    crate::terminal_size_telemetry::record(&app.terminal_size_tags, &app.config, "resize", actual);
-                                }
-                                settled_size_tags = tags;
-                            }
-                        }
-                        AppRunControl::Continue
-                    }
-                    () = async {
                         match rate_limit_poll_deadline {
                             Some(deadline) => {
                                 tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
@@ -1670,7 +1624,6 @@ See the Lemex keymap documentation for supported actions and examples."
         if let Err(err) = backends.shutdown().await {
             tracing::warn!(error = %err, "failed to shut down embedded app server");
         }
-        let clear_pet_result = tui.clear_ambient_pet_image();
         let clear_result = tui.terminal.clear();
         if let Some(task) = app.daemon_restart.take()
             && let Err(err) = task.await.unwrap_or_else(|err| Err(err.into()))
@@ -1680,14 +1633,10 @@ See the Lemex keymap documentation for supported actions and examples."
         // Keep the alternate screen active until the outer guard restores both keyboard stacks.
         let exit_reason = match exit_reason_result {
             Ok(exit_reason) => {
-                clear_pet_result?;
                 clear_result?;
                 exit_reason
             }
             Err(err) => {
-                if let Err(clear_pet_err) = clear_pet_result {
-                    tracing::warn!(error = %clear_pet_err, "failed to clear ambient pet image");
-                }
                 if let Err(clear_err) = clear_result {
                     tracing::warn!(error = %clear_err, "failed to clear terminal UI");
                 }

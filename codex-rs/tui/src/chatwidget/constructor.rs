@@ -84,17 +84,6 @@ impl ChatWidget {
             .as_ref()
             .map(|keymap| keymap.chat.clone())
             .unwrap_or_else(|| default_keymap.chat.clone());
-        let pet_http_client = codex_http_client::RouteAwareClientPool::new(
-            config.http_client_factory(),
-            codex_http_client::ClientRouteClass::Other,
-        );
-        let configured_pet_load_generation = pets::start_configured_pet_load_if_needed(
-            &local_settings,
-            /*ambient_pet_missing*/ true,
-            frame_requester.clone(),
-            app_event_tx.clone(),
-            pet_http_client.clone(),
-        );
         let config_panel_tui = local_settings.tui.clone();
         let mut widget = Self {
             empty_state_animation: std::cell::RefCell::new(empty_state_animation),
@@ -153,14 +142,6 @@ impl ChatWidget {
             rate_limit_snapshots_by_limit_id: BTreeMap::new(),
             refreshing_status_outputs: Vec::new(),
             next_status_refresh_request_id: 0,
-            pending_rate_limit_reset_request_id: None,
-            pending_rate_limit_reset_idempotency_key: None,
-            rate_limit_reset_picker_request_id: None,
-            pending_rate_limit_reset_hint_request_id: None,
-            pending_usage_menu_rate_limit_request_id: None,
-            pending_rate_limit_reset_hint: None,
-            available_rate_limit_reset_credits: None,
-            next_rate_limit_reset_request_id: 0,
             plan_type: initial_plan_type,
             codex_rate_limit_reached_type: None,
             codex_spend_control_reached: None,
@@ -178,7 +159,6 @@ impl ChatWidget {
             warning_display_state: WarningDisplayState::default(),
             rendered_selection: Default::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
-            add_credits_nudge_email_in_flight: None,
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
             stream_controller: None,
             plan_stream_controller: None,
@@ -222,16 +202,6 @@ impl ChatWidget {
             status_state: StatusState::default(),
             review: ReviewState::default(),
             active_hook_cell: None,
-            pet_http_client,
-            ambient_pet: None,
-            configured_pet_load_generation,
-            pet_picker_preview_state: crate::pets::PetPickerPreviewState::default(),
-            pet_picker_preview_pet: None,
-            pet_picker_preview_request_id: 0,
-            pet_picker_preview_image_visible: std::cell::Cell::new(/*value*/ false),
-            pet_selection_load_request_id: 0,
-            #[cfg(test)]
-            pet_image_support_override: None,
             thread_id: None,
             thread_name: None,
             thread_rename_block_message: None,

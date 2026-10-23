@@ -530,7 +530,7 @@ async fn elicitation_without_an_automatic_decision_prompts() {
             };
             assert!(!pending.is_finished());
             let ProtocolRequestId::String(request_id) = request.id else {
-                panic!("expected Codex-owned string request ID");
+                panic!("expected Lemex-owned string request ID");
             };
             let response = ElicitationResponse {
                 action: ElicitationAction::Accept,

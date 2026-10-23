@@ -3,7 +3,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 #[test]
-fn parse_rejects_more_actions_than_the_inline_banner_can_display() {
+fn banner_drops_account_ctas_and_rejects_unbounded_payloads() {
     let labels: Vec<_> = (1..=8).map(|index| format!("Action {index}")).collect();
     let mut raw = json!({
         "banner_type": "usage_limit", "title": "Usage limit reached",
@@ -13,14 +13,11 @@ fn parse_rejects_more_actions_than_the_inline_banner_can_display() {
         })).collect::<Vec<_>>(),
     });
     let banner = BackendBanner::parse(&raw).expect("eight actions fit");
-    assert_eq!(
+    assert!(
         banner
             .actionable_banner(crate::clock_format::ClockFormat::TwentyFourHour)
             .actions
-            .into_iter()
-            .map(|action| action.name)
-            .collect::<Vec<_>>(),
-        labels
+            .is_empty()
     );
 
     raw["ctas"].as_array_mut().unwrap().push(json!({

@@ -252,7 +252,7 @@ async fn credential_masking_preserves_project_protections_in_both_loaders() {
         let codex_home = tmp.path().join("codex-home");
         let project = tmp.path().join("project");
         let dot_codex = project.join(".lemex");
-        std::fs::create_dir_all(&codex_home).expect("create Codex home");
+        std::fs::create_dir_all(&codex_home).expect("create Lemex home");
         std::fs::create_dir_all(&dot_codex).expect("create project config directory");
         std::fs::write(project.join(".project-root"), "").expect("write project marker");
         let project_key = TomlValue::String(project_trust_key(&project)).to_string();
@@ -763,7 +763,7 @@ sandbox_mode = "danger-full-access"
         ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. }
     )));
     let expected_warnings = vec![format!(
-        "Ignoring deprecated managed config file at {}; LEMEX_HOME/managed_config.toml is no longer supported on Windows. Use %ProgramData%\\OpenAI\\Codex\\requirements.toml for enforced settings or config.toml for defaults.",
+        "Ignoring deprecated managed config file at {}; LEMEX_HOME/managed_config.toml is no longer supported on Windows. Use %ProgramData%\\Lemex\\requirements.toml for enforced settings or config.toml for defaults.",
         managed_config_path.display()
     )];
     assert_eq!(stack.startup_warnings(), Some(expected_warnings.as_slice()));

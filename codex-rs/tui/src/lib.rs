@@ -101,7 +101,6 @@ pub(crate) use worktree_startup::ManagedTuiWorktree;
 
 mod activation_key_guard;
 mod additional_dirs;
-mod analytics;
 mod app;
 mod app_backtrack;
 mod app_command;
@@ -133,8 +132,8 @@ mod daybreak;
 mod experimental_features;
 mod markdown_copy;
 mod permission_discovery;
-mod pets;
 mod security_setup;
+mod terminal_image;
 mod worktree_browser;
 pub use custom_terminal::Terminal;
 mod assistant_directives;
@@ -226,7 +225,6 @@ mod temporary_structured_request;
 mod terminal_hyperlinks;
 mod terminal_palette;
 mod terminal_probe;
-mod terminal_size_telemetry;
 mod terminal_title;
 mod terminal_visualization_instructions;
 mod text_formatting;
@@ -1189,7 +1187,7 @@ async fn run_ratatui_app(
     daemon_startup_warning: Option<String>,
     managed_daemon: bool,
     launch_telemetry: daemon_telemetry::Launch<
-        impl FnOnce(&AppServerTarget, bool) -> terminal_size_telemetry::LaunchTags,
+        impl FnOnce(&AppServerTarget, bool) -> daemon_telemetry::LaunchTags,
     >,
     startup_draft: startup_draft::StartupDraft,
 ) -> color_eyre::Result<AppExitInfo> {
@@ -1258,8 +1256,7 @@ async fn run_ratatui_app(
             ),
         )
         .await;
-    tui.terminal_size_tags =
-        launch_telemetry.record(&app_server_target, matches!(&startup_app_server, Ok(Ok(_))));
+    launch_telemetry.record(&app_server_target, matches!(&startup_app_server, Ok(Ok(_))));
     let mut app_server_session = match startup_app_server {
         Ok(Ok(app_server)) => AppServerSession::new(
             backend_id,

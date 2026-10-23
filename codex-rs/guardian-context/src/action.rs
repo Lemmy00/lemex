@@ -59,7 +59,7 @@ impl PlannedAction {
     pub fn render(&self, presentation: ActionPresentation) -> Vec<String> {
         if presentation == ActionPresentation::Async {
             return vec![
-                "The Codex agent has requested the following action:\n".to_owned(),
+                "The Lemex agent has requested the following action:\n".to_owned(),
                 ">>> APPROVAL REQUEST START\n".to_owned(),
                 "Planned action JSON:\n".to_owned(),
                 format!("{}\n", self.json),
@@ -93,10 +93,10 @@ impl PlannedAction {
                 push_text(
                     match presentation {
                         ActionPresentation::SyncDelta => {
-                            "The Codex agent has requested the following next action:\n"
+                            "The Lemex agent has requested the following next action:\n"
                         }
                         ActionPresentation::SyncFull | ActionPresentation::Async => {
-                            "The Codex agent has requested the following action:\n"
+                            "The Lemex agent has requested the following action:\n"
                         }
                     }
                     .to_string(),

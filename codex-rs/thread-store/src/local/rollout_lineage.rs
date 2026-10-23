@@ -130,7 +130,7 @@ impl LocalThreadStore {
                 LineageResolutionMode::PlainForReference => {
                     let outside_codex_home = || ThreadStoreError::InvalidRequest {
                         message: format!(
-                            "rollout path `{}` must be in Codex home directory",
+                            "rollout path `{}` must be in Lemex home directory",
                             rollout_path.display()
                         ),
                     };

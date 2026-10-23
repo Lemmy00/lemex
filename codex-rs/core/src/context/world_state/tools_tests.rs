@@ -57,7 +57,7 @@ fn renders_first_line_of_namespace_descriptions() {
         [
             (
                 "app".to_string(),
-                "  control the Codex App  \nAdditional instructions.".to_string(),
+                "  control the Lemex App  \nAdditional instructions.".to_string(),
             ),
             (
                 "gmail".to_string(),
@@ -77,7 +77,7 @@ fn renders_first_line_of_namespace_descriptions() {
 
     assert_eq!(
         rendered,
-        "<tools>\nDeferred tool namespaces:\n- app: control the Codex App\n- gmail: access your Google Gmail Account & labels\n- hotline\n</tools>"
+        "<tools>\nDeferred tool namespaces:\n- app: control the Lemex App\n- gmail: access your Google Gmail Account & labels\n- hotline\n</tools>"
     );
 }
 
@@ -86,7 +86,7 @@ fn renders_added_removed_and_updated_namespace_descriptions() {
     let metrics = Arc::new(RecordingMetrics::default());
     let tools = ToolsState::new(
         [
-            ("app".to_string(), "control the Codex App".to_string()),
+            ("app".to_string(), "control the Lemex App".to_string()),
             ("kept".to_string(), "unchanged".to_string()),
             (
                 "gmail".to_string(),
@@ -112,7 +112,7 @@ fn renders_added_removed_and_updated_namespace_descriptions() {
 
     assert_eq!(
         rendered,
-        "<tools>\nAdded deferred tool namespaces:\n- app: control the Codex App\n- gmail: access your Google Gmail Account\nRemoved deferred tool namespaces:\n- hotline: access hotline information\n</tools>"
+        "<tools>\nAdded deferred tool namespaces:\n- app: control the Lemex App\n- gmail: access your Google Gmail Account\nRemoved deferred tool namespaces:\n- hotline: access hotline information\n</tools>"
     );
 
     // Delta samples count the emitted additions/removals, excluding unchanged entries.

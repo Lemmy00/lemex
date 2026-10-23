@@ -864,7 +864,7 @@ async fn turn_start_sends_originator_header(
         DEFAULT_READ_TIMEOUT,
         mcp.initialize_with_client_info(ClientInfo {
             name: TEST_ORIGINATOR.to_string(),
-            title: Some("Codex VS Code Extension".to_string()),
+            title: Some("Lemex VS Code Extension".to_string()),
             version: "0.1.0".to_string(),
         }),
     )

@@ -75,6 +75,17 @@ class AssembleTests(unittest.TestCase):
         (root / "runtime.json").write_text(json.dumps(manifest))
         return root, manifest
 
+    def test_lemex_entrypoint_is_preserved_and_hashed(self):
+        self.metadata["entrypoint"] = "bin/lemex"
+        (self.package / "codex-package.json").write_text(json.dumps(self.metadata))
+        (self.package / "bin/codex").rename(self.package / "bin/lemex")
+        runtime, _ = self.make_runtime()
+        assemble(self.package, self.helper, "aarch64-unknown-linux-gnu", self.commit,
+                 self.output, runtime=runtime)
+        manifest = json.loads((self.output / "codex-resources/voice/manifest.json").read_text())
+        self.assertEqual(manifest["sha256"]["bin/lemex"], digest(self.package / "bin/lemex"))
+        self.assertNotIn("bin/codex", manifest["sha256"])
+
     def test_cli_packages_each_runtime_layout_without_changing_bytes(self):
         for target, plugin in (
             ("aarch64-unknown-linux-gnu", "lib/gstreamer-1.0/libgst{}.so"),

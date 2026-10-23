@@ -27,8 +27,6 @@ pub(super) use crate::token_usage::TokenUsage;
 pub(super) use crate::token_usage::TokenUsageInfo;
 pub(super) use crate::tui::FrameRequester;
 pub(super) use assert_matches::assert_matches;
-pub(super) use codex_app_server_protocol::AddCreditsNudgeCreditType;
-pub(super) use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 pub(super) use codex_app_server_protocol::AdditionalFileSystemPermissions as AppServerAdditionalFileSystemPermissions;
 pub(super) use codex_app_server_protocol::AdditionalNetworkPermissions as AppServerAdditionalNetworkPermissions;
 pub(super) use codex_app_server_protocol::AdditionalPermissionProfile as AppServerAdditionalPermissionProfile;
@@ -306,7 +304,6 @@ mod terminal_program_status;
 mod terminal_title;
 #[path = "tests/tool_activity_tests.rs"]
 mod tool_activity_tests;
-mod usage;
 #[path = "tests/worktree_picker_tests.rs"]
 mod worktree_picker;
 

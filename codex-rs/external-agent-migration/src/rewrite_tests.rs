@@ -8,7 +8,7 @@ const PROFILE: RewriteProfile = RewriteProfile::new("SOURCE.md", &["source agent
 fn rewrites_terms_only_at_word_boundaries() {
     assert_eq!(
         PROFILE.rewrite("SOURCE.md Source source agent source_agent Source: café ‘Source’"),
-        "AGENTS.md Codex Codex source_agent Codex: café ‘Codex’"
+        "AGENTS.md Lemex Lemex source_agent Lemex: café ‘Lemex’"
     );
 }
 
@@ -43,31 +43,31 @@ SOURCE.md?section=details
 [Source]: https://example.com/Source/SOURCE.md "Source"
 "#,
         ),
-        r#"Codex: https://Source.example/SOURCE.md?product=Source#Source
-[Codex](HTTPS://Source.example/a_(Source)/source.md "Codex")Codex
-<http://Source.example/SOURCE.md>，Codex
-“https://Source.example/é/SOURCE.md” Codex
+        r#"Lemex: https://Source.example/SOURCE.md?product=Source#Source
+[Lemex](HTTPS://Source.example/a_(Source)/source.md "Lemex")Lemex
+<http://Source.example/SOURCE.md>，Lemex
+“https://Source.example/é/SOURCE.md” Lemex
 `file:///Source/SOURCE.md` Source://Source/SOURCE.md
-[Codex](mailto:Source@example.com) [AGENTS.md](./AGENTS.md)
-WWW.Source.example/SOURCE.md Codex
-https://Source.example/it's/SOURCE.md Codex
-<Source@example.com> Source@example.com support@Source.example Codex
-[Codex](/Codex/reference) [AGENTS.md](./Codex/AGENTS.md)
+[Lemex](mailto:Source@example.com) [AGENTS.md](./AGENTS.md)
+WWW.Source.example/SOURCE.md Lemex
+https://Source.example/it's/SOURCE.md Lemex
+<Source@example.com> Source@example.com support@Source.example Lemex
+[Lemex](/Lemex/reference) [AGENTS.md](./Lemex/AGENTS.md)
 AGENTS.md?section=details
-[Codex](#Codex)
-<a id="Codex"></a>
-![Codex](https://example.com/Source/SOURCE.md "Codex")
+[Lemex](#Lemex)
+<a id="Lemex"></a>
+![Lemex](https://example.com/Source/SOURCE.md "Lemex")
 [![logo][AGENTS.md logo]](https://Source.example/Source)
 
 [AGENTS.md logo]: ./logo.svg
 
 | URL | Agent | Instructions |
 | --- | --- | --- |
-|https://example.com|Codex|[docs](AGENTS.md)|
+|https://example.com|Lemex|[docs](AGENTS.md)|
 
-[Codex][Codex] [Codex][] [Codex]
+[Lemex][Lemex] [Lemex][] [Lemex]
 
-[Codex]: https://example.com/Source/SOURCE.md "Codex"
+[Lemex]: https://example.com/Source/SOURCE.md "Lemex"
 "#
     );
 }

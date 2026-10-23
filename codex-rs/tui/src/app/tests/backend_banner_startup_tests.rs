@@ -37,9 +37,7 @@ async fn backend_banner_fallback_applies_before_initial_and_queued_startup_promp
         &mut server,
         AppEvent::RateLimitsLoaded {
             request_id: 1,
-            origin: RateLimitRefreshOrigin::StartupPrefetch {
-                reset_hint_request_id: 0,
-            },
+            origin: RateLimitRefreshOrigin::StartupPrefetch,
             hard_stop_generation: generation,
             result: Ok(fallback_response()),
         },

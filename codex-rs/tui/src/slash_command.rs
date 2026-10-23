@@ -63,10 +63,7 @@ pub enum SlashCommand {
     Title,
     Statusline,
     Theme,
-    #[strum(to_string = "pets", serialize = "pet")]
-    Pets,
     Mcp,
-    Apps,
     Plugins,
     Quit,
     Exit,
@@ -90,7 +87,7 @@ impl SlashCommand {
     /// User-visible description shown in the popup.
     pub fn description(self) -> &'static str {
         match self {
-            SlashCommand::Config => "configure Codex preferences",
+            SlashCommand::Config => "configure Lemex preferences",
             SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Lemex",
@@ -124,7 +121,6 @@ impl SlashCommand {
             SlashCommand::Title => "configure which items appear in the terminal title",
             SlashCommand::Statusline => "configure which items appear in the status line",
             SlashCommand::Theme => "choose a syntax highlighting theme",
-            SlashCommand::Pets => "choose or hide the terminal pet",
             SlashCommand::Ps => "list background terminals",
             SlashCommand::Stop => "stop all background terminals",
             SlashCommand::MemoryDrop => "DO NOT USE",
@@ -151,7 +147,6 @@ impl SlashCommand {
             SlashCommand::AutoReview => "approve one retry of a recent auto-review denial",
             SlashCommand::Memories => "configure memory use and generation",
             SlashCommand::Mcp => "list MCP tools; use /mcp verbose or /mcp login <name>",
-            SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
@@ -188,7 +183,6 @@ impl SlashCommand {
                 | SlashCommand::Cd
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
-                | SlashCommand::Pets
                 | SlashCommand::Side
                 | SlashCommand::Btw
                 | SlashCommand::Resume
@@ -289,7 +283,6 @@ impl SlashCommand {
             | SlashCommand::Goal
             | SlashCommand::Voice
             | SlashCommand::Mcp
-            | SlashCommand::Apps
             | SlashCommand::Plugins
             | SlashCommand::Title
             | SlashCommand::Statusline
@@ -303,7 +296,7 @@ impl SlashCommand {
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Agents | SlashCommand::MultiAgents => true,
-            SlashCommand::Config | SlashCommand::Theme | SlashCommand::Pets => false,
+            SlashCommand::Config | SlashCommand::Theme => false,
         }
     }
 
@@ -333,6 +326,27 @@ mod tests {
     use super::SlashCommand;
 
     #[test]
+    fn lemex_keeps_coding_and_voice_without_account_or_pet_commands() {
+        for name in ["apps", "pets", "pet", "analytics"] {
+            assert!(
+                SlashCommand::from_str(name).is_err(),
+                "unexpected command: {name}"
+            );
+        }
+        let commands = super::built_in_slash_commands();
+        for command in [
+            SlashCommand::Model,
+            SlashCommand::Voice,
+            SlashCommand::Mcp,
+            SlashCommand::Status,
+            SlashCommand::Diff,
+            SlashCommand::Review,
+        ] {
+            assert!(commands.iter().any(|(_, candidate)| *candidate == command));
+        }
+    }
+
+    #[test]
     fn stop_command_is_canonical_name() {
         assert_eq!(SlashCommand::Stop.command(), "stop");
     }
@@ -340,12 +354,6 @@ mod tests {
     #[test]
     fn clean_alias_parses_to_stop_command() {
         assert_eq!(SlashCommand::from_str("clean"), Ok(SlashCommand::Stop));
-    }
-
-    #[test]
-    fn pet_alias_parses_to_pets_command() {
-        assert_eq!(SlashCommand::Pets.command(), "pets");
-        assert_eq!(SlashCommand::from_str("pet"), Ok(SlashCommand::Pets));
     }
 
     #[test]

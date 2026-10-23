@@ -1,32 +1,6 @@
-use super::helpers::drain_insert_history_transcript;
 use super::*;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use pretty_assertions::assert_eq;
-use serial_test::serial;
-
-fn force_pet_image_support(chat: &mut ChatWidget) {
-    chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Supported(
-        crate::pets::ImageProtocol::Kitty,
-    ));
-}
-
-fn force_tmux_pet_image_unsupported(chat: &mut ChatWidget) {
-    chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Unsupported(
-        crate::pets::PetImageUnsupportedReason::Tmux,
-    ));
-}
-
-fn force_terminal_pet_image_unsupported(chat: &mut ChatWidget) {
-    chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Unsupported(
-        crate::pets::PetImageUnsupportedReason::Terminal,
-    ));
-}
-
-fn force_old_iterm2_pet_image_unsupported(chat: &mut ChatWidget) {
-    chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Unsupported(
-        crate::pets::PetImageUnsupportedReason::Iterm2TooOld,
-    ));
-}
 
 fn fast_tier_command() -> ServiceTierCommand {
     ServiceTierCommand {
@@ -1453,7 +1427,7 @@ async fn api_usage_command_with_args_suggests_session_status() {
 }
 
 #[tokio::test]
-async fn usage_command_with_invalid_view_reports_usage_snapshot() {
+async fn usage_command_keeps_session_token_usage_hint_for_legacy_arguments() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     set_chatgpt_auth(&mut chat);
 
@@ -1464,67 +1438,8 @@ async fn usage_command_with_invalid_view_reports_usage_snapshot() {
         .map(|cell| lines_to_single_string(cell))
         .collect::<Vec<_>>()
         .join("\n");
-    assert_chatwidget_snapshot!("usage_command_with_invalid_view_reports_usage", rendered);
+    assert!(rendered.contains("Use /status for session token usage."));
     assert_eq!(recall_latest_after_clearing(&mut chat), "/usage monthly");
-}
-
-#[tokio::test]
-async fn usage_views_open_the_requested_summary_mode() {
-    use crate::analytics::TokenActivityView;
-    for (argument, expected) in [
-        ("daily", TokenActivityView::Daily),
-        ("weekly", TokenActivityView::Weekly),
-        ("cumulative", TokenActivityView::Cumulative),
-    ] {
-        let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-        set_chatgpt_auth(&mut chat);
-        chat.dispatch_command_with_args(SlashCommand::Usage, argument.to_string(), Vec::new());
-        match rx.try_recv().unwrap() {
-            AppEvent::OpenAnalytics { view } => assert_eq!(view, Some(expected)),
-            other => panic!("expected Analytics, got {other:?}"),
-        }
-    }
-}
-
-#[tokio::test]
-async fn usage_command_runs_with_backend_auth_without_chatgpt_account_flag() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.update_account_state(
-        /*status_account_display*/ None, /*plan_type*/ None,
-        /*has_chatgpt_account*/ false, /*has_codex_backend_auth*/ true,
-    );
-
-    chat.dispatch_command_with_args(SlashCommand::Usage, "daily".to_string(), Vec::new());
-
-    assert_matches!(
-        rx.try_recv(),
-        Ok(AppEvent::OpenAnalytics {
-            view: Some(crate::analytics::TokenActivityView::Daily)
-        })
-    );
-    assert!(!chat.has_chatgpt_account());
-}
-
-#[tokio::test]
-async fn usage_command_runs_with_backend_auth_from_widget_init() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual_with_auth(
-        /*model_override*/ None,
-        /*has_chatgpt_account*/ false,
-        /*has_codex_backend_auth*/ true,
-        FrameRequester::test_dummy(),
-    )
-    .await;
-
-    chat.dispatch_command_with_args(SlashCommand::Usage, "daily".to_string(), Vec::new());
-
-    assert_matches!(
-        rx.try_recv(),
-        Ok(AppEvent::OpenAnalytics {
-            view: Some(crate::analytics::TokenActivityView::Daily)
-        })
-    );
-    assert!(!chat.has_chatgpt_account());
-    assert!(chat.has_codex_backend_auth());
 }
 
 #[tokio::test]
@@ -3117,156 +3032,6 @@ async fn slash_resume_with_arg_requests_named_session_while_mcp_startup_is_runni
         Ok(AppEvent::ResumeSessionByIdOrName(id_or_name)) if id_or_name == "my-saved-thread"
     );
     assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
-}
-
-#[tokio::test]
-#[serial]
-async fn slash_pets_opens_picker() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    force_pet_image_support(&mut chat);
-
-    chat.dispatch_command(SlashCommand::Pets);
-
-    assert!(chat.bottom_pane.has_active_view());
-    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
-
-    let popup = render_bottom_popup(&chat, /*width*/ 80);
-    assert_chatwidget_snapshot!("slash_pets_picker", popup);
-}
-
-#[tokio::test]
-#[serial]
-async fn slash_pets_with_arg_selects_named_pet() {
-    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    force_pet_image_support(&mut chat);
-
-    chat.bottom_pane
-        .set_composer_text("/pets chefito".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-    assert_matches!(rx.try_recv(), Ok(AppEvent::FollowTranscript));
-
-    assert_matches!(
-        rx.try_recv(),
-        Ok(AppEvent::PetSelected { pet_id }) if pet_id == "chefito"
-    );
-    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
-}
-
-#[tokio::test]
-#[serial]
-async fn slash_pet_disable_aliases_work_on_unsupported_terminal() {
-    for input in ["/pets disable", "/pet hide"] {
-        let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-        force_tmux_pet_image_unsupported(&mut chat);
-
-        chat.bottom_pane
-            .set_composer_text(input.to_string(), Vec::new(), Vec::new());
-        chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-        assert_matches!(rx.try_recv(), Ok(AppEvent::FollowTranscript));
-        assert_matches!(rx.try_recv(), Ok(AppEvent::PetDisabled));
-        assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
-        assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
-    }
-}
-
-#[tokio::test]
-#[serial]
-async fn slash_pets_in_tmux_shows_notice_and_preserves_draft() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    force_tmux_pet_image_unsupported(&mut chat);
-    chat.bottom_pane
-        .set_composer_text("Keep this draft".to_string(), Vec::new(), Vec::new());
-
-    chat.dispatch_command(SlashCommand::Pets);
-
-    assert!(chat.bottom_pane.has_active_view());
-    assert_chatwidget_snapshot!(
-        "slash_pets_unavailable_tmux_40",
-        render_bottom_popup(&chat, /*width*/ 40),
-    );
-    let cells = drain_insert_history_transcript(&mut rx);
-    let rendered = cells
-        .iter()
-        .map(|lines| lines_to_single_string(lines))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(rendered.contains("Pets are disabled in tmux."));
-    assert!(rendered.contains("outside tmux"));
-
-    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
-    assert!(!chat.bottom_pane.has_active_view());
-    assert_eq!(chat.bottom_pane.composer_text(), "Keep this draft");
-}
-
-#[tokio::test]
-#[serial]
-async fn slash_pets_with_arg_on_unsupported_terminal_shows_notice_without_selection() {
-    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    force_tmux_pet_image_unsupported(&mut chat);
-
-    chat.bottom_pane
-        .set_composer_text("/pets chefito".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-
-    assert!(chat.bottom_pane.has_active_view());
-    assert!(render_bottom_popup(&chat, /*width*/ 80).contains("Pets are disabled in tmux."));
-    let cells = drain_insert_history_transcript(&mut rx);
-    let rendered = cells
-        .iter()
-        .map(|lines| lines_to_single_string(lines))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(rendered.contains("Pets are disabled in tmux."));
-    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
-    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
-
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-    assert!(!chat.bottom_pane.has_active_view());
-    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
-    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
-}
-
-#[tokio::test]
-#[serial]
-async fn slash_pets_on_unsupported_terminal_shows_terminal_warning() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    force_terminal_pet_image_unsupported(&mut chat);
-
-    chat.dispatch_command(SlashCommand::Pets);
-
-    assert!(chat.bottom_pane.has_active_view());
-    assert!(
-        render_bottom_popup(&chat, /*width*/ 80)
-            .contains("Pets aren’t available in this terminal.")
-    );
-    let cells = drain_insert_history_transcript(&mut rx);
-    let rendered = cells
-        .iter()
-        .map(|lines| lines_to_single_string(lines))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(rendered.contains("Pets aren’t available in this terminal."));
-    assert!(rendered.contains("Kitty graphics or Sixel support"));
-}
-
-#[tokio::test]
-#[serial]
-async fn slash_pets_on_old_iterm2_shows_upgrade_warning() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    force_old_iterm2_pet_image_unsupported(&mut chat);
-
-    chat.dispatch_command(SlashCommand::Pets);
-
-    assert!(chat.bottom_pane.has_active_view());
-    assert!(render_bottom_popup(&chat, /*width*/ 80).contains("Pets require iTerm2 3.6 or newer."));
-    let cells = drain_insert_history_transcript(&mut rx);
-    let rendered = cells
-        .iter()
-        .map(|lines| lines_to_single_string(lines))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(rendered.contains("Pets require iTerm2 3.6 or newer."));
-    assert!(rendered.contains("Upgrade iTerm2 to use terminal pets."));
 }
 
 #[tokio::test]

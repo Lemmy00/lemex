@@ -1133,7 +1133,7 @@ async fn start_server_task(
                 .publish_runtime_if_newest_accepted(ticket, &server_info, tools, meta.clone())
                 .shared_tools(),
             (None, None) => tools.into(),
-            _ => unreachable!("Codex Apps fetch ticket requires cache context"),
+            _ => unreachable!("Lemex Apps fetch ticket requires cache context"),
         };
     if let (Some(cache_context), Some(mut fetch_ticket)) = (
         tool_catalog_cache_context.as_ref(),
@@ -1232,7 +1232,7 @@ pub(crate) fn mcp_initialize_request_params(
     }
     InitializeRequestParams::new(
         capabilities,
-        Implementation::new("codex-mcp-client", env!("CARGO_PKG_VERSION")).with_title("Codex"),
+        Implementation::new("codex-mcp-client", env!("CARGO_PKG_VERSION")).with_title("Lemex"),
     )
     .with_protocol_version(ProtocolVersion::V_2025_06_18)
 }

@@ -51,7 +51,9 @@ def assemble(
     if targets.get(app_target) != voice_target:
         raise ValueError("incompatible app and helper targets")
     suffix = ".exe" if app_target.endswith("windows-msvc") else ""
-    entrypoint = f"bin/codex{suffix}"
+    entrypoint = metadata.get("entrypoint")
+    if entrypoint not in {f"bin/codex{suffix}", f"bin/lemex{suffix}"}:
+        raise ValueError("input is not a canonical app package")
     expected = {
         "layoutVersion": 1,
         "variant": "codex",

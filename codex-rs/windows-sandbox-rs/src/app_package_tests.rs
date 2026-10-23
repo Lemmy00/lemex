@@ -72,7 +72,7 @@ fn runner_receipt_distinguishes_incomplete_setup_from_owner_and_removal() {
         (
             owner,
             Path::new(r"C:\Users\other\.codex"),
-            "registered Core setup belongs to another Codex home",
+            "registered Core setup belongs to another Lemex home",
         ),
         (owner, home, "registered Core setup is being removed"),
     ] {

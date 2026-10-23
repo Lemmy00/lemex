@@ -38,6 +38,8 @@ jobs:
         with:
           node-version: "24"
       - run: python3 -m unittest discover -s scripts -p 'test_npm_release.py'
+      - run: python3 -m unittest discover -s scripts -p 'test_smoke_voice_runtime.py'
+      - run: python3 -m unittest discover -s third_party/voice -p 'test_assemble_package.py'
       - run: python3 -m unittest discover -s .github/scripts -p 'test_check_npm_release_reuse.py'
       - name: Validate release version
         env:
@@ -97,6 +99,35 @@ jobs:
           node-version: "24"
       - name: Set native release version
         run: python3 scripts/npm_release.py set-version --version "$RELEASE_VERSION"
+      - uses: ./.github/actions/prepare-bazel-ci
+        with:
+          target: ${{ matrix.target }}
+          cache-scope: lemex-npm-voice
+      - name: Build and seal native voice runtime
+        env:
+          TARGET: ${{ matrix.target }}
+          STABLE_GIT_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          options=(--config=release --jobs=3)
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            options+=(--macos_minimum_os=14.0)
+          fi
+          bazel build "${options[@]}" \
+            //codex-rs/voice-host:codex-voice-host //third_party/voice:native_runtime
+          case "$TARGET" in
+            x86_64-unknown-linux-musl) prefix=linux_x86_64 ;;
+            aarch64-unknown-linux-musl) prefix=linux_aarch64 ;;
+            x86_64-apple-darwin) prefix=macos_x86_64 ;;
+            aarch64-apple-darwin) prefix=macos_aarch64 ;;
+          esac
+          voice_target="${TARGET%-musl}"
+          if [[ "$TARGET" == *-musl ]]; then voice_target+="-gnu"; fi
+          python3 third_party/voice/release_runtime.py stage --target "$voice_target" \
+            --source "bazel-bin/third_party/voice/native_runtime_$prefix" \
+            --output "$RUNNER_TEMP/lemex-voice-runtime"
+          python3 third_party/voice/release_runtime.py seal --target "$voice_target" \
+            --output "$RUNNER_TEMP/lemex-voice-runtime"
       - uses: ./.github/actions/build-cargo-package-binaries
         with:
           target: ${{ matrix.target }}
@@ -108,7 +139,9 @@ jobs:
         run: |
           python3 scripts/npm_release.py pack-runtime \
             --version "$RELEASE_VERSION" --package "$PACKAGE" \
-            --binaries-dir "$CARGO_TARGET_DIR/$TARGET/release" --output-dir dist/npm
+            --binaries-dir "$CARGO_TARGET_DIR/$TARGET/release" --output-dir dist/npm \
+            --voice-helper bazel-bin/codex-rs/voice-host/codex-voice-host \
+            --voice-runtime "$RUNNER_TEMP/lemex-voice-runtime" --build-commit "$GITHUB_SHA"
           python3 codex-cli/scripts/build_npm_package.py --package lemex \
             --version "$RELEASE_VERSION" --pack-output "$RUNNER_TEMP/lemex.tgz"
           python3 scripts/smoke_npm_release.py --launcher "$RUNNER_TEMP/lemex.tgz" \

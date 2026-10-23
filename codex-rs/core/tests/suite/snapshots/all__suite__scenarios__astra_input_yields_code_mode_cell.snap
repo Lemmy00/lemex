@@ -22,7 +22,7 @@ Scenario: Astra continues after new user input yields a running code cell, then 
           - function/spawn_agent
           - function/wait_agent
 01:message/developer:
-    You are Codex, an agent based on GPT-6. You and the user share one workspace, and your job is to collabo...them until their intended goal is completely handled. [hash=efa50f074efa5803]
+    You are Lemex, an agent based on GPT-6. You and the user share one workspace, and your job is to collabo...them until their intended goal is completely handled. [hash=efa50f074efa5803]
 
     # When to ask the user for permission
 

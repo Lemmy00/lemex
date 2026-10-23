@@ -111,7 +111,7 @@ pub(super) fn mcp_init_error_display(
     } else if error.is_authentication_required() {
         let recovery_hint =
             if config.is_some_and(|config| matches!(config.auth, McpServerAuth::EmaAuth)) {
-                "Sign in to your enterprise provider in Codex, then start a new thread.".to_string()
+                "Sign in to your enterprise provider in Lemex, then start a new thread.".to_string()
             } else if config.is_some_and(|config| !config.is_local_environment()) {
                 "Use your client's MCP OAuth sign-in flow.".to_string()
             } else {

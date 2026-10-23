@@ -59,7 +59,7 @@ fn storage_requirements_reject_relative_paths_and_non_path_values() {
         "[application.storage]\ndefault_project_parent = 'relative'",
         "[application.storage]\nprojectless_workspace_root = 'relative'",
         "[application.storage]\ndefault_project_parent = false",
-        "[application.storage]\ndefault_project_parent = '${HOME}/Codex'",
+        "[application.storage]\ndefault_project_parent = '${HOME}/Lemex'",
     ] {
         assert!(toml::from_str::<ConfigRequirementsToml>(contents).is_err());
     }

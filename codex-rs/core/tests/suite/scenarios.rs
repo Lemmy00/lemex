@@ -321,7 +321,7 @@ async fn realtime_attachment_replacement_preserves_handoff_context() -> Result<(
     insta::assert_snapshot!(
         "realtime_attachment_replacement",
         context_snapshot::format_request_history_snapshot(
-            "A replacement fences an older pending connection and stale stops; only the selected call starts a Codex handoff.",
+            "A replacement fences an older pending connection and stale stops; only the selected call starts a Lemex handoff.",
             &requests,
             &ContextSnapshotOptions::default().rewrite_known_segments(),
         )
