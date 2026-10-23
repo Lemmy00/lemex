@@ -145,6 +145,41 @@ class NpmReleaseTests(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         self.assertNotIn("--tag=latest", run.call_args.args[0])
 
+    def test_pending_native_versions_prevent_launcher_publication(self):
+        self.release_archives()
+        def command(args, **kwargs):
+            return subprocess.CompletedProcess(args, 1, '{"error":{"code":"E404"}}', "") if args[1] == "view" else subprocess.CompletedProcess(args, 0)
+        with patch.object(release.subprocess, "run", side_effect=command) as run, patch.object(
+                release, "wait_for_publication", side_effect=RuntimeError("scan pending")):
+            with self.assertRaisesRegex(RuntimeError, "scan pending"):
+                release.publish(self.root, "0.1.0", False)
+        publishes = [c.args[0] for c in run.call_args_list if c.args[0][1] == "publish"]
+        self.assertEqual(len(publishes), 4)
+        self.assertTrue(all("--tag=latest" not in command for command in publishes))
+
+    def test_registry_scan_delay_is_polled_until_exact_artifact_is_available(self):
+        path = self.archive("scan", {"name": release.NPM_NAME, "version": "0.1.0"}, {})
+        integrity = "sha512-" + release.base64.b64encode(hashlib.sha512(path.read_bytes()).digest()).decode()
+        metadata = {"name": release.NPM_NAME, "version": "0.1.0", "dist": {"integrity": integrity}}
+        unavailable = release.HTTPError("registry", 404, "scan pending", {}, None)
+        with patch.object(release, "urlopen", side_effect=[unavailable, io.BytesIO(json.dumps(metadata).encode())]), patch.object(release.time, "sleep") as sleep:
+            release.wait_for_publication([(path, "0.1.0")])
+        sleep.assert_called_once()
+
+    def test_registry_integrity_mismatch_is_never_treated_as_scan_delay(self):
+        path = self.archive("scan", {"name": release.NPM_NAME, "version": "0.1.0"}, {})
+        metadata = {"name": release.NPM_NAME, "version": "0.1.0", "dist": {"integrity": "different"}}
+        with patch.object(release, "urlopen", return_value=io.BytesIO(json.dumps(metadata).encode())), patch.object(release.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "differs from validated artifact"):
+                release.wait_for_publication([(path, "0.1.0")])
+        sleep.assert_not_called()
+
+    def test_registry_timeout_retains_pending_version_for_recovery(self):
+        path = self.archive("scan", {"name": release.NPM_NAME, "version": "0.1.0"}, {})
+        with patch.object(release, "urlopen", side_effect=release.HTTPError("registry", 404, "pending", {}, None)):
+            with self.assertRaisesRegex(RuntimeError, "retain this version and its artifacts"):
+                release.wait_for_publication([(path, "0.1.0")], timeout=0)
+
     def test_existing_version_must_match_exact_tarball(self):
         self.release_archives()
         existing = subprocess.CompletedProcess([], 0, '"sha512-different"', "")

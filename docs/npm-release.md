@@ -99,7 +99,16 @@ creates an audio SDP offer, and shuts the helper down. This does not open audio
 devices or prove a live backend conversation. The public-release receipt seals
 verified runtime bytes; it does not assert Apple signing or notarization.
 The final assembly validates and dry-runs the complete release before the
-optional publishing job runs.
+optional publishing job runs. npm scans accepted uploads before they become
+installable; an upload success or an initial 404 is not a completed publication.
+The publishing job waits up to 30 minutes for all four native versions to become
+publicly available with their exact artifact integrity before uploading the
+launcher, then waits for the launcher too. This lets native scans run in parallel
+and prevents moving `latest` while its dependencies are unavailable.
+
+If availability times out, inspect npm's scan/review status and retain the same
+version and artifacts. Do not republish accepted uploads just because they return
+404 during scanning. See [npm's publication availability explanation](https://github.blog/changelog/2026-07-28-npm-publish-time-malware-scanning-and-dual-use-metadata/).
 
 The workflow stamps the chosen version into the Cargo workspace and its local
 lockfile entries without changing third-party dependency pins. The source npm

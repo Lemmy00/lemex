@@ -13,6 +13,10 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 from pathlib import PurePosixPath
 import tomllib
 
@@ -240,10 +244,52 @@ def release_tarballs(directory: Path, version: str) -> list[tuple[Path, str]]:
     return result
 
 
+def wait_for_publication(packages: list[tuple[Path, str]], *, timeout: float = 1800,
+                         interval: float = 30) -> None:
+    """Wait for npm's asynchronous scans without republishing accepted versions."""
+    pending = {}
+    for path, version in packages:
+        with path.open("rb") as source:
+            pending[version] = "sha512-" + base64.b64encode(hashlib.file_digest(source, "sha512").digest()).decode()
+    deadline = time.monotonic() + timeout
+    while pending:
+        for version, integrity in list(pending.items()):
+            url = (f"{REGISTRY}{quote(NPM_NAME, safe='@')}/{quote(version, safe='')}"
+                   f"?lemex-release-check={time.time_ns()}")
+            try:
+                request = Request(url, headers={"Accept": "application/json", "Cache-Control": "no-cache"})
+                with urlopen(request, timeout=30) as response:
+                    metadata = json.load(response)
+            except HTTPError as error:
+                if error.code in {404, 408, 429} or error.code >= 500:
+                    continue
+                raise
+            except (URLError, TimeoutError):
+                continue
+            if (metadata.get("name") != NPM_NAME or metadata.get("version") != version
+                    or metadata.get("dist", {}).get("integrity") != integrity):
+                raise RuntimeError(f"Registry package differs from validated artifact: {NPM_NAME}@{version}")
+            del pending[version]
+            print(f"Verified public registry availability and integrity: {NPM_NAME}@{version}", flush=True)
+        if pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"Registry availability timed out for {', '.join(pending)}. "
+                    "npm scanning or manual review may still be pending; retain this version and its artifacts."
+                )
+            print(f"Waiting for npm registry availability: {', '.join(pending)}", flush=True)
+            time.sleep(min(interval, remaining))
+
+
 def publish(directory: Path, version: str, dry_run: bool) -> None:
     packages = release_tarballs(directory, version)
     tag = "next" if "-" in version else "latest"
     for tarball, package_version in packages:
+        if package_version == version and not dry_run:
+            # Successful upload does not imply an installable dependency: npm
+            # scans each version before exposing it to public registry clients.
+            wait_for_publication(packages[:-1])
         # Publish native variants under a temporary tag, then publish the launcher
         # last. A failed native publish must never move the public latest tag.
         package_tag = tag if package_version == version else f"release-{version}"
@@ -265,6 +311,8 @@ def publish(directory: Path, version: str, dry_run: bool) -> None:
         if dry_run:
             command.append("--dry-run")
         subprocess.run(command, check=True)
+    if not dry_run:
+        wait_for_publication(packages[-1:])
 
 
 def main() -> None:
