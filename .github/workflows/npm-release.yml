@@ -16,6 +16,11 @@ on:
         required: false
         default: ""
 
+      recover_run_id:
+        description: Recover successful platform artifacts from a completed failed or cancelled run
+        required: false
+        default: ""
+
 permissions:
   contents: read
   actions: read
@@ -26,6 +31,9 @@ concurrency:
 
 jobs:
   check:
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      source_commit: ${{ steps.plan.outputs.source_commit }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -41,6 +49,17 @@ jobs:
       - run: python3 -m unittest discover -s scripts -p 'test_smoke_voice_runtime.py'
       - run: python3 -m unittest discover -s third_party/voice -p 'test_assemble_package.py'
       - run: python3 -m unittest discover -s .github/scripts -p 'test_check_npm_release_reuse.py'
+      - run: python3 -m unittest discover -s .github/scripts -p 'test_plan_npm_release.py'
+      - run: python3 -m unittest discover -s .github/scripts -p 'test_stage_npm_binaries.py'
+      - name: Plan same-source builds and retained platform artifacts
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          RECOVER_RUN_ID: ${{ inputs.recover_run_id }}
+          REUSE_RUN_ID: ${{ inputs.reuse_run_id }}
+        run: python3 .github/scripts/plan_npm_release.py
       - name: Validate release version
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -59,28 +78,16 @@ jobs:
   security:
     uses: ./.github/workflows/cargo-deny.yml
 
-  build:
+  voice:
     needs: [check, security]
     if: inputs.reuse_run_id == ''
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 240
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
-            package: lemex-linux-x64
-          - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-            package: lemex-linux-arm64
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-            package: lemex-darwin-x64
-          - runner: macos-15
-            target: aarch64-apple-darwin
-            package: lemex-darwin-arm64
+      matrix: ${{ fromJSON(needs.check.outputs.matrix) }}
     env:
+      BUILD_COMMIT: ${{ needs.check.outputs.source_commit }}
       RELEASE_VERSION: ${{ inputs.version }}
       CARGO_BUILD_JOBS: "3"
       CARGO_INCREMENTAL: "0"
@@ -91,6 +98,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          ref: ${{ needs.check.outputs.source_commit }}
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
@@ -106,7 +114,7 @@ jobs:
       - name: Build and seal native voice runtime
         env:
           TARGET: ${{ matrix.target }}
-          STABLE_GIT_COMMIT: ${{ github.sha }}
+          STABLE_GIT_COMMIT: ${{ needs.check.outputs.source_commit }}
         run: |
           set -euo pipefail
           options=(--config=release --jobs=3)
@@ -131,10 +139,117 @@ jobs:
             --output "$RUNNER_TEMP/lemex-voice-runtime"
           python3 third_party/voice/release_runtime.py seal --target "$voice_target" \
             --output "$RUNNER_TEMP/lemex-voice-runtime"
+      - name: Stage voice build outputs
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          cp bazel-bin/codex-rs/voice-host/codex-voice-host "$RUNNER_TEMP/lemex-voice-host"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/$PACKAGE-voice.tar.gz" \
+            lemex-voice-host lemex-voice-runtime
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: voice-${{ matrix.package }}
+          path: ${{ runner.temp }}/${{ matrix.package }}-voice.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  binaries:
+    needs: [check, security]
+    if: inputs.reuse_run_id == ''
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.check.outputs.matrix) }}
+    env:
+      BUILD_COMMIT: ${{ needs.check.outputs.source_commit }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      CARGO_BUILD_JOBS: "3"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    steps:
+      # Keep the recovery helper from the workflow revision, then build the
+      # original source commit used by the retained platform packages.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Preserve release orchestration helper
+        run: cp .github/scripts/stage_npm_binaries.py "$RUNNER_TEMP/stage_npm_binaries.py"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.check.outputs.source_commit }}
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Set native release version
+        run: python3 scripts/npm_release.py set-version --version "$RELEASE_VERSION"
       - uses: ./.github/actions/build-cargo-package-binaries
         with:
           target: ${{ matrix.target }}
           binaries: lemex lemex-code-mode-host
+      - name: Stage stripped CLI build outputs
+        env:
+          TARGET: ${{ matrix.target }}
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          python3 "$RUNNER_TEMP/stage_npm_binaries.py"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: binaries-${{ matrix.package }}
+          path: ${{ runner.temp }}/${{ matrix.package }}-binaries.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  build:
+    needs: [check, security, voice, binaries]
+    if: inputs.reuse_run_id == ''
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.check.outputs.matrix) }}
+    env:
+      BUILD_COMMIT: ${{ needs.check.outputs.source_commit }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      CARGO_BUILD_JOBS: "3"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.check.outputs.source_commit }}
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Set native release version
+        run: python3 scripts/npm_release.py set-version --version "$RELEASE_VERSION"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: voice-${{ matrix.package }}
+          path: ${{ runner.temp }}/voice-input
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: binaries-${{ matrix.package }}
+          path: ${{ runner.temp }}/binary-input
+      - name: Unpack same-source build outputs
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/voice-input/$PACKAGE-voice.tar.gz"
+          mkdir -p "$RUNNER_TEMP/lemex-binaries"
+          tar -C "$RUNNER_TEMP/lemex-binaries" -xzf "$RUNNER_TEMP/binary-input/$PACKAGE-binaries.tar.gz"
       - name: Pack native runtime and launcher
         env:
           PACKAGE: ${{ matrix.package }}
@@ -142,9 +257,9 @@ jobs:
         run: |
           python3 scripts/npm_release.py pack-runtime \
             --version "$RELEASE_VERSION" --package "$PACKAGE" \
-            --binaries-dir "$CARGO_TARGET_DIR/$TARGET/release" --output-dir dist/npm \
-            --voice-helper bazel-bin/codex-rs/voice-host/codex-voice-host \
-            --voice-runtime "$RUNNER_TEMP/lemex-voice-runtime" --build-commit "$GITHUB_SHA"
+            --binaries-dir "$RUNNER_TEMP/lemex-binaries" --output-dir dist/npm \
+            --voice-helper "$RUNNER_TEMP/lemex-voice-host" \
+            --voice-runtime "$RUNNER_TEMP/lemex-voice-runtime" --build-commit "$BUILD_COMMIT"
           python3 codex-cli/scripts/build_npm_package.py --package lemex \
             --version "$RELEASE_VERSION" --pack-output "$RUNNER_TEMP/lemex.tgz"
           python3 scripts/smoke_npm_release.py --launcher "$RUNNER_TEMP/lemex.tgz" \
@@ -175,6 +290,15 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         if: inputs.reuse_run_id == ''
         with:
+          pattern: npm-lemex-*
+          merge-multiple: true
+          path: dist/npm
+      - name: Download retained successful platform packages
+        if: inputs.recover_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.recover_run_id }}
           pattern: npm-lemex-*
           merge-multiple: true
           path: dist/npm
