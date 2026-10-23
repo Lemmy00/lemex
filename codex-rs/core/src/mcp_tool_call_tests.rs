@@ -40,6 +40,7 @@ use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
+use codex_protocol::turn_input::ResponsesApiClientMetadataUpdate;
 use codex_utils_path_uri::PathUri;
 use core_test_support::hooks::trusted_config_layer_stack;
 use core_test_support::responses::ev_assistant_message;
@@ -48,6 +49,9 @@ use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_sdk::trace::InMemorySpanExporter;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -56,6 +60,7 @@ use tempfile::tempdir;
 use tracing::Instrument;
 use tracing::Level;
 use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::prelude::*;
 use tracing_test::internal::MockWriter;
 
 fn annotations(
@@ -498,26 +503,40 @@ async fn mcp_tool_call_span_records_expected_fields() {
     );
 }
 
+#[test_case::test_case(Some("RATE_LIMITED"), None, None, "RATE_LIMITED"; "structured error")]
+#[test_case::test_case(None, Some("credential-sentinel"), None, "unknown"; "sensitive metadata")]
+#[test_case::test_case(None, None, Some("transport_closed"), "transport_closed"; "closed transport")]
 #[tokio::test]
-async fn mcp_tool_call_span_records_error_type_and_error_code() {
-    let buffer: &'static std::sync::Mutex<Vec<u8>> =
-        Box::leak(Box::new(std::sync::Mutex::new(Vec::new())));
-    let subscriber = tracing_subscriber::fmt()
-        .with_level(true)
-        .with_ansi(false)
-        .with_max_level(Level::TRACE)
-        .with_span_events(FmtSpan::FULL)
-        .with_writer(MockWriter::new(buffer))
-        .finish();
+async fn mcp_tool_call_span_records_error_type_and_error_code(
+    structured_code: Option<&str>,
+    metadata_code: Option<&str>,
+    request_error_code: Option<&str>,
+    expected_code: &str,
+) {
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("mcp-error-test")));
     let _guard = tracing::subscriber::set_default(subscriber);
 
     let (session, turn_context) = make_session_and_context().await;
     let result = Ok(CallToolResult {
         content: Vec::new(),
-        structured_content: Some(serde_json::json!({"error_code": "RATE_LIMITED"})),
+        structured_content: structured_code.map(|code| serde_json::json!({"error_code": code})),
         is_error: Some(true),
-        meta: None,
+        meta: metadata_code.map(|code| {
+            serde_json::json!({
+                "codex/telemetry": {"error_code": code},
+            })
+        }),
     });
+    let result = if request_error_code.is_some() {
+        Err("request failed".to_string())
+    } else {
+        result
+    };
     let span = mcp_tool_call_span(
         &session,
         &turn_context,
@@ -532,16 +551,42 @@ async fn mcp_tool_call_span_records_error_type_and_error_code() {
     );
 
     async {
-        record_mcp_result_span_telemetry(&Span::current(), &result);
+        record_mcp_result_span_telemetry(&Span::current(), &result, request_error_code);
     }
     .instrument(span)
     .await;
 
-    let logs = String::from_utf8(buffer.lock().expect("buffer lock").clone()).expect("utf8 logs");
+    provider.force_flush().expect("flush spans");
+    let spans = exporter.get_finished_spans().expect("exported spans");
+    let span = spans
+        .iter()
+        .find(|span| span.name == "mcp.tools.call")
+        .expect("MCP tool span");
+    let error_codes = span
+        .attributes
+        .iter()
+        .filter(|attribute| attribute.key.as_str() == "codex.mcp.error.code")
+        .map(|attribute| attribute.value.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(error_codes, vec![expected_code.to_string()]);
+    let error_types = span
+        .attributes
+        .iter()
+        .filter(|attribute| attribute.key.as_str() == "error.type")
+        .map(|attribute| attribute.value.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        error_types,
+        vec![if request_error_code.is_some() {
+            "mcp_request".to_string()
+        } else {
+            "tool_result".to_string()
+        }]
+    );
     assert!(
-        logs.contains("error.type=\"tool_result\"")
-            && logs.contains("codex.mcp.error.code=\"RATE_LIMITED\""),
-        "missing MCP tool error span fields\nlogs:\n{logs}"
+        span.attributes
+            .iter()
+            .all(|attribute| !attribute.value.to_string().contains("credential-sentinel"))
     );
 }
 
@@ -580,7 +625,11 @@ async fn mcp_result_telemetry_span_logs(meta: Option<serde_json::Value>) -> Stri
         );
 
         async {
-            record_mcp_result_span_telemetry(&Span::current(), &result);
+            record_mcp_result_span_telemetry(
+                &Span::current(),
+                &result,
+                /*request_error_code*/ None,
+            );
         }
         .instrument(span)
         .await;
@@ -1086,15 +1135,19 @@ async fn mcp_tool_call_request_meta_includes_turn_metadata_for_custom_server() {
     let (_, turn_context) = make_session_and_context().await;
     let turn_context = Arc::new(turn_context);
     let step_context = StepContext::for_test(Arc::clone(&turn_context));
+    let client_metadata = HashMap::from([
+        (
+            "node_repl_auto_review_required".to_string(),
+            "true".to_string(),
+        ),
+        ("node_repl_disabled".to_string(), "true".to_string()),
+    ]);
     turn_context
         .turn_metadata_state
-        .set_responsesapi_client_metadata(HashMap::from([
-            (
-                "node_repl_auto_review_required".to_string(),
-                "true".to_string(),
-            ),
-            ("node_repl_disabled".to_string(), "true".to_string()),
-        ]));
+        .update_responsesapi_client_metadata(ResponsesApiClientMetadataUpdate {
+            replacement: Some(client_metadata),
+            ..Default::default()
+        });
     let expected_turn_metadata = expected_mcp_turn_metadata(&turn_context);
 
     let meta = build_mcp_tool_call_request_meta(
@@ -1307,6 +1360,7 @@ async fn mcp_sandbox_cwd_uses_matching_server_environment_uri() -> anyhow::Resul
                 cwd: secondary_cwd.clone(),
                 workspace_roots: Vec::new(),
                 config: EnvironmentConfigState::Ready(EnvironmentConfig {
+                    environment_hooks: Default::default(),
                     allow_login_shell: true,
                     workspace_roots: Vec::new(),
                     windows_sandbox_level: turn_context.windows_sandbox_level,
@@ -2191,7 +2245,11 @@ async fn dispatched_mcp_approval_with_closed_response_aborts() {
     *session.active_turn.lock().await = None;
     assert_eq!(
         approval.await.expect("approval task should complete"),
-        ReviewDecision::Abort
+        ApprovalResolution {
+            decision: ReviewDecision::Abort,
+            source: ApprovalResolutionSource::User,
+            cancellation_reason: Some(McpApprovalCancellationReason::Interrupted),
+        }
     );
 }
 
@@ -2824,7 +2882,14 @@ async fn permission_request_hook_allows_mcp_tool_call() {
     )
     .await;
 
-    assert_eq!(decision, Some(ReviewDecision::Approved));
+    assert_eq!(
+        decision,
+        Some(McpToolApproval {
+            decision: ReviewDecision::Approved,
+            source: Some(ApprovalResolutionSource::Hook),
+            cancellation_reason: None,
+        })
+    );
     let log = std::fs::read_to_string(log_path).expect("read MCP permission hook log");
     let inputs = log
         .lines()
@@ -2895,7 +2960,14 @@ async fn permission_request_hook_uses_hook_tool_name_without_metadata() {
     )
     .await;
 
-    assert_eq!(decision, Some(ReviewDecision::Approved));
+    assert_eq!(
+        decision,
+        Some(McpToolApproval {
+            decision: ReviewDecision::Approved,
+            source: Some(ApprovalResolutionSource::Hook),
+            cancellation_reason: None,
+        })
+    );
     let log = std::fs::read_to_string(log_path).expect("read MCP permission hook log");
     let inputs = log
         .lines()
@@ -2982,7 +3054,14 @@ async fn permission_request_hook_runs_after_remembered_mcp_approval() {
     )
     .await;
 
-    assert_eq!(decision, Some(ReviewDecision::Approved));
+    assert_eq!(
+        decision,
+        Some(McpToolApproval {
+            decision: ReviewDecision::Approved,
+            source: None,
+            cancellation_reason: None,
+        })
+    );
     assert!(
         !log_path.exists(),
         "remembered approval should skip PermissionRequest hooks"
@@ -3082,7 +3161,12 @@ async fn strict_auto_review_forces_guardian_for_mcp_policy_skip() {
     )
     .await;
 
-    let Some(ReviewDecision::Denied { rejection: message }) = decision else {
+    let Some(McpToolApproval {
+        decision: ReviewDecision::Denied { rejection: message },
+        source: Some(ApprovalResolutionSource::Guardian),
+        cancellation_reason: None,
+    }) = decision
+    else {
         panic!("guardian-denied MCP approval should carry a rejection message");
     };
     assert!(message.contains("Reason: The tool call would expose private calendar data"));
@@ -3193,7 +3277,11 @@ async fn assert_mcp_user_approval_persistence(
             .await
             .expect("MCP approval task timed out")
             .expect("MCP approval task failed"),
-        Some(expected_decision),
+        Some(McpToolApproval {
+            decision: expected_decision,
+            source: Some(ApprovalResolutionSource::User),
+            cancellation_reason: None,
+        }),
     );
 }
 

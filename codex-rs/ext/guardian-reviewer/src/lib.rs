@@ -3,6 +3,9 @@
 //! The host supplies review attempts and enforces the resulting decision on the bound action.
 
 mod assessment;
+mod blocking;
+pub use blocking::ReviewBlocking;
+pub use blocking::ReviewBlockingTurn;
 mod circuit_breaker;
 mod completion;
 mod conversation;
@@ -59,6 +62,7 @@ pub use execution::start_review_turn;
 pub use execution::wait_for_guardian_review;
 pub use settings::ReviewerConfig;
 pub use settings::ReviewerTurn;
+pub use settings::guardian_cyber_access_program;
 pub use settings::reviewer_permission_profile;
 pub use settings::reviewer_tool_policy;
 

@@ -3191,6 +3191,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
                 root_turn_id: None,
                 tool_output: None,
                 responsesapi_client_metadata: None,
+                responsesapi_client_metadata_patch: None,
                 additional_context: None,
                 cwd: Some(first_cwd.clone()),
                 runtime_workspace_roots: None,
@@ -3246,6 +3247,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
                 root_turn_id: None,
                 tool_output: None,
                 responsesapi_client_metadata: None,
+                responsesapi_client_metadata_patch: None,
                 additional_context: None,
                 cwd: None,
                 runtime_workspace_roots: None,
@@ -4439,6 +4441,7 @@ async fn direct_input_to_multi_agent_v2_subagent_is_rejected(
                 text_elements: Vec::new(),
             }],
             responsesapi_client_metadata: None,
+            responsesapi_client_metadata_patch: None,
             additional_context: None,
             expected_turn_id: "any-active-turn".to_string(),
         })

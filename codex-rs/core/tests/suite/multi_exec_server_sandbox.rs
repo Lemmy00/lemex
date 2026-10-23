@@ -1,11 +1,9 @@
 use codex_core::TurnInputRequest;
 use codex_protocol::protocol::TurnEnvironmentRequests;
-use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::Context;
 use anyhow::Result;
-use anyhow::bail;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
@@ -15,6 +13,7 @@ use codex_protocol::protocol::ThreadSettingsOverrides;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::user_input::UserInput;
 use codex_utils_path_uri::PathUri;
+use core_test_support::exec_server::ExecServerProcess;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -28,12 +27,6 @@ use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::BufReader;
-use tokio::process::Child;
-use tokio::process::ChildStdout;
-use tokio::process::Command;
-use tokio::time::Instant;
 use tokio::time::timeout;
 
 const FIRST_ENVIRONMENT_ID: &str = "first";

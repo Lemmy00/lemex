@@ -274,6 +274,19 @@ impl GoalRuntimeHandle {
         // Hold this through accounting and the status update so external goal
         // mutations and idle continuation cannot interleave between them.
         let _goal_state_permit = self.goal_state_permit().await?;
+        let accounting = &self.inner.accounting_state;
+        let _turn_start_permit = if matches!(reason, ActiveGoalStopReason::EmptyResponse)
+            && accounting.interrupted_turn_id().as_deref() == Some(turn_id)
+        {
+            Some(
+                accounting
+                    .turn_start_permit()
+                    .await
+                    .map_err(|err| err.to_string())?,
+            )
+        } else {
+            None
+        };
         let Some(accounting_goal_id) = self
             .inner
             .accounting_state
@@ -297,9 +310,7 @@ impl GoalRuntimeHandle {
                 None,
             ),
             ActiveGoalStopReason::EmptyResponse => {
-                let Some(expected_goal_id) =
-                    self.inner.accounting_state.empty_response_goal(turn_id)
-                else {
+                let Some(expected_goal_id) = accounting.empty_response_goal(turn_id) else {
                     return Ok(());
                 };
                 if accounting_goal_id != expected_goal_id {
@@ -491,6 +502,7 @@ impl GoalRuntimeHandle {
             .inner
             .accounting_state
             .current_turn_id()
+            .or_else(|| self.inner.accounting_state.interrupted_turn_id())
             .is_some_and(|turn_id| {
                 self.inner
                     .accounting_state

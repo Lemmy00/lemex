@@ -85,7 +85,7 @@ pub struct CodexHarnessMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_source: Option<RetainedSource>,
 
-    /// Whether a developer message was supplied by an app-server client.
+    /// Whether a developer message was supplied by a client or a client requested tool-output retention.
     #[serde(default)]
     pub client_authored: bool,
 
@@ -213,13 +213,13 @@ impl Borrow<ResponseItem> for ResponseItemEnvelope {
 /// Persisted rollout item used by core history and rollout storage.
 #[derive(Debug, Clone)]
 pub enum RolloutItem {
-    SessionMeta(SessionMetaLine),
+    SessionMeta(Box<SessionMetaLine>),
     ResponseItem(ResponseItemEnvelope),
     InterAgentCommunication(InterAgentCommunication),
     InterAgentCommunicationMetadata {
         trigger_turn: bool,
     },
-    Compacted(CompactedItem),
+    Compacted(Box<CompactedItem>),
     TurnContext(TurnContextItem),
     TokenUsageRecord(TokenUsageRecord),
     WorldState(WorldStateItem),
@@ -346,9 +346,13 @@ impl JsonSchema for CompactedItem {
 impl From<CompactedItem> for ResponseItem {
     fn from(value: CompactedItem) -> Self {
         ResponseItem::Message {
+            status: None,
+            encrypted_content: None,
             id: None,
             role: "assistant".to_string(),
             content: vec![ContentItem::OutputText {
+                annotations: None,
+                logprobs: None,
                 text: value.message,
             }],
             phase: None,

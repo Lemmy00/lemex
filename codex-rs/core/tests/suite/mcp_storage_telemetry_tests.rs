@@ -58,7 +58,7 @@ fn storage_loads(metrics: &MetricsClient) -> Result<BTreeMap<String, u64>> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recovery_without_a_snapshot_keeps_each_threads_originator() -> Result<()> {
     skip_if_no_network!(Ok(()));
-    // Isolate global metrics and CODEX_HOME from other integration tests.
+    // Isolate global metrics and LEMEX_HOME from other integration tests.
     if std::env::var_os("CODEX_MCP_TELEMETRY_TEST_CHILD").is_none() {
         let home = tempfile::tempdir()?;
         let output = tokio::process::Command::new(std::env::current_exe()?)
@@ -111,7 +111,7 @@ async fn recovery_without_a_snapshot_keeps_each_threads_originator() -> Result<(
         let thread = fixture
             .thread_manager
             .start_thread(StartThreadOptions {
-                initial_history: InitialHistory::Forked(vec![RolloutItem::SessionMeta(
+                initial_history: InitialHistory::Forked(vec![RolloutItem::SessionMeta(Box::new(
                     SessionMetaLine {
                         meta: SessionMeta {
                             originator: originator.into(),
@@ -119,7 +119,7 @@ async fn recovery_without_a_snapshot_keeps_each_threads_originator() -> Result<(
                         },
                         git: None,
                     },
-                )]),
+                ))]),
                 environments: Some(
                     fixture
                         .codex

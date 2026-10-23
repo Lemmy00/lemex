@@ -1,7 +1,7 @@
 //! Exercise local dynamic tag collection and bounded updates.
 
-use super::*;
 use crate::CodexFeedback;
+use crate::*;
 use pretty_assertions::assert_eq;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -82,4 +82,44 @@ fn bounded_dynamic_tags_still_update_existing_values() {
     );
     expected.insert("feature.test_0".to_string(), "false".to_string());
     assert_eq!(feedback.snapshot(/*session_id*/ None).tags, expected);
+}
+
+#[test]
+fn local_feedback_export_obeys_log_consent_and_preserves_existing_files() {
+    for include_logs in [false, true] {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("feedback.zip");
+        let feedback = CodexFeedback::new();
+        feedback.report_failure("selected local log");
+        let snapshot = feedback.snapshot(None);
+        let options = || FeedbackUploadOptions {
+            classification: "bug",
+            reason: Some("local diagnostics"),
+            tags: None,
+            include_logs,
+            extra_attachments: Vec::new(),
+            extra_attachment_paths: &[],
+            session_source: None,
+            logs_override: None,
+        };
+        snapshot.save_feedback(options(), &path).unwrap();
+        let original = fs::read(&path).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&original)).unwrap();
+        let mut report = String::new();
+        archive
+            .by_name("report.json")
+            .unwrap()
+            .read_to_string(&mut report)
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&report).unwrap()["classification"],
+            "bug"
+        );
+        assert_eq!(
+            archive.by_name("attachments/0000/codex-logs.log").is_ok(),
+            include_logs
+        );
+        assert!(snapshot.save_feedback(options(), &path).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
 }

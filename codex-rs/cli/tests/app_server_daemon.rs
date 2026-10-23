@@ -1,7 +1,13 @@
+//! Managed daemon lifecycle through the public CLI, using isolated standalone fixtures.
 #![cfg(unix)]
 
-use std::path::PathBuf;
-use std::process::Child;
+#[path = "app_server_daemon/support.rs"]
+mod support;
+
+use support::TestDaemon;
+use support::signal;
+use support::wait_for_exit;
+
 use std::process::Command;
 use std::process::Stdio;
 use std::time::Duration;
@@ -10,7 +16,6 @@ use std::time::Instant;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::ensure;
-use codex_utils_cargo_bin::copy_executable;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -156,30 +161,136 @@ fn managed_daemon_restarts_from_deleted_working_directory() -> Result<()> {
     Ok(())
 }
 
-fn signal(pid: u32, signal: libc::c_int) -> Result<()> {
-    let raw_pid = libc::pid_t::try_from(pid).context("pid out of range")?;
-    ensure!(
-        unsafe { libc::kill(raw_pid, signal) } == 0,
-        "failed to signal pid {pid}: {}",
-        std::io::Error::last_os_error()
-    );
+#[test]
+fn bootstrap_updater_is_ready_in_deep_codex_home() -> Result<()> {
+    let mut daemon = TestDaemon::new()?;
+    let deep_home = tempfile::Builder::new()
+        .prefix(&"deep-codex-home-".repeat(8))
+        .tempdir_in("/tmp")?;
+    for name in ["packages", "app-server-daemon"] {
+        std::fs::rename(daemon.home.path().join(name), deep_home.path().join(name))?;
+    }
+    daemon.home = deep_home;
+    let state = daemon.home.path().join("app-server-daemon");
+    std::fs::write(
+        state.join("settings.json"),
+        br#"{"shutdownGraceSeconds":0}"#,
+    )?;
+    let socket = state.join("app-server-updater.sock");
+    let result = daemon.lifecycle("bootstrap")?;
+    assert_eq!(result["autoUpdateEnabled"], true);
+    assert_eq!(result["status"], "bootstrapped");
+    signal(daemon.pid("app-server-updater.pid")?, /*signal*/ 0)?;
+    let target = socket.canonicalize()?;
+    let _connection = std::os::unix::net::UnixStream::connect(target)?;
+    assert_eq!(daemon.lifecycle("version")?["status"], "running");
     Ok(())
 }
 
-fn wait_for_exit(pid: u32) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let output = Command::new("/bin/ps")
-            .args(["-p", &pid.to_string(), "-o", "stat="])
-            .output()
-            .context("failed to invoke ps")?;
-        let state = String::from_utf8_lossy(&output.stdout);
-        if !output.status.success() || state.trim().starts_with('Z') {
-            return Ok(());
-        }
-        ensure!(Instant::now() < deadline, "pid {pid} did not exit: {state}");
-        std::thread::sleep(Duration::from_millis(50));
+#[test]
+fn bootstrap_reports_updater_bind_failure() -> Result<()> {
+    let daemon = TestDaemon::new()?;
+    let state = daemon.home.path().join("app-server-daemon");
+    std::fs::write(
+        state.join("settings.json"),
+        br#"{"shutdownGraceSeconds":0}"#,
+    )?;
+    let socket = state.join("app-server-updater.sock");
+    std::fs::write(&socket, b"not a socket")?;
+    let result = daemon
+        .command()
+        .args(["app-server", "daemon", "bootstrap"])
+        .output()?;
+    assert!(!result.status.success());
+    assert_eq!(std::fs::read(socket)?, b"not a socket");
+    assert_eq!(daemon.lifecycle("version")?["status"], "running");
+    Ok(())
+}
+
+#[test]
+fn explicit_restart_applies_feature_overrides_and_preserves_saved_settings() -> Result<()> {
+    let daemon = TestDaemon::new()?;
+    let settings_path = daemon.home.path().join("app-server-daemon/settings.json");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_vec(&serde_json::json!({
+            "shutdownGraceSeconds": 0,
+            "updater": { "autoUpdateEnabled": false },
+            "featureOverrides": {
+                "api_key_model_discovery": false,
+                "auth_elicitation": true,
+                "connectors": true,
+                "apps": true
+            }
+        }))?,
+    )?;
+    let mut previous_pid = None;
+    // Start from a stopped daemon, change running settings, and restart again
+    // with omitted flags. Every explicit restart replaces the process.
+    for (args, discovery) in [
+        (
+            vec![
+                "--enable",
+                "api_key_model_discovery",
+                "--disable",
+                "connectors",
+                "-c",
+                "features.network_proxy.enabled=false",
+            ],
+            true,
+        ),
+        (vec!["--disable", "api_key_model_discovery"], false),
+        (vec!["-c", "features.api_key_model_discovery=true"], true),
+        (vec![], true),
+    ] {
+        let output = daemon
+            .command()
+            .args(["app-server", "daemon", "restart"])
+            .args(args)
+            .output()?;
+        ensure!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output: Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(output["status"], "restarted");
+        let pid = output["pid"].as_u64().context("restarted daemon PID")?;
+        assert_ne!(Some(pid), previous_pid);
+        previous_pid = Some(pid);
+        let settings: Value = serde_json::from_slice(&std::fs::read(&settings_path)?)?;
+        assert_eq!(
+            settings["featureOverrides"],
+            serde_json::json!({
+                "api_key_model_discovery": discovery,
+                "auth_elicitation": true,
+                "apps": false,
+                "network_proxy": false
+            })
+        );
+        assert_eq!(settings["updater"]["autoUpdateEnabled"], false);
     }
+    // Non-toggle config keys must fail before stopping the daemon or saving settings.
+    let saved_settings = std::fs::read(&settings_path)?;
+    let output = daemon
+        .command()
+        .args([
+            "app-server",
+            "daemon",
+            "restart",
+            "--enable",
+            "tool_registry",
+        ])
+        .output()?;
+    assert!(!output.status.success());
+    insta::assert_snapshot!(
+        String::from_utf8(output.stderr)?,
+        @"Error: daemon restart requires a boolean feature toggle: tool_registry"
+    );
+    assert_eq!(std::fs::read(&settings_path)?, saved_settings);
+    assert_eq!(Some(u64::from(daemon.pid("app-server.pid")?)), previous_pid);
+    assert_eq!(daemon.lifecycle("version")?["status"], "running");
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

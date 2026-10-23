@@ -146,6 +146,8 @@ async fn turn_timing_state_preserves_in_flight_items_after_turn_completion() {
 fn response_item_records_turn_ttft_for_first_output_signals() {
     assert!(response_item_records_turn_ttft(
         &ResponseItem::FunctionCall {
+            status: None,
+            encrypted_content: None,
             id: None,
             name: "shell".to_string(),
             namespace: None,
@@ -157,6 +159,7 @@ fn response_item_records_turn_ttft_for_first_output_signals() {
     ));
     assert!(response_item_records_turn_ttft(
         &ResponseItem::CustomToolCall {
+            encrypted_content: None,
             id: None,
             status: None,
             call_id: "call-2".to_string(),
@@ -167,9 +170,13 @@ fn response_item_records_turn_ttft_for_first_output_signals() {
         }
     ));
     assert!(response_item_records_turn_ttft(&ResponseItem::Message {
+        status: None,
+        encrypted_content: None,
         id: None,
         role: "assistant".to_string(),
         content: vec![ContentItem::OutputText {
+            annotations: None,
+            logprobs: None,
             text: "hello".to_string(),
         }],
         phase: None,
@@ -180,9 +187,13 @@ fn response_item_records_turn_ttft_for_first_output_signals() {
 #[test]
 fn response_item_records_turn_ttft_ignores_empty_non_output_items() {
     assert!(!response_item_records_turn_ttft(&ResponseItem::Message {
+        status: None,
+        encrypted_content: None,
         id: None,
         role: "assistant".to_string(),
         content: vec![ContentItem::OutputText {
+            annotations: None,
+            logprobs: None,
             text: String::new(),
         }],
         phase: None,
