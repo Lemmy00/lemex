@@ -429,7 +429,8 @@ fn prepare_home_temp_root(codex_home: &Path) -> std::io::Result<PathBuf> {
         };
         std::fs::create_dir_all(target)?;
     }
-    let root = temporary.join("arg0");
+    // Keep cleanup within this OS namespace even when Windows and WSL share a home.
+    let root = temporary.join(format!("arg0-{}", std::env::consts::OS));
     std::fs::create_dir_all(&root)?;
     Ok(root)
 }
@@ -647,7 +648,11 @@ mod tests {
         let root = super::prepare_home_temp_root(&home)?;
         assert!(root.is_dir());
         assert!(home.join("tmp").is_symlink());
-        assert!(target.join("arg0").is_dir());
+        assert!(
+            target
+                .join(format!("arg0-{}", std::env::consts::OS))
+                .is_dir()
+        );
         Ok(())
     }
 

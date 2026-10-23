@@ -1638,6 +1638,14 @@ impl Session {
                 ),
             )
         };
+        let has_prior_user_turns =
+            crate::thread_rollout_truncation::initial_history_has_prior_user_turns(
+                &conversation_history,
+            );
+        self.state
+            .lock()
+            .await
+            .set_initial_settings_pending(!has_prior_user_turns);
         let turn_context = match conversation_history {
             InitialHistory::New | InitialHistory::Cleared => {
                 // Defer initial context insertion until the first real turn starts so

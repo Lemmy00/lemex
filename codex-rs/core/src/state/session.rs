@@ -103,7 +103,6 @@ pub(crate) struct SessionState {
     pub(crate) current_time_reminder: CurrentTimeReminderState,
     pub(crate) active_connector_selection: HashSet<String>,
     pub(crate) pending_session_start_sources: VecDeque<codex_hooks::SessionStartSource>,
-    next_turn_is_first: bool,
     initial_settings_pending: bool,
 }
 
@@ -146,7 +145,6 @@ impl SessionState {
             current_time_reminder: CurrentTimeReminderState::default(),
             active_connector_selection: HashSet::new(),
             pending_session_start_sources: VecDeque::new(),
-            next_turn_is_first: true,
             initial_settings_pending: true,
         }
     }
@@ -161,15 +159,8 @@ impl SessionState {
         self.previous_turn_settings = previous_turn_settings;
     }
 
-    pub(crate) fn set_next_turn_is_first(&mut self, value: bool) {
-        self.next_turn_is_first = value;
-        self.initial_settings_pending = value;
-    }
-
-    pub(crate) fn take_next_turn_is_first(&mut self) -> bool {
-        let is_first_turn = self.next_turn_is_first;
-        self.next_turn_is_first = false;
-        is_first_turn
+    pub(crate) fn set_initial_settings_pending(&mut self, pending: bool) {
+        self.initial_settings_pending = pending;
     }
 
     pub(crate) fn take_initial_settings_pending(&mut self) -> bool {

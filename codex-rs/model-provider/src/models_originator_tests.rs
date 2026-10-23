@@ -187,3 +187,36 @@ async fn originator_catalogs_are_isolated_and_reused_from_disk() {
     );
     assert!(home.path().join("models_cache.chatgpt_cca.json").exists());
 }
+
+/// Originator partitioning must keep a provider's offline seed rather than first-party models.
+#[tokio::test]
+async fn originator_partitioning_preserves_provider_fallback_catalog() {
+    let seed = ModelsResponse {
+        models: vec![model_info_from_slug("provider/offline")],
+    };
+    let endpoint = Arc::new(
+        OpenAiModelsEndpoint::new(
+            ModelProviderInfo {
+                name: "Custom provider".into(),
+                base_url: Some("http://127.0.0.1:1/v1".into()),
+                experimental_bearer_token: Some("test-key".into()),
+                ..Default::default()
+            },
+            None,
+            None,
+        )
+        .with_rcp_catalog(Some(seed.clone())),
+    );
+    let manager =
+        OpenAiModelsManager::new_without_cache(endpoint, None).with_fallback_catalog(seed.clone());
+    let scoped = manager.for_originator("codex_work_cca").unwrap();
+    assert_eq!(
+        scoped
+            .raw_model_catalog(
+                RefreshStrategy::Offline,
+                HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault)
+            )
+            .await,
+        seed
+    );
+}

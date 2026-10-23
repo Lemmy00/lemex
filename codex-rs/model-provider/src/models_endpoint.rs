@@ -566,6 +566,11 @@ mod tests {
                 name: "Custom provider".into(),
                 base_url: Some(format!("{}/v1", server.uri())),
                 experimental_bearer_token: Some("custom-discovery-key".into()),
+                // Keep this fixture's cache identity stable during process-wide residency tests.
+                http_headers: Some(std::collections::HashMap::from([(
+                    RESIDENCY_HEADER_NAME.to_string(),
+                    "us".into(),
+                )])),
                 ..Default::default()
             },
             None,

@@ -425,9 +425,15 @@ impl ModelsManager for OpenAiModelsManager {
             .as_ref()
             .and_then(|cache| cache.for_originator(originator));
         let mut manager = Self::new_with_optional_cache(cache, endpoint, self.auth_manager.clone());
-        if matches!(self.catalog_source, CatalogSource::ExplicitProvider(_)) {
-            manager = manager.with_provider_catalog();
-        }
+        manager = match &self.catalog_source {
+            CatalogSource::Default => manager,
+            CatalogSource::ExplicitProvider(_) => manager.with_provider_catalog(),
+            CatalogSource::ProviderFallback(models, _) => {
+                manager.with_fallback_catalog(ModelsResponse {
+                    models: models.clone(),
+                })
+            }
+        };
         manager.api_key_model_discovery_enabled = Arc::clone(&self.api_key_model_discovery_enabled);
         let manager: SharedModelsManager = Arc::new(manager);
         managers.insert(originator, Arc::clone(&manager));
