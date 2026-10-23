@@ -34,7 +34,7 @@ fn local_aliases_keep_read_only_and_deny_overrides() -> anyhow::Result<()> {
                                 protected.to_abs_path()?.as_path(),
                                 directory.path(),
                             ),
-                            matching.can_write_path(&spelling.join(".codex/config.toml")?)?,
+                            matching.can_write_path(&spelling.join(".lemex/config.toml")?)?,
                         ),
                         (true, false, access, false),
                     );
@@ -86,7 +86,7 @@ fn local_metadata_case_aliases_respect_filesystem_and_explicit_grants() -> anyho
     let matching = policy.prepare_local_matching(&context)?;
     for relative in [
         ".GIT/config",
-        ".CoDeX/config.toml",
+        ".LeMeX/config.toml",
         ".AGENTS/new",
         ".AWS/config",
     ] {
@@ -101,7 +101,7 @@ fn local_metadata_case_aliases_respect_filesystem_and_explicit_grants() -> anyho
         );
     }
     let root_alias = parent.join("WORKSPACE")?;
-    for relative in [".GIT/config", ".git/config", ".CoDeX/config.toml"] {
+    for relative in [".GIT/config", ".git/config", ".LeMeX/config.toml"] {
         let path = root_alias.join(relative)?;
         assert_eq!(
             (

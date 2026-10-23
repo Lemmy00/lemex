@@ -333,7 +333,7 @@ async fn build_codex(server: &StreamingSseServer) -> Arc<CodexThread> {
         .with_model("gpt-5.4")
         .build_with_streaming_server(server)
         .await
-        .expect("build streaming Codex test session")
+        .expect("build streaming Lemex test session")
         .codex
 }
 
@@ -742,7 +742,7 @@ async fn input_interrupts_wait_agent_and_is_sent_in_follow_up_request(input: Wai
         })
         .build_with_streaming_server(&server)
         .await
-        .expect("build Codex test session")
+        .expect("build Lemex test session")
         .codex;
 
     submit_user_input(&codex, INITIAL_PROMPT).await;
@@ -851,7 +851,7 @@ async fn any_new_input_interrupts_sleep(input: WaitInput) {
         })
         .build_with_streaming_server(&server)
         .await
-        .expect("build Codex test session");
+        .expect("build Lemex test session");
     let codex = test.codex.clone();
 
     submit_user_input(&codex, INITIAL_PROMPT).await;
@@ -1437,7 +1437,7 @@ async fn steer_during_stream_retry_skips_backoff() {
         })
         .build_with_auto_env(&server)
         .await
-        .expect("build Codex test session");
+        .expect("build Lemex test session");
     let codex = &test.codex;
 
     submit_user_input(codex, "first prompt").await;
@@ -1486,7 +1486,7 @@ async fn steers_during_tool_drain_preserve_tool_output_and_each_input() {
         })
         .build_with_streaming_server(&server)
         .await
-        .expect("build Codex test session");
+        .expect("build Lemex test session");
     let codex = test
         .thread_manager
         .start_thread(StartThreadOptions {
@@ -1606,7 +1606,7 @@ async fn steers_yield_exec_and_wait_without_stopping_the_cell(instant_interrupt:
         })
         .build_with_auto_env(&server)
         .await
-        .expect("build Codex test session");
+        .expect("build Lemex test session");
     test.codex
         .shutdown_and_wait()
         .await
@@ -1818,7 +1818,7 @@ async fn steer_during_compaction_is_sent_after_compaction() {
         })
         .build_with_streaming_server(&server)
         .await
-        .expect("build Codex test session");
+        .expect("build Lemex test session");
     let codex = test.codex.clone();
 
     submit_user_input(&codex, "first prompt").await;
@@ -1914,7 +1914,7 @@ async fn input_preempts_response_and_yields_running_code_mode_call() {
         })
         .build_with_streaming_server(&server)
         .await
-        .expect("build Codex test session");
+        .expect("build Lemex test session");
     let codex = test
         .thread_manager
         .start_thread(StartThreadOptions {
@@ -2043,7 +2043,7 @@ async fn user_input_does_not_preempt_after_reasoning_item() {
         .with_model("gpt-5.4")
         .build_with_streaming_server(&server)
         .await
-        .expect("build streaming Codex test session")
+        .expect("build streaming Lemex test session")
         .codex;
 
     submit_user_input(&codex, "first prompt").await;
@@ -2477,7 +2477,7 @@ async fn steered_user_input_waits_for_model_continuation_after_mid_turn_compact(
         })
         .build_with_streaming_server(&server)
         .await
-        .expect("build streaming Codex test session")
+        .expect("build streaming Lemex test session")
         .codex;
 
     submit_user_input(&codex, "first prompt").await;
@@ -2563,7 +2563,7 @@ async fn steered_user_input_follows_compact_when_only_the_steer_needs_follow_up(
         })
         .build_with_streaming_server(&server)
         .await
-        .expect("build streaming Codex test session")
+        .expect("build streaming Lemex test session")
         .codex;
 
     submit_user_input(&codex, "first prompt").await;
@@ -2681,7 +2681,7 @@ async fn steered_user_input_waits_when_tool_output_triggers_compact_before_next_
         })
         .build_with_streaming_server(&server)
         .await
-        .expect("build streaming Codex test session");
+        .expect("build streaming Lemex test session");
     let codex = test.codex.clone();
 
     submit_danger_full_access_user_turn(&test, "first prompt").await;

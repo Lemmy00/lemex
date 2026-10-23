@@ -294,7 +294,7 @@ host_pattern = '^allowed\.test$'
             r"https://allowed.test\name:password@127.0.0.1:18767/r.git",
             r"https:///allowed.test\anything@127.0.0.1:18767/r.git",
         ] {
-            let codex_home = TempDir::new().expect("create Codex home");
+            let codex_home = TempDir::new().expect("create Lemex home");
             let cloner_called = Cell::new(false);
 
             let err = add_marketplace_sync_with_cloner(

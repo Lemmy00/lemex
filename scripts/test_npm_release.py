@@ -1,6 +1,7 @@
 """Packaging, registry-selection, and publication-order regression tests."""
 
 import io
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -42,6 +43,18 @@ class NpmReleaseTests(unittest.TestCase):
             )}
             if spec["os"] == "linux":
                 files[f"{prefix}/codex-resources/bwrap"] = "fixture"
+            receipt = {"sourceCommit": "a" * 40, "target": spec["target_triple"].replace("-musl", "-gnu"),
+                       "developmentOnly": False, "distribution": "publicRelease"}
+            voice_files = {"bin/codex-voice-host": "voice helper", "runtime.json": json.dumps(receipt),
+                           "NOTICE.md": "voice notices", "sources.json": "sources",
+                           "licenses/LGPL-2.1.txt": "license", "lib/libvoice.so": "native library"}
+            files.update({f"{prefix}/codex-resources/voice/{name}": value for name, value in voice_files.items()})
+            digests = {"bin/lemex": hashlib.sha256(b"fixture").hexdigest(),
+                       **{f"codex-resources/voice/{name}": hashlib.sha256(value.encode()).hexdigest()
+                          for name, value in voice_files.items()}}
+            files[f"{prefix}/codex-resources/voice/manifest.json"] = json.dumps({
+                "schemaVersion": 1, "buildCommit": "a" * 40, "appVersion": "0.1.0",
+                "appTarget": spec["target_triple"], "voiceTarget": receipt["target"], "sha256": digests})
             files[f"{prefix}/codex-package.json"] = json.dumps({"version": "0.1.0", "target": spec["target_triple"]})
             self.archive(name, {"name": package_name, "version": f"0.1.0-{spec['npm_tag']}"}, {
                 **files, "LICENSE": "license", "NOTICE": "notice"
@@ -52,6 +65,25 @@ class NpmReleaseTests(unittest.TestCase):
                 key: f"npm:{package_name}@0.1.0-{spec['npm_tag']}" for key, spec in release.PLATFORMS.items()
             },
         }, {"bin/lemex.js": "fixture", "LICENSE": "license", "NOTICE": "notice"})
+
+    def test_missing_or_tampered_voice_is_rejected_before_publishing(self):
+        self.release_archives()
+        path = self.root / "lemex-linux-x64.tgz"
+        with tarfile.open(path) as archive:
+            manifest = json.load(archive.extractfile("package/package.json"))
+            files = {member.name.removeprefix("package/"): archive.extractfile(member).read().decode()
+                     for member in archive.getmembers() if member.isfile() and member.name != "package/package.json"}
+        helper = "vendor/x86_64-unknown-linux-musl/codex-resources/voice/bin/codex-voice-host"
+        files[helper] = "tampered helper"
+        self.archive("lemex-linux-x64", manifest, files)
+        with patch.object(release.subprocess, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "digest mismatch"):
+                release.publish(self.root, "0.1.0", False)
+            run.assert_not_called()
+        del files[helper]
+        self.archive("lemex-linux-x64", manifest, files)
+        with self.assertRaisesRegex(RuntimeError, "missing voice runtime files"):
+            release.release_tarballs(self.root, "0.1.0")
 
     def test_version_updates_workspace_without_changing_registry_pins(self):
         directory = self.root / "codex-rs"
@@ -161,16 +193,20 @@ class NpmReleaseTests(unittest.TestCase):
         }.items():
             (binaries / name).write_text(contents)
             (binaries / name).chmod(0o755)
-        with patch.object(release, "strip_binary") as strip, patch.object(release, "resolve_rg_bin", return_value=binaries / "rg"):
-            result = release.pack_runtime("lemex-linux-x64", "0.1.0", binaries, self.root)
+        def assemble(package, helper, target, commit, output, **kwargs):
+            shutil.copytree(package, output)
+        options = dict(voice_helper=binaries / "voice", voice_runtime=binaries, build_commit="a" * 40)
+        with patch.object(release.voice, "assemble", side_effect=assemble) as voice, patch.object(release, "strip_binary") as strip, patch.object(release, "resolve_rg_bin", return_value=binaries / "rg"):
+            result = release.pack_runtime("lemex-linux-x64", "0.1.0", binaries, self.root, **options)
             self.assertEqual(strip.call_count, 2)
+            self.assertEqual(voice.call_args.args[2:4], ("x86_64-unknown-linux-gnu", "a" * 40))
             with tarfile.open(result, "r:gz") as archive:
                 prefix = "package/vendor/x86_64-unknown-linux-musl"
                 self.assertEqual(archive.extractfile(f"{prefix}/codex-resources/bwrap").read(), (binaries / "bwrap").read_bytes())
                 metadata = json.load(archive.extractfile(f"{prefix}/codex-package.json"))
                 self.assertEqual(metadata["version"], "0.1.0")
             with self.assertRaisesRegex(RuntimeError, "does not match npm version"):
-                release.pack_runtime("lemex-linux-x64", "0.2.0", binaries, self.root)
+                release.pack_runtime("lemex-linux-x64", "0.2.0", binaries, self.root, **options)
 
     @unittest.skipUnless(shutil.which("node") and shutil.which("npm"), "Node.js and npm required")
     def test_real_npm_install_resolves_only_current_platform_alias(self):
@@ -188,8 +224,10 @@ class NpmReleaseTests(unittest.TestCase):
         native = self.archive(name, {
             "name": release.NPM_NAME, "version": f"0.1.0-{spec['npm_tag']}",
             "os": [spec["os"]], "cpu": [spec["cpu"]],
-        }, {f"vendor/{spec['target_triple']}/bin/lemex": '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "lemex 0.1.0"; fi\n'})
-        smoke(launcher, native)
+        }, {f"vendor/{spec['target_triple']}/codex-package.json": "{}", f"vendor/{spec['target_triple']}/bin/lemex": '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "lemex 0.1.0"; fi\n'})
+        with patch("smoke_npm_release.verify_voice") as verify:
+            smoke(launcher, native)
+            verify.assert_called_once()
 
 
 if __name__ == "__main__":

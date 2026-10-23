@@ -50,10 +50,7 @@ fn experimental_features_keep_following_choice_at_wrap_boundary() {
 /// Experimental settings show each feature's label, description, and default state.
 #[test]
 fn experimental_features_display_metadata() {
-    for feature in [
-        Feature::AnalyticsPlanHistory,
-        Feature::LoginShellPackagePath,
-    ] {
+    for feature in [Feature::LoginShellPackagePath] {
         let stage = feature.stage();
         let (app_tx, _app_rx) = tokio::sync::mpsc::unbounded_channel();
         let view = ExperimentalFeaturesView::new(

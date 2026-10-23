@@ -3009,7 +3009,7 @@ mod tests {
             FileSystemSandboxEntry::new(cwd.clone().into(), FileSystemAccessMode::Write),
             FileSystemSandboxEntry::new(path("file:///C:/").into(), FileSystemAccessMode::Deny),
             FileSystemSandboxEntry::new(
-                path("file:///C:/workspace/.codex").into(),
+                path("file:///C:/workspace/.lemex").into(),
                 FileSystemAccessMode::Read,
             ),
             unreadable_glob_entry(r"C:\workspace\**\*.env".to_string()),
@@ -3031,10 +3031,10 @@ mod tests {
                 &prepared,
             ));
         }
-        assert!(!policy.can_write_path(&path("file:///C:/workspace/.codex/config"), &context));
+        assert!(!policy.can_write_path(&path("file:///C:/workspace/.lemex/config"), &context));
         assert_eq!(
-            policy.metadata_write_denial(&path("file:///C:/workspace/.codex/config"), &context),
-            Some(".codex"),
+            policy.metadata_write_denial(&path("file:///C:/workspace/.lemex/config"), &context),
+            Some(".lemex"),
         );
     }
 
@@ -3419,7 +3419,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn writable_roots_skip_default_metadata_when_explicit_user_rule_exists() {
-        for name in [".codex", ".aws"] {
+        for name in [".lemex", ".aws"] {
             let cwd = TempDir::new().expect("tempdir");
             let expected_root = AbsolutePathBuf::from_absolute_path(
                 cwd.path().canonicalize().expect("canonicalize cwd"),
@@ -3578,7 +3578,7 @@ mod tests {
         );
         assert!(
             !file_system_policy
-                .can_write_local_path_with_cwd(Path::new(".codex/config.toml"), relative_cwd,)
+                .can_write_local_path_with_cwd(Path::new(".lemex/config.toml"), relative_cwd,)
         );
         assert!(!file_system_policy.can_write_local_path_with_cwd(
             Path::new(".agents/skills/example/SKILL.md"),

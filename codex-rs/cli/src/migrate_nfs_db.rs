@@ -60,7 +60,7 @@ pub(crate) async fn run(
         eprintln!("{warning}");
     }
     eprintln!(
-        "Stop all Codex instances on every host that uses these databases.\nKeep them stopped until the migration completes successfully."
+        "Stop all Lemex instances on every host that uses these databases.\nKeep them stopped until the migration completes successfully."
     );
     ensure!(
         crate::confirm("Continue? [y/N]:")?,
@@ -89,7 +89,7 @@ pub(crate) async fn run(
         .write(true)
         .create(true)
         .truncate(false)
-        .open(sqlite.home().join(".codex-nfs-migration.lock"))?;
+        .open(sqlite.home().join(".lemex-nfs-migration.lock"))?;
     migration_lock
         .try_lock()
         .context("another database migration is running")?;
@@ -99,11 +99,11 @@ pub(crate) async fn run(
             continue;
         }
         migrate(&database.path, &command.staging_dir).await.with_context(|| format!(
-            "migration failed for {}. Keep all Codex instances stopped. Correct the error and rerun codex migrate-nfs-db",
+            "migration failed for {}. Keep all Lemex instances stopped. Correct the error and rerun lemex migrate-nfs-db",
             database.path.display()
         ))?;
     }
-    println!("Migration completed successfully. You can restart Codex.");
+    println!("Migration completed successfully. You can restart Lemex.");
     Ok(())
 }
 

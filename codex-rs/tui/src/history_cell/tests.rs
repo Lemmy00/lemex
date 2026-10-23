@@ -785,7 +785,7 @@ async fn session_info_preserves_styled_tooltip_links() {
         &session_configured_event("gpt-5"),
         /*is_first_event*/ false,
         Some(
-            "Use **/copy** or `ctrl+y`; visit the [Codex community forum](https://example.com)."
+            "Use **/copy** or `ctrl+y`; visit the [Lemex community forum](https://example.com)."
                 .to_string(),
         ),
         Some(PlanType::Free),

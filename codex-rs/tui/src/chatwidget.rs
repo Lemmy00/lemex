@@ -78,8 +78,6 @@ use crate::text_formatting::proper_join;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
 use crate::version::CODEX_CLI_VERSION;
-use codex_app_server_protocol::AddCreditsNudgeCreditType;
-use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppSummary;
 use codex_app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
 use codex_app_server_protocol::CollabAgentTool;
@@ -177,8 +175,6 @@ const PLAN_MODE_REASONING_SCOPE_TITLE: &str = "Apply reasoning change";
 const PLAN_MODE_REASONING_SCOPE_PLAN_ONLY: &str = "Apply to Plan mode override";
 const PLAN_MODE_REASONING_SCOPE_ALL_MODES: &str = "Apply to global default and Plan mode override";
 const CONNECTORS_SELECTION_VIEW_ID: &str = "connectors-selection";
-const PET_SELECTION_LOADING_VIEW_ID: &str = "pet-selection-loading";
-const AMBIENT_PET_WRAP_GAP_COLUMNS: u16 = 2;
 const TUI_STUB_MESSAGE: &str = "Not available in TUI yet.";
 const PARENT_OWNED_INPUT_MESSAGE: &str =
     "This sub-agent is controlled by its parent. Direct input is disabled.";
@@ -297,8 +293,6 @@ use self::mcp_startup::McpStartupStatus;
 mod misalignment_policy;
 pub(crate) use misalignment_policy::MisalignmentReview;
 pub(crate) use misalignment_policy::MisalignmentTurnSource;
-mod pets;
-pub(crate) use self::pets::ConfiguredPetLoadGeneration;
 mod session_flow;
 mod session_header;
 use self::session_header::SessionHeader;
@@ -355,7 +349,6 @@ use self::rate_limits::app_server_rate_limit_error_kind;
 pub(crate) use self::rate_limits::fallback_limit_label;
 use self::rate_limits::is_app_server_cyber_policy_error;
 mod recap;
-mod reset_credits;
 pub(crate) use self::rate_limits::limit_label_for_window;
 mod completion;
 mod realtime;
@@ -408,7 +401,6 @@ use self::transcript::TranscriptState;
 mod turn_lifecycle;
 mod turn_runtime;
 use self::turn_lifecycle::TurnLifecycleState;
-mod usage;
 mod user_messages;
 mod working_directory;
 use self::user_messages::MessageDelivery;
@@ -574,14 +566,6 @@ pub(crate) struct ChatWidget {
     rate_limit_snapshots_by_limit_id: BTreeMap<String, RateLimitSnapshotDisplay>,
     refreshing_status_outputs: Vec<(u64, StatusHistoryHandle)>,
     next_status_refresh_request_id: u64,
-    pending_rate_limit_reset_request_id: Option<u64>,
-    pending_rate_limit_reset_idempotency_key: Option<String>,
-    rate_limit_reset_picker_request_id: Option<u64>,
-    pending_rate_limit_reset_hint_request_id: Option<u64>,
-    pending_usage_menu_rate_limit_request_id: Option<u64>,
-    pending_rate_limit_reset_hint: Option<PlainHistoryCell>,
-    available_rate_limit_reset_credits: Option<i64>,
-    next_rate_limit_reset_request_id: u64,
     plan_type: Option<PlanType>,
     codex_rate_limit_reached_type: Option<RateLimitReachedType>,
     codex_spend_control_reached: Option<bool>,
@@ -600,7 +584,6 @@ pub(crate) struct ChatWidget {
     pub(crate) warning_display_state: WarningDisplayState,
     pub(crate) rendered_selection: std::cell::RefCell<crate::rendered_selection::RenderedSelection>,
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
-    add_credits_nudge_email_in_flight: Option<rate_limits::PendingCreditsNudge>,
     adaptive_chunking: AdaptiveChunkingPolicy,
     // Stream lifecycle controller
     stream_controller: Option<StreamController>,
@@ -666,18 +649,6 @@ pub(crate) struct ChatWidget {
     review: ReviewState,
     // Active hook runs render in a dedicated live cell so they can run alongside tools.
     active_hook_cell: Option<HookCell>,
-    // Reused for built-in pet CDN requests so redirects remain route-aware.
-    pub(crate) pet_http_client: codex_http_client::RouteAwareClientPool,
-    // Ambient companion rendered over the transcript area, never inside the footer rows.
-    ambient_pet: Option<crate::pets::AmbientPet>,
-    configured_pet_load_generation: ConfiguredPetLoadGeneration,
-    pet_picker_preview_state: crate::pets::PetPickerPreviewState,
-    pet_picker_preview_pet: Option<crate::pets::AmbientPet>,
-    pet_picker_preview_request_id: u64,
-    pet_picker_preview_image_visible: std::cell::Cell<bool>,
-    pet_selection_load_request_id: u64,
-    #[cfg(test)]
-    pet_image_support_override: Option<crate::pets::PetImageSupport>,
     thread_id: Option<ThreadId>,
     thread_name: Option<String>,
     thread_rename_block_message: Option<String>,
@@ -1192,9 +1163,6 @@ impl ChatWidget {
         self.bottom_pane.pre_draw_tick();
         self.flush_realtime_transcript_history();
         self.refresh_realtime_microphone_level();
-        if let Some(pet) = self.ambient_pet.as_ref() {
-            pet.schedule_next_frame();
-        }
         self.refresh_goal_status_indicator_for_time_tick();
         if self.terminal_title_shows_action_required() != self.last_terminal_title_requires_action {
             self.refresh_terminal_title();
@@ -1222,7 +1190,6 @@ impl ChatWidget {
     fn flush_active_cell(&mut self) {
         if let Some(active) = self.transcript.take_active_cell() {
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
-            self.request_pending_usage_output_insertion();
         }
     }
 
@@ -1254,7 +1221,6 @@ impl ChatWidget {
         };
         if let Some(active) = self.take_history_insertion_prefix(cell.as_ref()) {
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
-            self.request_pending_usage_output_insertion();
         }
         self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
     }
@@ -1467,7 +1433,6 @@ impl ChatWidget {
                 computer.mark_failed();
             }
             self.add_boxed_history(cell);
-            self.request_pending_usage_output_insertion();
         }
     }
 
@@ -1969,10 +1934,6 @@ impl ChatWidget {
             .unwrap_or_default()
     }
 
-    pub(crate) fn last_turn_id(&self) -> Option<&str> {
-        self.turn_lifecycle.last_turn_id.as_deref()
-    }
-
     pub(crate) fn thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
@@ -2002,7 +1963,6 @@ impl ChatWidget {
     pub(crate) fn active_cell_transcript_key(&self) -> Option<ActiveCellTranscriptKey> {
         let cell = self.transcript.active_cell.as_ref();
         let mut realtime_cells = self.realtime_conversation.live_transcript_cells();
-        let rate_limit_reset_hint = self.pending_rate_limit_reset_hint();
         if cell.is_none()
             && self
                 .realtime_conversation
@@ -2010,14 +1970,10 @@ impl ChatWidget {
                 .next()
                 .is_none()
             && self.realtime_conversation.pending_history_cells.is_empty()
-            && rate_limit_reset_hint.is_none()
         {
             return None;
         }
-        let live_sources: [Option<&dyn HistoryCell>; 2] = [
-            cell.map(AsRef::as_ref),
-            rate_limit_reset_hint.map(|cell| cell as &dyn HistoryCell),
-        ];
+        let live_sources: [Option<&dyn HistoryCell>; 1] = [cell.map(AsRef::as_ref)];
         Some(ActiveCellTranscriptKey {
             cacheable: live_sources
                 .into_iter()

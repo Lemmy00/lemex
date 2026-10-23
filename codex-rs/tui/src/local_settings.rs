@@ -56,6 +56,8 @@ impl LocalSettings {
                 config.tui_alternate_screen != codex_config::types::AltScreenMode::Never,
             ),
             tui: Tui {
+                pet: None,
+                pet_anchor: Default::default(),
                 notification_settings: config.tui_notifications.clone(),
                 animations: config.animations,
                 screen_reader_detection_done: None,
@@ -78,8 +80,6 @@ impl LocalSettings {
                 status_line_use_colors: config.tui_status_line_use_colors,
                 terminal_title: config.tui_terminal_title.clone(),
                 theme: config.tui_theme.clone(),
-                pet: config.tui_pet.clone(),
-                pet_anchor: config.tui_pet_anchor,
                 session_picker_view: Some(config.tui_session_picker_view),
                 agents_overview_grouping: config.tui_agents_overview_grouping,
                 resume_cwd: config.tui_resume_cwd,

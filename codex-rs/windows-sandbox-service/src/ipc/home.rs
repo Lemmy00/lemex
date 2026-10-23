@@ -37,15 +37,15 @@ pub(super) fn prepare_codex_home(
     let requested_root = requested
         .ancestors()
         .last()
-        .context("find the root of the requested Codex home")?;
+        .context("find the root of the requested Lemex home")?;
     if unsafe { filesystem::GetDriveTypeW(to_wide(requested_root.as_os_str()).as_ptr()) }
         != DRIVE_FIXED
     {
-        return Err(ServiceUnavailable("Codex home must be located on a fixed local drive").into());
+        return Err(ServiceUnavailable("Lemex home must be located on a fixed local drive").into());
     }
     let parent = requested
         .parent()
-        .context("Codex home must have an existing parent directory")?;
+        .context("Lemex home must have an existing parent directory")?;
     pin_existing_ancestors(parent, &mut handles)?;
     handles.push(pin_directory(
         requested,
@@ -54,14 +54,14 @@ pub(super) fn prepare_codex_home(
     )?);
     let home = requested
         .canonicalize()
-        .with_context(|| format!("canonicalize Codex home {}", requested.display()))?;
+        .with_context(|| format!("canonicalize Lemex home {}", requested.display()))?;
     validate_local_directory_path(&home)?;
     let root = home
         .ancestors()
         .last()
-        .context("find the root of the requested Codex home")?;
+        .context("find the root of the requested Lemex home")?;
     if unsafe { filesystem::GetDriveTypeW(to_wide(root.as_os_str()).as_ptr()) } != DRIVE_FIXED {
-        return Err(ServiceUnavailable("Codex home must be located on a fixed local drive").into());
+        return Err(ServiceUnavailable("Lemex home must be located on a fixed local drive").into());
     }
     if home != requested {
         pin_existing_ancestors(&home, &mut handles)?;
@@ -99,7 +99,7 @@ pub(super) fn prepare_codex_home(
             .with_context(|| {
             if index == 0 {
                 format!(
-                    "requesting user must be permitted to write Codex home {}",
+                    "requesting user must be permitted to write Lemex home {}",
                     directory.display()
                 )
             } else {

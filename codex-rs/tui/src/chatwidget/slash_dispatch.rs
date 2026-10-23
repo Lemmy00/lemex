@@ -554,9 +554,7 @@ impl ChatWidget {
                 );
             }
             SlashCommand::Usage => {
-                if self.ensure_usage_command_available() {
-                    self.open_usage_menu();
-                }
+                self.add_error_message(USAGE_API_STATUS_HINT.to_string());
             }
             SlashCommand::Ide => {
                 self.handle_ide_command();
@@ -576,9 +574,6 @@ impl ChatWidget {
             SlashCommand::Theme => {
                 self.open_theme_picker();
             }
-            SlashCommand::Pets => {
-                self.open_pets_picker();
-            }
             SlashCommand::Ps => {
                 self.add_ps_output();
             }
@@ -593,9 +588,6 @@ impl ChatWidget {
             }
             SlashCommand::Mcp => {
                 self.add_mcp_output(McpServerStatusDetail::ToolsAndAuthOnly);
-            }
-            SlashCommand::Apps => {
-                self.add_connectors_output();
             }
             SlashCommand::Plugins => {
                 self.add_plugins_output();
@@ -829,16 +821,7 @@ impl ChatWidget {
                 self.add_error_message("Usage: /pwd".to_string());
             }
             SlashCommand::Usage => {
-                if self.ensure_usage_command_available() {
-                    match crate::analytics::TokenActivityView::parse(trimmed) {
-                        Some(view) => self
-                            .app_event_tx
-                            .send(AppEvent::OpenAnalytics { view: Some(view) }),
-                        None => self.add_error_message(
-                            "Usage: /usage [daily|weekly|cumulative]".to_string(),
-                        ),
-                    }
-                }
+                self.add_error_message(USAGE_API_STATUS_HINT.to_string());
             }
             SlashCommand::Voice => match trimmed.to_ascii_lowercase().as_str() {
                 "settings" => self.app_event_tx.send(AppEvent::OpenRealtimeSettings),
@@ -1109,17 +1092,6 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::ResumeSessionByIdOrName(args));
             }
-            SlashCommand::Pets
-                if matches!(
-                    args.trim().to_ascii_lowercase().as_str(),
-                    "disable" | "disabled" | "hide" | "hidden" | "off" | "none"
-                ) =>
-            {
-                self.app_event_tx.send(AppEvent::PetDisabled);
-            }
-            SlashCommand::Pets if !trimmed.is_empty() => {
-                self.select_pet_by_id(args);
-            }
             _ => self.dispatch_command_from_source(cmd, source),
         }
         if source == SlashCommandDispatchSource::Live && cmd != SlashCommand::Goal {
@@ -1253,7 +1225,7 @@ impl ChatWidget {
             collaboration_modes_enabled: self.collaboration_modes_enabled(),
             connectors_enabled: self.connectors_enabled(),
             plugins_command_enabled: self.config.features.enabled(Feature::Plugins),
-            token_activity_command_enabled: self.has_codex_backend_auth,
+            token_activity_command_enabled: false,
             goal_command_enabled: self.config.features.enabled(Feature::Goals),
             service_tier_commands_enabled: !self.current_model_service_tier_commands().is_empty(),
             daybreak_command_description: self.daybreak_command_description(),
@@ -1262,14 +1234,6 @@ impl ChatWidget {
             allow_elevate_sandbox,
             side_conversation_active: self.active_side_conversation,
         }
-    }
-
-    fn ensure_usage_command_available(&mut self) -> bool {
-        if self.has_codex_backend_auth {
-            return true;
-        }
-        self.add_error_message(USAGE_API_STATUS_HINT.to_string());
-        false
     }
 
     fn queued_command_drain_result(&self, cmd: SlashCommand) -> QueueDrain {
@@ -1288,7 +1252,6 @@ impl ChatWidget {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate
             | SlashCommand::Mcp
-            | SlashCommand::Apps
             | SlashCommand::Plugins
             | SlashCommand::Rollout
             | SlashCommand::Copy
@@ -1347,8 +1310,7 @@ impl ChatWidget {
             | SlashCommand::Statusline
             | SlashCommand::Config
             | SlashCommand::Theme
-            | SlashCommand::Tui
-            | SlashCommand::Pets => QueueDrain::Stop,
+            | SlashCommand::Tui => QueueDrain::Stop,
         }
     }
 

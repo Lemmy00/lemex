@@ -6,6 +6,8 @@ External analytics and feedback reporting are removed. Local logs and token usag
 
 Lemex does not include ChatGPT cloud tasks, account sign-in, or the Codex desktop-app installer. Developer test tooling is kept outside the installed CLI.
 
+The CLI also omits account analytics dashboards, purchase/reset-credit promotions, cloud app commands, terminal pets and automatic terminal-size reporting. Voice and coding tools remain. See the [upstream maintenance policy](docs/lemex-maintenance.md).
+
 Normal sessions use the embedded backend. The persistent background daemon is opt-in, and never downloads or updates itself.
 
 ## Install

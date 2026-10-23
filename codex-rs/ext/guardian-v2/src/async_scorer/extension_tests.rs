@@ -2190,7 +2190,7 @@ async fn contributor_samples_tool_calls_with_the_existing_luna_pool() -> Result<
         {"type": "input_text", "text": ">>> RETAINED ASSISTANT CONTEXT END\n\n"},
         {
             "type": "input_text",
-            "text": "The Codex agent has requested the following action:\n"
+            "text": "The Lemex agent has requested the following action:\n"
         },
         {"type": "input_text", "text": ">>> APPROVAL REQUEST START\n"},
         {"type": "input_text", "text": "Planned action JSON:\n"},

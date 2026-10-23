@@ -79,7 +79,6 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::ConsolidateProposedPlan(source));
             }
-            self.request_pending_usage_output_insertion_after_stream_shutdown();
         }
     }
 
@@ -157,9 +156,7 @@ impl ChatWidget {
         if had_stream_controller && self.stream_controllers_idle() {
             self.app_event_tx.send(AppEvent::StopCommitAnimation);
         }
-        if had_stream_controller {
-            self.request_pending_usage_output_insertion_after_stream_shutdown();
-        }
+        if had_stream_controller {}
         if completed_message.is_some() {
             self.transcript.active_streamed_agent_message = None;
             self.transcript.last_flushed_agent_message = None;
@@ -326,7 +323,6 @@ impl ChatWidget {
         if should_restore_after_stream {
             self.status_state.pending_status_indicator_restore = true;
             self.maybe_restore_status_indicator_after_stream_idle();
-            self.request_pending_usage_output_insertion_after_stream_shutdown();
         }
     }
 

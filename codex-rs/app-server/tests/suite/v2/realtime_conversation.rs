@@ -108,7 +108,7 @@ use wiremock::matchers::path_regex;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const DELEGATED_SHELL_TURN_TIMEOUT: Duration = Duration::from_secs(30);
 const DELEGATED_SHELL_TOOL_TIMEOUT_MS: u64 = 30_000;
-const STARTUP_CONTEXT_HEADER: &str = "Startup context from Codex.";
+const STARTUP_CONTEXT_HEADER: &str = "Startup context from Lemex.";
 const V2_STEERING_ACKNOWLEDGEMENT: &str =
     "This was sent to steer the previous background agent task.";
 const V2_HANDOFF_COMPLETE_ACKNOWLEDGEMENT: &str =
@@ -2121,7 +2121,7 @@ async fn realtime_respects_managed_residency(
         .with_extra_config("[realtime]\nversion = \"v1\"\ntype = \"conversational\"")
         .with_extra_config(
             "[model_providers.mock_provider.http_headers]\n\
-             \"X-OpenAI-Internal-Codex-Residency\" = \"eu-static\"\n\
+             \"X-OpenAI-Internal-Lemex-Residency\" = \"eu-static\"\n\
              \"x-provider-header\" = \"preserved\"",
         );
     let configured_residency = match provider_headers {
@@ -2815,7 +2815,7 @@ async fn webrtc_v1_client_managed_handoffs_disable_automatic_output() -> Result<
     .await;
     assert!(
         automatic_handoff.is_err(),
-        "automatic Codex output should not reach realtime in client-managed handoff mode"
+        "automatic Lemex output should not reach realtime in client-managed handoff mode"
     );
 
     harness

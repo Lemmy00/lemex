@@ -26,82 +26,6 @@ fn banner_response(
 }
 
 #[tokio::test]
-async fn backend_banner_presentation_and_cta_do_not_imply_recovery() {
-    for presentation in [None, Some("inline"), Some("dismissible")] {
-        let (mut chat, mut rx, _ops) = make_chatwidget_manual(Some("test-model-a")).await;
-        let mut response = banner_response(
-            presentation,
-            json!([{"action":"notify_owner","label":"Notify owner"}]),
-        );
-        if presentation == Some("inline") {
-            use chrono::Timelike;
-            chat.clock_format = crate::clock_format::ClockFormat::TwelveHour;
-            let banner = response.rate_limit_upsell.as_mut().unwrap();
-            banner["description"] =
-                json!("Your usage resets at {time}. Ask your owner for credits.");
-            banner["reset_at"] = json!(
-                chrono::Local::now()
-                    .with_hour(17)
-                    .unwrap()
-                    .with_minute(30)
-                    .unwrap()
-                    .timestamp()
-            );
-        }
-        chat.update_backend_banner(&response);
-        let initial = render_bottom_popup(&chat, /*width*/ 70);
-        assert!(initial.contains("Selected model usage exhausted"));
-        assert_eq!(
-            initial.contains("esc to dismiss"),
-            presentation == Some("dismissible")
-        );
-        chat.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
-        assert!(
-            rx.try_recv()
-                .is_ok_and(|event| matches!(event, AppEvent::SendAddCreditsNudgeEmail { .. }))
-        );
-        assert_eq!(render_bottom_popup(&chat, /*width*/ 70), initial);
-        let request_id = chat
-            .start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::Credits)
-            .expect("start notification");
-        if presentation == Some("inline") {
-            insta::assert_snapshot!(
-                "backend_banner_notification",
-                normalize_snapshot_paths(render_bottom_popup(&chat, /*width*/ 70))
-            );
-        }
-        chat.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
-        assert!(
-            rx.try_recv()
-                .is_ok_and(|event| matches!(event, AppEvent::SendAddCreditsNudgeEmail { .. }))
-        );
-        assert_eq!(chat.composer_text_with_pending(), "");
-        assert!(
-            chat.start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::Credits)
-                .is_none()
-        );
-        chat.finish_add_credits_nudge_email_request(request_id, Err("local failure".into()));
-        chat.update_backend_banner(&response);
-        assert_eq!(render_bottom_popup(&chat, /*width*/ 70), initial);
-        chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(
-            render_bottom_popup(&chat, /*width*/ 70).contains("Selected model usage exhausted"),
-            presentation != Some("dismissible")
-        );
-        chat.set_model("test-model-b");
-        assert!(!chat.has_applicable_backend_banner());
-        assert!(
-            !render_bottom_popup(&chat, /*width*/ 70).contains("Selected model usage exhausted")
-        );
-        chat.set_model("test-model-a");
-        assert_eq!(
-            render_bottom_popup(&chat, /*width*/ 70).contains("Selected model usage exhausted"),
-            presentation != Some("dismissible")
-        );
-    }
-}
-
-#[tokio::test]
 async fn backend_banner_zero_actions_preserve_guidance_and_composer_input() {
     for presentation in [None, Some("inline"), Some("dismissible")] {
         for ctas in [
@@ -228,34 +152,6 @@ async fn backend_banner_restores_only_programmatically_displaced_switch_prompt()
             !user_dismissed
         );
     }
-}
-
-#[tokio::test]
-async fn owner_notification_completion_cannot_cross_account_change() {
-    let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
-    let previous = chat
-        .start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::Credits)
-        .expect("start previous account request");
-    chat.update_account_state(
-        /*status_account_display*/ None, /*plan_type*/ None,
-        /*has_chatgpt_account*/ true, /*has_codex_backend_auth*/ true,
-    );
-    let current = chat
-        .start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::UsageLimit)
-        .expect("new account must be actionable");
-    drain_insert_history(&mut rx);
-    chat.finish_add_credits_nudge_email_request(previous, Ok(AddCreditsNudgeEmailStatus::Sent));
-    assert!(drain_insert_history(&mut rx).is_empty());
-    assert!(
-        chat.start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::UsageLimit)
-            .is_none()
-    );
-    chat.finish_add_credits_nudge_email_request(current, Ok(AddCreditsNudgeEmailStatus::Sent));
-    let rendered = drain_insert_history(&mut rx)
-        .into_iter()
-        .map(|lines| lines_to_single_string(&lines))
-        .collect::<String>();
-    insta::assert_snapshot!("owner_notification_after_account_change", rendered);
 }
 
 #[tokio::test]

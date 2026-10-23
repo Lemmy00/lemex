@@ -1680,7 +1680,7 @@ async fn apps_enabled_turn_skips_pending_optional_mcp_without_cached_tools() -> 
                 .codex
                 .next_event()
                 .await
-                .context("event stream ended before Codex Apps became ready")?;
+                .context("event stream ended before Lemex Apps became ready")?;
             if let EventMsg::McpStartupUpdate(update) = event.msg
                 && update.server == CODEX_APPS_MCP_SERVER_NAME
                 && matches!(update.status, McpStartupStatus::Ready)
@@ -1690,7 +1690,7 @@ async fn apps_enabled_turn_skips_pending_optional_mcp_without_cached_tools() -> 
         }
     })
     .await
-    .context("Codex Apps should finish starting before the first turn")??;
+    .context("Lemex Apps should finish starting before the first turn")??;
 
     tokio::time::timeout(Duration::from_secs(5), fixture.submit_turn("hello"))
         .await

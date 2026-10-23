@@ -1056,7 +1056,7 @@ mod tests {
         run_git(&["init", "-q", "--initial-branch=main"]);
         run_git(&[
             "-c",
-            "user.name=Codex Tests",
+            "user.name=Lemex Tests",
             "-c",
             "user.email=codex-tests@example.com",
             "commit",

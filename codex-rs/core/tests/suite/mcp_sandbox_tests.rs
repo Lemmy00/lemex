@@ -162,7 +162,7 @@ impl Respond for SandboxMcpServer {
             Some("notifications/initialized") => return ResponseTemplate::new(/*s*/ 202),
             Some("tools/list") => json!({"tools": [{
                 "name": "write_file",
-                "description": "Write a file using the sandbox state supplied by Codex.",
+                "description": "Write a file using the sandbox state supplied by Lemex.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {"path": {"type": "string"}},
@@ -173,7 +173,7 @@ impl Respond for SandboxMcpServer {
             Some("tools/call") => {
                 let state = body["params"]["_meta"]
                     .get(MCP_SANDBOX_STATE_META_CAPABILITY)
-                    .expect("Codex must supply sandbox state in request metadata");
+                    .expect("Lemex must supply sandbox state in request metadata");
                 // A legacy capability still receives both identical state names.
                 // HTTP does not establish a shared executable filesystem.
                 assert_eq!(

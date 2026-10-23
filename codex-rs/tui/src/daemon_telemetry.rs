@@ -1,7 +1,7 @@
 //! Records automatic daemon startup and ensures launch observations survive setup failures.
 
 use super::*;
-use crate::terminal_size_telemetry::LaunchTags;
+pub(super) type LaunchTags = Vec<(&'static str, &'static str)>;
 
 /// Emit once after connection, or as unconfirmed if startup returns early.
 pub(super) struct Launch<F: FnOnce(&AppServerTarget, bool) -> LaunchTags>(pub(super) Option<F>);

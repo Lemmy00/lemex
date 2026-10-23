@@ -9,6 +9,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
+
+from smoke_voice_runtime import verify as verify_voice
 import tempfile
 import threading
 
@@ -80,6 +83,14 @@ def smoke(launcher: Path, native: Path) -> None:
             raise RuntimeError(f"Unexpected CLI version: {output!r}")
         for args in (["--help"], ["setup", "--help"], ["exec", "--help"]):
             subprocess.run([str(executable), *args], env=env, check=True, stdout=subprocess.DEVNULL, timeout=30)
+        packages = list((root / "prefix").rglob("codex-package.json"))
+        if len(packages) != 1:
+            raise RuntimeError(f"Expected one installed native package, found {len(packages)}")
+        # Exercise the npm-installed payload again after moving it out of the
+        # build and npm trees, including spaces in its new physical path.
+        relocated = root / "relocated voice package"
+        shutil.copytree(packages[0].parent, relocated)
+        verify_voice(relocated)
         print(f"Installed and verified lemex {version} ({native_version})", flush=True)
 
 

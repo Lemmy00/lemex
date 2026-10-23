@@ -8449,7 +8449,7 @@ async fn code_mode_search_normalizes_and_calls_deferred_dynamic_tools(
                 }),
                 DynamicToolSpec::Namespace(DynamicToolNamespaceSpec {
                     name: namespace.to_string(),
-                    description: "Codex app tools.".to_string(),
+                    description: "Lemex app tools.".to_string(),
                     tools: vec![DynamicToolNamespaceTool::Function(
                         DynamicToolFunctionSpec {
                             name: "hidden-dynamic-tool".to_string(),
@@ -8633,7 +8633,7 @@ text(
             .get("description")
             .and_then(Value::as_str)
             .is_some_and(|description| {
-                description.contains("Codex app tools.")
+                description.contains("Lemex app tools.")
                     && description.contains("A hidden dynamic tool.")
                     && description.contains("declare const tools:")
                     && description.contains(&format!("{code_mode_name}(args:"))

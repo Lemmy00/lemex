@@ -46,9 +46,9 @@ Settings:
         - `r0` = `<SKILLS_ROOT>/.system`
         ### Available skills
         - imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as...ctly in HTML/CSS/canvas. (file: r0/imagegen/SKILL.md) [hash=dcbada3f7f876b5c]
-        - openai-docs: Use for Codex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, ...merely mention Codex. (file: r0/openai-docs/SKILL.md) [hash=daf7d1f4fd2d2abe]
-        - skill-creator: Create or update a Codex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)
-        - skill-installer: Install Codex skills into $LEMEX_HOME/skills from a curated list or a GitHub repo pat...g private repos). (file: r0/skill-installer/SKILL.md) [hash=d3eb4395bd8e52c5]
+        - openai-docs: Use for Lemex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, ...merely mention Lemex. (file: r0/openai-docs/SKILL.md) [hash=daf7d1f4fd2d2abe]
+        - skill-creator: Create or update a Lemex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)
+        - skill-installer: Install Lemex skills into $LEMEX_HOME/skills from a curated list or a GitHub repo pat...g private repos). (file: r0/skill-installer/SKILL.md) [hash=d3eb4395bd8e52c5]
         </skills_instructions>
     [03] <permissions instructions>
         Filesystem sandboxing defines which files can be read or written. `sandbox_mode` is `read-only`: The san... permits reading files. Network access is restricted. [hash=be7da4425f89053c]
@@ -107,9 +107,9 @@ Settings: same as window 1
         - `r0` = `<SKILLS_ROOT>/.system`
         ### Available skills
         - imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as...ctly in HTML/CSS/canvas. (file: r0/imagegen/SKILL.md) [hash=dcbada3f7f876b5c]
-        - openai-docs: Use for Codex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, ...merely mention Codex. (file: r0/openai-docs/SKILL.md) [hash=daf7d1f4fd2d2abe]
-        - skill-creator: Create or update a Codex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)
-        - skill-installer: Install Codex skills into $LEMEX_HOME/skills from a curated list or a GitHub repo pat...g private repos). (file: r0/skill-installer/SKILL.md) [hash=d3eb4395bd8e52c5]
+        - openai-docs: Use for Lemex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, ...merely mention Lemex. (file: r0/openai-docs/SKILL.md) [hash=daf7d1f4fd2d2abe]
+        - skill-creator: Create or update a Lemex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)
+        - skill-installer: Install Lemex skills into $LEMEX_HOME/skills from a curated list or a GitHub repo pat...g private repos). (file: r0/skill-installer/SKILL.md) [hash=d3eb4395bd8e52c5]
         </skills_instructions>
     [03] <permissions instructions>
         Filesystem sandboxing defines which files can be read or written. `sandbox_mode` is `read-only`: The san... permits reading files. Network access is restricted. [hash=be7da4425f89053c]
@@ -167,9 +167,9 @@ Settings: same as window 1
         - `r0` = `<SKILLS_ROOT>/.system`
         ### Available skills
         - imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as...ctly in HTML/CSS/canvas. (file: r0/imagegen/SKILL.md) [hash=dcbada3f7f876b5c]
-        - openai-docs: Use for Codex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, ...merely mention Codex. (file: r0/openai-docs/SKILL.md) [hash=daf7d1f4fd2d2abe]
-        - skill-creator: Create or update a Codex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)
-        - skill-installer: Install Codex skills into $LEMEX_HOME/skills from a curated list or a GitHub repo pat...g private repos). (file: r0/skill-installer/SKILL.md) [hash=d3eb4395bd8e52c5]
+        - openai-docs: Use for Lemex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, ...merely mention Lemex. (file: r0/openai-docs/SKILL.md) [hash=daf7d1f4fd2d2abe]
+        - skill-creator: Create or update a Lemex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)
+        - skill-installer: Install Lemex skills into $LEMEX_HOME/skills from a curated list or a GitHub repo pat...g private repos). (file: r0/skill-installer/SKILL.md) [hash=d3eb4395bd8e52c5]
         </skills_instructions>
     [03] <permissions instructions>
         Filesystem sandboxing defines which files can be read or written. `sandbox_mode` is `read-only`: The san... permits reading files. Network access is restricted. [hash=be7da4425f89053c]

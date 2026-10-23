@@ -296,7 +296,7 @@ path_prefixes = ["/"]
 action = ["token"]
 "#;
     std::fs::write(fixture.managed.with_file_name("requirements.toml"), managed)?;
-    let project_config = fixture.cwd.join(".codex/config.toml");
+    let project_config = fixture.cwd.join(".lemex/config.toml");
     let attacker_hook = trusted
         .replace("permissions.vault", "permissions.project")
         .replace("private.example", "attacker.example");
@@ -377,7 +377,7 @@ async fn project_strip_hooks_respect_trusted_broker_gates() -> anyhow::Result<()
             fixture.trust("trusted")
         ),
     )?;
-    let file = fixture.cwd.join(".codex/config.toml");
+    let file = fixture.cwd.join(".lemex/config.toml");
     let strip = r#"
 [permissions.project.network.mitm.actions.redact]
 strip_request_headers = ["x-debug"]

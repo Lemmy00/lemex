@@ -189,7 +189,7 @@ impl App {
         tui.frame_requester().schedule_frame();
     }
 
-    /// Close the current overlay and restore normal UI, retaining Analytics navigation state.
+    /// Close the current overlay and restore normal UI.
     pub(crate) fn close_transcript_overlay(&mut self, tui: &mut tui::Tui) {
         if tui.is_owned_screen() && self.overlay.is_none() {
             self.transcript_view.set_presentation(
@@ -202,6 +202,7 @@ impl App {
             return;
         }
         let _ = tui.leave_alt_screen();
+        self.overlay = None;
         let was_backtrack = self.backtrack.overlay_preview_active;
         if !self.deferred_history_lines.is_empty() {
             let lines = std::mem::take(&mut self.deferred_history_lines);
@@ -209,10 +210,6 @@ impl App {
                 lines,
                 self.history_line_wrap_policy(),
             );
-        }
-        if let Some(Overlay::Analytics(mut view)) = self.overlay.take() {
-            view.cancel_loads();
-            self.retained_analytics = Some(view);
         }
         if self.pending_thread_usage_history_refresh
             && let Err(err) = self.refresh_thread_usage_history_tail(tui)

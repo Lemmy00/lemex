@@ -1,8 +1,8 @@
 ---
 source: core/tests/suite/scenarios_agent_message_board.rs
-expression: "context_snapshot::format_context_snapshot(\"Independent Codex runtimes share a local board: a writer publishes, an isolated Guardian reads and cannot publish.\",\n&bodies.iter().map(SnapshotEntry::body).collect::<Vec<_>>(),\n&ContextSnapshotOptions::default().rewrite_known_segments(),)"
+expression: "context_snapshot::format_context_snapshot(\"Independent Lemex runtimes share a local board: a writer publishes, an isolated Guardian reads and cannot publish.\",\n&bodies.iter().map(SnapshotEntry::body).collect::<Vec<_>>(),\n&ContextSnapshotOptions::default().rewrite_known_segments(),)"
 ---
-Scenario: Independent Codex runtimes share a local board: a writer publishes, an isolated Guardian reads and cannot publish.
+Scenario: Independent Lemex runtimes share a local board: a writer publishes, an isolated Guardian reads and cannot publish.
 
 ## Window 1
 -- request 1 (request) --

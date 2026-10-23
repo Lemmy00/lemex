@@ -50,7 +50,7 @@ async fn connector_auth(config: &Config) -> anyhow::Result<CodexAuth> {
         .ok_or_else(|| anyhow::anyhow!("ChatGPT auth not available"))?;
     anyhow::ensure!(
         auth.uses_codex_backend(),
-        "ChatGPT connectors require Codex backend auth"
+        "ChatGPT connectors require Lemex backend auth"
     );
     Ok(auth)
 }
@@ -144,7 +144,7 @@ pub async fn read_connector_metadata(
 ) -> anyhow::Result<ConnectorMetadataReadResult> {
     anyhow::ensure!(
         auth.uses_codex_backend(),
-        "ChatGPT backend requests require Codex backend auth"
+        "ChatGPT backend requests require Lemex backend auth"
     );
     anyhow::ensure!(
         auth.get_account_id().is_some(),

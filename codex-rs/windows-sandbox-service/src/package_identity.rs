@@ -67,13 +67,13 @@ pub(crate) fn authorize_client_process(pipe: HANDLE) -> Result<AuthorizedClientP
                 && is_known_codex_package_family(&client_family) => {}
             #[cfg(debug_assertions)]
             None if FOREGROUND_MODE.load(Ordering::Acquire) => {
-                bail!("provisioning client does not belong to a trusted Codex package family")
+                bail!("provisioning client does not belong to a trusted Lemex package family")
             }
             None => bail!("provisioning service has no package identity"),
         },
         #[cfg(debug_assertions)]
         None if FOREGROUND_MODE.load(Ordering::Acquire) => {}
-        None => bail!("provisioning clients must run with an installed Codex package identity"),
+        None => bail!("provisioning clients must run with an installed Lemex package identity"),
     }
 
     Ok(AuthorizedClientProcess { handle: process })

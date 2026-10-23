@@ -77,10 +77,7 @@ impl RateLimitRefreshState {
             self.periodic = Some(request);
         }
         // The post-reset read takes over the hold from the invalidated recovery request.
-        if matches!(
-            origin,
-            RateLimitRefreshOrigin::Recovery | RateLimitRefreshOrigin::ResetConsume { .. }
-        ) {
+        if matches!(origin, RateLimitRefreshOrigin::Recovery) {
             self.recovery = Some(PendingRecovery { request, origin });
         }
         Some(request)

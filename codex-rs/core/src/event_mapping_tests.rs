@@ -532,7 +532,7 @@ fn parses_agent_message() {
         content: vec![ContentItem::OutputText {
             annotations: None,
             logprobs: None,
-            text: "Hello from Codex".to_string(),
+            text: "Hello from Lemex".to_string(),
         }],
         phase: None,
         internal_chat_message_metadata_passthrough: None,
@@ -545,7 +545,7 @@ fn parses_agent_message() {
             let Some(AgentMessageContent::Text { text }) = message.content.first() else {
                 panic!("expected agent message text content");
             };
-            assert_eq!(text, "Hello from Codex");
+            assert_eq!(text, "Hello from Lemex");
         }
         other => panic!("expected TurnItem::AgentMessage, got {other:?}"),
     }

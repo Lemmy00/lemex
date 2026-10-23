@@ -130,7 +130,7 @@ impl App {
             header: Box::new(DaemonMenuHeader(vec![
                 Line::from("Restart background server?".bold()),
                 Line::from("Active or queued work in other chats may be interrupted."),
-                Line::from("Codex will reconnect automatically."),
+                Line::from("Lemex will reconnect automatically."),
             ])),
             items: vec![
                 SelectionItem {

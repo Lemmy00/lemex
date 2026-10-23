@@ -20,7 +20,7 @@ use wiremock::matchers::query_param;
 
 #[tokio::test]
 async fn agent_plugin_capabilities_do_not_require_runtime_data_directory() {
-    let codex_home = TempDir::new().expect("Codex home");
+    let codex_home = TempDir::new().expect("Lemex home");
     let store = PluginStore::new(codex_home.path().to_path_buf());
     let plugin_id = PluginId::parse("example@test").expect("plugin id");
     let root = store.plugin_root(&plugin_id, "1.0.0");

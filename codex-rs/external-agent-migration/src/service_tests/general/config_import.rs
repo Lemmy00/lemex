@@ -177,7 +177,7 @@ async fn import_home_migrates_supported_config_fields_skills_and_agents_md() {
 
     assert_eq!(
         fs::read_to_string(codex_home.join("AGENTS.md")).expect("read agents"),
-        "Codex guidance"
+        "Lemex guidance"
     );
 
     let config: TomlValue =
@@ -203,8 +203,8 @@ MY_TEAM = "codex"
         fs::read_to_string(agents_skills.join("skill-a").join("SKILL.md"))
             .expect("read copied skill"),
         format!(
-            "Use Codex and Codex utilities.\n\
-             Open [Codex settings](https://{SOURCE_EXTERNAL_AGENT_NAME}.ai/settings)\n\
+            "Use Lemex and Lemex utilities.\n\
+             Open [Lemex settings](https://{SOURCE_EXTERNAL_AGENT_NAME}.ai/settings)\n\
              or <HTTPS://{SOURCE_EXTERNAL_AGENT_UPPER_NAME}.ai/{EXTERNAL_AGENT_CONFIG_MD}>.\n\
              Read [AGENTS.md](./AGENTS.md)."
         )

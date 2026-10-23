@@ -27,7 +27,7 @@ Options:
 
       --strict-config
           Error out when config.toml contains fields that are not recognized by
-          this version of Codex
+          this version of Lemex
 
       --disable <FEATURE>
           Disable a feature (repeatable). Equivalent to `-c

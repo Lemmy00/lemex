@@ -10,7 +10,6 @@ use codex_app_server_protocol::ThreadUsage;
 use pretty_assertions::assert_eq;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use serial_test::serial;
 
 #[tokio::test]
 async fn finalized_voice_transcript_renders_beside_the_streamed_cell() {
@@ -38,13 +37,6 @@ async fn finalized_voice_transcript_renders_beside_the_streamed_cell() {
             .expect("render voice transcript");
         assert_chatwidget_snapshot!(snapshot, normalized_backend_snapshot(terminal.backend()));
     }
-}
-
-fn enable_test_ambient_pet(chat: &mut ChatWidget) {
-    chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Supported(
-        crate::pets::ImageProtocol::Kitty,
-    ));
-    chat.install_test_ambient_pet_for_tests(/*animations_enabled*/ false);
 }
 
 fn take_workspace_headline_request_id(
@@ -148,6 +140,7 @@ async fn daybreak_refusal_offers_enable_for_the_next_turn() {
         FrameRequester::test_dummy(),
     )
     .await;
+    chat.config.model_provider_id = "openai".to_string();
     chat.set_feature_enabled(Feature::CliDaybreak, /*enabled*/ true);
     let thread_id = ThreadId::new();
     chat.thread_id = Some(thread_id);
@@ -571,55 +564,6 @@ async fn completed_plan_table_tail_skips_provisional_history_insert() {
 }
 
 #[tokio::test]
-#[cfg_attr(target_os = "windows", ignore = "disabled on windows")]
-async fn configured_pet_load_is_deferred_until_after_construction() {
-    let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
-    let tx = AppEventSender::new(tx_raw);
-    let (_codex_home, mut cfg) = test_config().await;
-    cfg.tui_pet = Some(crate::pets::DEFAULT_PET_ID.to_string());
-    crate::pets::write_test_pack(&cfg.codex_home);
-    let resolved_model = get_model_offline_for_tests(cfg.model.as_deref());
-    let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
-    let init = ChatWidgetInit {
-        requires_openai_auth: true,
-        local_settings: crate::local_settings::LocalSettings::from(&cfg),
-        config: cfg.clone(),
-        frame_requester: FrameRequester::test_dummy(),
-        app_event_tx: tx,
-        workspace_command_runner: None,
-        initial_user_message: None,
-        enhanced_keys_supported: false,
-        has_chatgpt_account: false,
-        has_codex_backend_auth: false,
-        model_catalog: test_model_catalog(&cfg),
-        feedback: codex_feedback::CodexFeedback::new(),
-        is_first_run: true,
-        status_account_display: None,
-        initial_plan_type: None,
-        model: Some(resolved_model),
-        startup_tooltip_override: None,
-        status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
-        terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
-        session_telemetry,
-    };
-
-    let chat = ChatWidget::new_with_app_event(init);
-
-    assert!(!chat.ambient_pet_image_enabled());
-    let event = tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 30), rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_matches!(
-        event,
-        AppEvent::ConfiguredPetLoaded { pet_id, result, .. } => {
-            assert_eq!(pet_id, crate::pets::DEFAULT_PET_ID);
-            assert!(result.unwrap().is_some());
-        }
-    );
-}
-
-#[tokio::test]
 async fn prefetch_rate_limits_is_gated_on_chatgpt_auth_provider() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
@@ -628,6 +572,7 @@ async fn prefetch_rate_limits_is_gated_on_chatgpt_auth_provider() {
     // The server requires auth even if the local provider does not.
     chat.config.model_provider.requires_openai_auth = false;
     set_chatgpt_auth(&mut chat);
+    chat.requires_openai_auth = true;
     assert!(chat.should_prefetch_rate_limits());
 
     // Conversely, a local OpenAI provider cannot enable usage for a different server.
@@ -1608,7 +1553,12 @@ async fn rate_limit_usage_warnings_keep_newly_reached_workspace_limit() {
             "Usage limit reached.".to_string(),
         );
         let popup = render_bottom_popup(&chat, /*width*/ 100);
-        assert!(popup.contains("Request a limit increase from your owner"));
+        assert!(!popup.contains("Request a limit increase from your owner"));
+        let rendered = drain_insert_history(&mut rx)
+            .into_iter()
+            .map(|lines| lines_to_single_string(&lines))
+            .collect::<String>();
+        assert!(rendered.contains("Usage limit reached."));
     }
 }
 
@@ -1711,7 +1661,7 @@ async fn rolling_credits_preserve_depleted_workspace_error_routing() {
     );
     let popup = render_bottom_popup(&chat, /*width*/ 100);
     assert!(
-        popup.contains("Ask your workspace owner to add more"),
+        !popup.contains("Ask your workspace owner to add more"),
         "popup: {popup}"
     );
 }
@@ -1857,93 +1807,6 @@ async fn rate_limit_switch_prompt_popup_snapshot() {
 }
 
 #[tokio::test]
-async fn workspace_member_credits_depleted_prompts_and_sends_credits() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let mut limits = snapshot(/*percent*/ 100.0);
-    limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceMemberCreditsDepleted);
-    chat.on_rate_limit_snapshot(Some(limits));
-
-    chat.on_rate_limit_error(
-        RateLimitErrorKind::Generic,
-        "Usage limit reached.".to_string(),
-    );
-    let popup = render_bottom_popup(&chat, /*width*/ 90);
-    assert_chatwidget_snapshot!("workspace_member_credits_depleted_prompt", popup);
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-    let event = next_send_add_credits_nudge_email_event(&mut rx);
-    assert_eq!(event, AddCreditsNudgeCreditType::Credits);
-}
-
-#[tokio::test]
-async fn workspace_member_usage_limit_prompts_and_sends_usage_limit() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let mut limits = snapshot(/*percent*/ 100.0);
-    limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached);
-    chat.on_rate_limit_snapshot(Some(limits));
-
-    chat.on_rate_limit_error(
-        RateLimitErrorKind::UsageLimit,
-        "Usage limit reached.".to_string(),
-    );
-    let popup = render_bottom_popup(&chat, /*width*/ 100);
-    assert_chatwidget_snapshot!("workspace_member_usage_limit_prompt", popup);
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-    let event = next_send_add_credits_nudge_email_event(&mut rx);
-    assert_eq!(event, AddCreditsNudgeCreditType::UsageLimit);
-}
-
-#[tokio::test]
-async fn sparse_rate_limit_snapshot_preserves_member_limit_type_for_error_prompt() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let mut usage_limits = snapshot(/*percent*/ 100.0);
-    usage_limits.rate_limit_reached_type =
-        Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached);
-    chat.on_rate_limit_snapshot(Some(usage_limits));
-
-    let mut rolling_limits = snapshot(/*percent*/ 100.0);
-    rolling_limits.rate_limit_reached_type = None;
-    chat.on_rolling_rate_limit_snapshot(rolling_limits);
-
-    chat.on_rate_limit_error(
-        RateLimitErrorKind::UsageLimit,
-        "Usage limit reached.".to_string(),
-    );
-    let popup = render_bottom_popup(&chat, /*width*/ 100);
-    assert!(
-        popup.contains("Request a limit increase from your owner"),
-        "popup: {popup}"
-    );
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-    let event = next_send_add_credits_nudge_email_event(&mut rx);
-    assert_eq!(event, AddCreditsNudgeCreditType::UsageLimit);
-}
-
-#[tokio::test]
-async fn usage_limit_error_remaps_stale_member_credits_state_to_usage_limit_prompt() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let mut limits = snapshot(/*percent*/ 100.0);
-    limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceMemberCreditsDepleted);
-    chat.on_rate_limit_snapshot(Some(limits));
-
-    chat.on_rate_limit_error(
-        RateLimitErrorKind::UsageLimit,
-        "Usage limit reached.".to_string(),
-    );
-    let popup = render_bottom_popup(&chat, /*width*/ 100);
-    assert!(
-        popup.contains("Request a limit increase from your owner"),
-        "popup: {popup}"
-    );
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-    let event = next_send_add_credits_nudge_email_event(&mut rx);
-    assert_eq!(event, AddCreditsNudgeCreditType::UsageLimit);
-}
-
-#[tokio::test]
 async fn workspace_owner_limit_states_do_not_prompt_for_owner_nudge() {
     for (limit_type, error_kind) in [
         (
@@ -1972,17 +1835,17 @@ async fn workspace_owner_limit_states_do_not_prompt_for_owner_nudge() {
 }
 
 #[tokio::test]
-async fn workspace_owner_limit_states_render_state_specific_messages() {
+async fn workspace_limit_errors_preserve_provider_message_without_purchase_copy() {
     let cases = [
         (
             RateLimitReachedType::WorkspaceOwnerCreditsDepleted,
             RateLimitErrorKind::Generic,
-            "You're out of credits. Your workspace is out of credits. Add credits to continue using Lemex.",
+            "Usage limit reached.",
         ),
         (
             RateLimitReachedType::WorkspaceOwnerUsageLimitReached,
             RateLimitErrorKind::UsageLimit,
-            "Usage limit reached. You've reached your usage limit. Increase your limits to continue using codex.",
+            "Usage limit reached.",
         ),
     ];
 
@@ -2003,13 +1866,13 @@ async fn workspace_owner_limit_states_render_state_specific_messages() {
     }
 
     assert_chatwidget_snapshot!(
-        "workspace_owner_limit_state_messages",
+        "workspace_limit_error_messages",
         rendered_cases.join("\n---\n")
     );
 }
 
 #[tokio::test]
-async fn academic_researchers_usage_limit_renders_admin_guidance() {
+async fn usage_limit_keeps_retry_diagnostics_without_account_marketing() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let error = codex_protocol::error::UsageLimitReachedError {
         plan_type: Some(codex_protocol::auth::PlanType::Known(
@@ -2027,7 +1890,7 @@ async fn academic_researchers_usage_limit_renders_admin_guidance() {
             .into_iter()
             .map(|lines| lines_to_single_string(&lines))
             .collect::<String>(),
-        @"■ You’ve hit your usage limit. To get more access now, send a request to your admin or try again later."
+        @"■ You’ve hit your usage limit. Try again later."
     );
 }
 
@@ -2043,156 +1906,6 @@ async fn missing_rate_limit_reached_type_does_not_prompt_or_refresh() {
     let popup = render_bottom_popup(&chat, /*width*/ 90);
     assert!(!popup.contains("workspace owner"));
     assert_no_owner_nudge_or_rate_limit_refresh(&mut rx);
-}
-
-#[tokio::test]
-async fn workspace_owner_nudge_default_no_dismisses_without_sending() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let mut limits = snapshot(/*percent*/ 100.0);
-    limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceMemberCreditsDepleted);
-    chat.on_rate_limit_snapshot(Some(limits));
-
-    chat.on_rate_limit_error(
-        RateLimitErrorKind::Generic,
-        "Usage limit reached.".to_string(),
-    );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-    assert_no_owner_nudge_or_rate_limit_refresh(&mut rx);
-}
-
-#[tokio::test]
-async fn workspace_owner_nudge_reappears_after_dismissing_no() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let mut limits = snapshot(/*percent*/ 100.0);
-    limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached);
-    chat.on_rate_limit_snapshot(Some(limits));
-
-    chat.on_rate_limit_error(
-        RateLimitErrorKind::UsageLimit,
-        "Usage limit reached.".to_string(),
-    );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert_no_owner_nudge_or_rate_limit_refresh(&mut rx);
-
-    chat.on_rate_limit_error(
-        RateLimitErrorKind::UsageLimit,
-        "Usage limit reached.".to_string(),
-    );
-    let popup = render_bottom_popup(&chat, /*width*/ 100);
-    assert!(
-        popup.contains("Request a limit increase from your owner"),
-        "popup: {popup}"
-    );
-}
-
-#[tokio::test]
-async fn workspace_owner_credits_nudge_completion_renders_feedback() {
-    let cases = [
-        (
-            Ok(AddCreditsNudgeEmailStatus::Sent),
-            "Workspace owner notified.",
-        ),
-        (
-            Ok(AddCreditsNudgeEmailStatus::CooldownActive),
-            "Workspace owner was already notified recently.",
-        ),
-        (
-            Err("request failed".to_string()),
-            "Could not notify your workspace owner. Please try again.",
-        ),
-    ];
-
-    let mut rendered_cases = Vec::new();
-    for (result, expected) in cases {
-        let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-        let request_id = chat
-            .start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::Credits)
-            .expect("start notification");
-        chat.finish_add_credits_nudge_email_request(request_id, result);
-        let rendered = drain_insert_history(&mut rx)
-            .into_iter()
-            .map(|lines| lines_to_single_string(&lines))
-            .collect::<String>();
-        assert!(rendered.contains(expected), "rendered: {rendered}");
-        rendered_cases.push(rendered);
-    }
-
-    assert_chatwidget_snapshot!(
-        "workspace_owner_credits_nudge_completion_feedback",
-        rendered_cases.join("\n---\n")
-    );
-}
-
-#[tokio::test]
-async fn workspace_owner_usage_limit_nudge_completion_renders_feedback() {
-    let cases = [
-        (
-            Ok(AddCreditsNudgeEmailStatus::Sent),
-            "Limit increase requested.",
-        ),
-        (
-            Ok(AddCreditsNudgeEmailStatus::CooldownActive),
-            "A limit increase was already requested recently.",
-        ),
-        (
-            Err("request failed".to_string()),
-            "Could not request a limit increase. Please try again.",
-        ),
-    ];
-
-    let mut rendered_cases = Vec::new();
-    for (result, expected) in cases {
-        let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-        let request_id = chat
-            .start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::UsageLimit)
-            .expect("start notification");
-        assert!(
-            chat.start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::Credits)
-                .is_none()
-        );
-        chat.finish_add_credits_nudge_email_request(request_id, result);
-        let rendered = drain_insert_history(&mut rx)
-            .into_iter()
-            .map(|lines| lines_to_single_string(&lines))
-            .collect::<String>();
-        assert!(rendered.contains(expected), "rendered: {rendered}");
-        rendered_cases.push(rendered);
-        assert!(
-            chat.start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::Credits)
-                .is_some()
-        );
-    }
-
-    assert_chatwidget_snapshot!(
-        "workspace_owner_usage_limit_nudge_completion_feedback",
-        rendered_cases.join("\n---\n")
-    );
-}
-
-fn next_send_add_credits_nudge_email_event(
-    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
-) -> AddCreditsNudgeCreditType {
-    while let Ok(event) = rx.try_recv() {
-        if let AppEvent::SendAddCreditsNudgeEmail { credit_type } = event {
-            return credit_type;
-        }
-    }
-    panic!("expected SendAddCreditsNudgeEmail app event");
-}
-
-fn assert_no_owner_nudge_or_rate_limit_refresh(
-    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
-) {
-    while let Ok(event) = rx.try_recv() {
-        assert!(
-            !matches!(
-                event,
-                AppEvent::SendAddCreditsNudgeEmail { .. } | AppEvent::RefreshRateLimits { .. }
-            ),
-            "unexpected event: {event:?}"
-        );
-    }
 }
 
 #[tokio::test]
@@ -2554,277 +2267,6 @@ async fn ui_small_heights_hide_running_state() {
         assert_eq!(
             normalized_backend_snapshot(terminal.backend()),
             normalized_backend_snapshot(idle_terminal.backend()),
-        );
-    }
-}
-
-#[tokio::test]
-#[serial]
-async fn ambient_pet_stays_hidden_until_a_pet_is_selected() {
-    use ratatui::layout::Rect;
-
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.set_pet_image_support_for_tests(crate::pets::PetImageSupport::Supported(
-        crate::pets::ImageProtocol::Kitty,
-    ));
-    assert!(chat.ambient_pet.is_none());
-
-    crate::pets::write_test_pack(&chat.config.codex_home);
-    chat.set_tui_pet(Some("codex".to_string()));
-
-    let area = Rect::new(
-        /*x*/ 0, /*y*/ 0, /*width*/ 60, /*height*/ 20,
-    );
-    let draw = chat
-        .ambient_pet_draw(area, area.bottom())
-        .expect("ambient pet draw request");
-    assert_eq!(draw.x, 51);
-    assert_eq!(draw.y, 14);
-    assert_eq!(draw.columns, 9);
-    assert_eq!(draw.rows, 5);
-    assert_eq!(
-        draw.y.saturating_add(draw.rows),
-        area.bottom().saturating_sub(/*rhs*/ 1)
-    );
-
-    handle_turn_started(&mut chat, "turn-1");
-    handle_agent_reasoning_delta(&mut chat, "**Thinking**");
-    let draw_with_status = chat
-        .ambient_pet_draw(area, area.bottom())
-        .expect("ambient pet draw request with status");
-    assert_eq!(draw_with_status.y, draw.y);
-    assert_eq!(
-        draw_with_status.y.saturating_add(draw_with_status.rows),
-        area.bottom().saturating_sub(/*rhs*/ 1)
-    );
-}
-
-#[tokio::test]
-#[serial]
-async fn ambient_pet_screen_bottom_anchor_uses_terminal_bottom() {
-    use codex_config::types::TuiPetAnchor;
-    use ratatui::layout::Rect;
-
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    enable_test_ambient_pet(&mut chat);
-
-    let terminal_area = Rect::new(
-        /*x*/ 0, /*y*/ 0, /*width*/ 80, /*height*/ 24,
-    );
-    let composer_bottom_y = 20;
-    let default_draw = chat
-        .ambient_pet_draw(terminal_area, composer_bottom_y)
-        .expect("composer-anchored pet draw request");
-    assert_eq!(default_draw.y, 14);
-
-    chat.local_settings.tui.pet_anchor = TuiPetAnchor::ScreenBottom;
-    let screen_bottom_draw = chat
-        .ambient_pet_draw(terminal_area, composer_bottom_y)
-        .expect("screen-bottom anchored pet draw request");
-    assert_eq!(screen_bottom_draw.y, 18);
-}
-
-#[tokio::test]
-#[serial]
-async fn ambient_pet_can_be_disabled() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    chat.set_tui_pet(Some(crate::pets::DISABLED_PET_ID.to_string()));
-
-    assert!(chat.ambient_pet.is_none());
-}
-
-#[tokio::test]
-async fn added_history_uses_pet_adjusted_terminal_width() {
-    #[derive(Debug)]
-    struct WidthCell(std::sync::Arc<std::sync::atomic::AtomicU16>);
-
-    impl HistoryCell for WidthCell {
-        fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-            self.0.store(width, std::sync::atomic::Ordering::Relaxed);
-            if width == u16::MAX {
-                Vec::new()
-            } else {
-                vec!["width-sensitive history".into()]
-            }
-        }
-
-        fn raw_lines(&self) -> Vec<Line<'static>> {
-            Vec::new()
-        }
-    }
-
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    enable_test_ambient_pet(&mut chat);
-    chat.last_rendered_width.set(Some(80));
-    set_active_cell(
-        &mut chat,
-        Box::new(PlainHistoryCell::new(vec!["active response".into()])),
-    );
-    let width = std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0));
-
-    chat.add_to_history(WidthCell(std::sync::Arc::clone(&width)));
-
-    assert_eq!(width.load(std::sync::atomic::Ordering::Relaxed), 69);
-    let backend = VT100Backend::new(/*width*/ 80, /*height*/ 4);
-    let mut terminal = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
-    terminal.set_viewport_area(Rect::new(
-        /*x*/ 0, /*y*/ 3, /*width*/ 80, /*height*/ 1,
-    ));
-    for lines in drain_insert_history(&mut rx) {
-        crate::insert_history::insert_history_lines(&mut terminal, lines)
-            .expect("insert history lines");
-    }
-    insta::assert_snapshot!(terminal.backend().vt100().screen().contents().trim(), @r"
-active response
-
-width-sensitive history
-");
-
-    width.store(0, std::sync::atomic::Ordering::Relaxed);
-    chat.set_raw_output_mode(/*enabled*/ true);
-    chat.last_rendered_width.set(Some(12));
-    chat.add_to_history(WidthCell(std::sync::Arc::clone(&width)));
-    assert_eq!(width.load(std::sync::atomic::Ordering::Relaxed), 0);
-}
-
-#[tokio::test]
-#[serial]
-async fn ambient_pet_reserves_history_wrap_width() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    enable_test_ambient_pet(&mut chat);
-
-    assert_eq!(chat.history_wrap_width(/*width*/ 80), 69);
-
-    chat.set_tui_pet(Some(crate::pets::DISABLED_PET_ID.to_string()));
-
-    assert_eq!(chat.history_wrap_width(/*width*/ 80), 80);
-}
-
-#[tokio::test]
-#[serial]
-async fn ambient_pet_reduces_stream_width_and_composer_text_width() {
-    use ratatui::Terminal;
-
-    let (mut with_pet, _with_pet_rx, _with_pet_op_rx) =
-        make_chatwidget_manual(/*model_override*/ None).await;
-    enable_test_ambient_pet(&mut with_pet);
-    with_pet.last_rendered_width.set(Some(80));
-    let stream_width_with_pet = with_pet.current_stream_width(/*reserved_cols*/ 2);
-
-    let (mut disabled, _disabled_rx, _disabled_op_rx) =
-        make_chatwidget_manual(/*model_override*/ None).await;
-    disabled.set_tui_pet(Some(crate::pets::DISABLED_PET_ID.to_string()));
-    disabled.last_rendered_width.set(Some(80));
-    let stream_width_without_pet = disabled.current_stream_width(/*reserved_cols*/ 2);
-
-    assert_eq!(
-        stream_width_with_pet,
-        crate::width::usable_content_width(/*total_width*/ 69, /*reserved_cols*/ 2)
-    );
-    assert_eq!(
-        stream_width_without_pet,
-        crate::width::usable_content_width(/*total_width*/ 80, /*reserved_cols*/ 2)
-    );
-    assert!(stream_width_with_pet < stream_width_without_pet);
-
-    let draft =
-        "Minim commodo esse elit Lorem exercitation elit ipsum proident labore. Esse culpa aliqua"
-            .to_string();
-    with_pet
-        .bottom_pane
-        .set_composer_text(draft.clone(), Vec::new(), Vec::new());
-    disabled
-        .bottom_pane
-        .set_composer_text(draft, Vec::new(), Vec::new());
-
-    let mut with_pet_terminal =
-        Terminal::new(TestBackend::new(/*width*/ 80, /*height*/ 6)).expect("create terminal");
-    with_pet_terminal
-        .draw(|f| with_pet.render(f.area(), f.buffer_mut()))
-        .expect("draw pet-enabled chat");
-    let mut disabled_terminal =
-        Terminal::new(TestBackend::new(/*width*/ 80, /*height*/ 6)).expect("create terminal");
-    disabled_terminal
-        .draw(|f| disabled.render(f.area(), f.buffer_mut()))
-        .expect("draw disabled-pet chat");
-
-    let pet_row = buffer_row_containing(with_pet_terminal.backend().buffer(), "Minim")
-        .expect("pet-enabled composer row should render draft");
-    let disabled_row = buffer_row_containing(disabled_terminal.backend().buffer(), "Minim")
-        .expect("disabled-pet composer row should render draft");
-
-    assert!(row_tail_is_blank(&pet_row, /*start_col*/ 69));
-    assert!(!row_tail_is_blank(&disabled_row, /*start_col*/ 69));
-}
-
-fn buffer_row_containing(buffer: &ratatui::buffer::Buffer, text: &str) -> Option<String> {
-    (0..buffer.area.height)
-        .map(|y| {
-            (0..buffer.area.width)
-                .map(|x| buffer.cell((x, y)).expect("cell should exist").symbol())
-                .collect::<String>()
-        })
-        .find(|row| row.contains(text))
-}
-
-fn row_tail_is_blank(row: &str, start_col: usize) -> bool {
-    row.chars().skip(start_col).all(char::is_whitespace)
-}
-
-#[tokio::test]
-#[serial]
-async fn ambient_pet_draw_uses_terminal_screen_area_not_short_inline_viewport() {
-    use ratatui::layout::Rect;
-
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    enable_test_ambient_pet(&mut chat);
-
-    assert!(
-        chat.ambient_pet_draw(
-            Rect::new(
-                /*x*/ 0, /*y*/ 21, /*width*/ 80, /*height*/ 3,
-            ),
-            /*composer_bottom_y*/ 24
-        )
-        .is_none(),
-        "a normal short inline viewport cannot fit the ambient pet"
-    );
-
-    let draw = chat
-        .ambient_pet_draw(
-            Rect::new(
-                /*x*/ 0, /*y*/ 0, /*width*/ 80, /*height*/ 24,
-            ),
-            /*composer_bottom_y*/ 24,
-        )
-        .expect("full terminal screen has room for the ambient pet");
-    assert_eq!(draw.x, 71);
-    assert_eq!(draw.y, 18);
-}
-
-#[tokio::test]
-#[serial]
-async fn ambient_pet_hides_notification_text_overlay() {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    enable_test_ambient_pet(&mut chat);
-    for (kind, label) in [
-        (crate::pets::PetNotificationKind::Running, "Running"),
-        (crate::pets::PetNotificationKind::Waiting, "Needs input"),
-        (crate::pets::PetNotificationKind::Review, "Ready"),
-        (crate::pets::PetNotificationKind::Failed, "Blocked"),
-    ] {
-        chat.set_ambient_pet_notification(kind, /*body*/ None);
-        let mut terminal = Terminal::new(TestBackend::new(60, 20)).expect("create terminal");
-        terminal
-            .draw(|f| chat.render(f.area(), f.buffer_mut()))
-            .expect("draw ambient pet notification");
-        assert!(
-            !normalized_backend_snapshot(terminal.backend()).contains(label),
-            "did not expect {label} notification text to render"
         );
     }
 }
@@ -5936,4 +5378,15 @@ async fn chatwidget_tall() {
         "chatwidget_tall",
         normalize_snapshot_paths(term.backend().vt100().screen().contents())
     );
+}
+
+fn assert_no_owner_nudge_or_rate_limit_refresh(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+) {
+    while let Ok(event) = rx.try_recv() {
+        assert!(
+            !matches!(event, AppEvent::RefreshRateLimits { .. }),
+            "unexpected event: {event:?}"
+        );
+    }
 }

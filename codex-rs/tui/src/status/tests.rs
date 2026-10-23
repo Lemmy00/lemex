@@ -349,7 +349,7 @@ async fn status_snapshot_includes_reasoning_details() {
 }
 
 #[tokio::test]
-async fn status_snapshot_shows_chatgpt_plan_without_email() {
+async fn status_renders_remote_plan_without_enabling_account_login() {
     let temp_home = TempDir::new().expect("temp home");
     let profile_path = temp_home.path().join("work.config.toml");
     let loader_overrides = LoaderOverrides {
@@ -398,16 +398,13 @@ async fn status_snapshot_shows_chatgpt_plan_without_email() {
         .await
         .expect("bootstrap app server session");
     app_server.shutdown().await.expect("shut down app server");
-    let account_display = bootstrap
-        .status_account_display
-        .expect("bootstrap should return ChatGPT account display");
-    assert_eq!(
-        account_display,
-        StatusAccountDisplay::ChatGpt {
-            email: None,
-            plan: Some("Enterprise (Automation)".to_string()),
-        }
-    );
+    // API-only Lemex must not activate a saved ChatGPT login during bootstrap.
+    assert!(bootstrap.status_account_display.is_none());
+    // Remote protocol data can still carry a plan; its local status rendering is compatible.
+    let account_display = StatusAccountDisplay::ChatGpt {
+        email: None,
+        plan: Some("Enterprise (Automation)".to_string()),
+    };
     let usage = TokenUsage::default();
     let captured_at = chrono::Local
         .with_ymd_and_hms(2024, 1, 2, 3, 4, 5)

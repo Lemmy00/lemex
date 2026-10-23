@@ -8,7 +8,11 @@ All five tarballs use the single npm package name `@lemmy00/lemex`. The four nat
 versions have suffixes such as `0.1.0-linux-x64`; the launcher at `0.1.0` selects
 the correct native version using npm's optional dependencies and OS/CPU filters.
 Each native package includes the CLI, code-mode host, ripgrep, runtime metadata,
-and, on Linux, the sandbox helper. Configuration and model defaults are embedded
+the same-build voice helper and pinned native audio libraries, and, on Linux,
+the sandbox helper. Linux pairs the musl CLI with a GNU voice helper (glibc 2.28+).
+The macOS voice runtime requires macOS 14+. No separate GStreamer installation
+is needed. Microphone/speaker hardware and a provider supporting the realtime
+voice API are required for a live conversation. Configuration and model defaults are embedded
 in the CLI and installed by `lemex setup`.
 
 ## First release
@@ -77,6 +81,8 @@ Reuse requires a successful run of this workflow on the same repository and
 branch, with unchanged native build inputs. The workflow preserves the original native
 binaries, restages package metadata and the launcher from the current checkout,
 audits dependencies again, and validates all five tarballs before publishing.
+Voice helpers, libraries, notices and integrity manifests are preserved byte for
+byte. Artifacts built before native voice packaging cannot be reused.
 
 This uses npm's OIDC trusted publishing, with no npm token stored in GitHub.
 Configure it when ready to publish: npm currently requires a new trusted
@@ -86,6 +92,12 @@ publisher to complete its first publication within two days. See
 Each platform must pass an actual global npm installation in an isolated prefix,
 using its compiled native package. The install check exercises the launcher,
 exact optional-dependency aliases, OS/CPU selection, version, and setup/exec help.
+Native helper unit tests and installed-client UDP/TCP negotiation tests also run
+on each platform. The install check relocates the installed native package to a path containing spaces, checks
+the voice helper build commit, initializes the packaged GStreamer libraries,
+creates an audio SDP offer, and shuts the helper down. This does not open audio
+devices or prove a live backend conversation. The public-release receipt seals
+verified runtime bytes; it does not assert Apple signing or notarization.
 The final assembly validates and dry-runs the complete release before the
 optional publishing job runs.
 

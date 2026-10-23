@@ -268,7 +268,7 @@ async fn reconnect_daemon_command_center_after_socket_replacement_without_a_conv
         // A shutdown error can cover the initial command center when its first New fails.
         if previous_thread.is_none() && overview_initialized {
             app.show_agents_overview_error(
-                Some("Codex's background server is shutting down"),
+                Some("Lemex's background server is shutting down"),
                 "Waiting for active turns.".into(),
             );
         }
