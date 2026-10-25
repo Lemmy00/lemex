@@ -147,3 +147,18 @@ python3 -m unittest discover -s scripts -p 'test_npm_release.py'
 
 These tests include a small executable fixture to verify npm's dependency
 selection offline. Full compiled-binary checks run in the release workflow.
+
+## Temporary security exception for 0.1.3
+
+The release owner approved a temporary exception on 2026-10-25 for
+[RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387.html).
+The existing `crypto-bigint 0.5.5` dependency can leak secret-dependent timing
+information. It is reached through `elliptic-curve 0.13` in age/hpke, AWS login,
+RTC, and user verification. The 0.5 series has no patched release; the fixed
+0.7.6+ series does not satisfy these parent dependencies' version constraints.
+
+This exception accepts the reported risk; it does not fix the vulnerability.
+It is recorded in both `codex-rs/deny.toml` and `codex-rs/.cargo/audit.toml` and
+applies only to this advisory. Review it before the next release or by
+2026-11-24, and remove it when the parent dependencies can use the patched
+series. All other release security checks remain in force.
