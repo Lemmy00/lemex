@@ -4,10 +4,13 @@ use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelMessages;
 use codex_protocol::openai_models::ModelVisibility;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::openai_models::TruncationMode;
 use codex_protocol::openai_models::TruncationPolicyConfig;
 use codex_protocol::openai_models::WebSearchToolType;
 use codex_protocol::openai_models::default_input_modalities;
+use codex_protocol::protocol::MultiAgentVersion;
 
 use crate::config::ModelsManagerConfig;
 use codex_utils_output_truncation::approx_bytes_for_tokens;
@@ -15,6 +18,42 @@ use tracing::warn;
 
 pub const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
 const PERSONALITY_SECTION_HEADER: &str = "# Personality";
+
+/// Ultra is a local orchestration mode, not an extra provider reasoning value.
+/// Enrich both cached and static catalogs so an existing installation can use it
+/// without rewriting the user's model catalog or requiring a backend change.
+pub fn with_local_ultra(mut model: ModelInfo) -> ModelInfo {
+    if model.used_fallback_model_metadata
+        || matches!(
+            model.multi_agent_version,
+            Some(MultiAgentVersion::Disabled | MultiAgentVersion::V1)
+        )
+        || !model.supported_reasoning_levels.iter().any(|preset| {
+            !matches!(
+                preset.effort,
+                ReasoningEffort::None | ReasoningEffort::Ultra
+            )
+        })
+    {
+        return model;
+    }
+
+    model.multi_agent_version = Some(MultiAgentVersion::V2);
+    if !model
+        .supported_reasoning_levels
+        .iter()
+        .any(|preset| preset.effort == ReasoningEffort::Ultra)
+    {
+        model
+            .supported_reasoning_levels
+            .push(ReasoningEffortPreset {
+                effort: ReasoningEffort::Ultra,
+                description: "Maximum supported reasoning with automatic task delegation"
+                    .to_string(),
+            });
+    }
+    model
+}
 
 pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig) -> ModelInfo {
     if let Some(context_window) = config.model_context_window {

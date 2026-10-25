@@ -1384,6 +1384,109 @@ fn reasoning_effort_in_request(
 }
 
 #[test]
+fn third_party_ultra_messages_use_standard_responses_input_without_changing_history() {
+    use codex_protocol::models::AgentMessageInputContent;
+    let original = ResponseItem::AgentMessage {
+        id: None,
+        author: "child-agent".to_string(),
+        recipient: "parent-agent".to_string(),
+        content: vec![AgentMessageInputContent::InputText {
+            text: "ULTRA_CHILD_OK".to_string(),
+        }],
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let prompt = Prompt {
+        input: vec![original.clone()],
+        ..Default::default()
+    };
+    for provider in [
+        ModelProviderInfo::create_rcp_provider(None),
+        ModelProviderInfo::create_openai_provider(None),
+    ] {
+        let is_openai = provider.is_openai();
+        let mut client = test_model_client(SessionSource::Cli);
+        Arc::get_mut(&mut client.state).unwrap().provider = create_model_provider(provider, None);
+        let request = client
+            .build_responses_request(
+                &prompt,
+                &test_model_info(),
+                None,
+                codex_protocol::config_types::ReasoningSummary::None,
+                None,
+                &test_responses_metadata_for_client(
+                    &client,
+                    None,
+                    format!("{}:0", client.state.thread_id),
+                    None,
+                    TestCodexResponsesRequestKind::Turn,
+                ),
+                false,
+            )
+            .unwrap();
+        let last = request.input.last().unwrap();
+        if is_openai {
+            assert_eq!(last, &original);
+        } else {
+            let body = serde_json::to_value(last).unwrap();
+            assert_eq!(body["type"], "message");
+            assert_eq!(body["role"], "user");
+            assert_eq!(body["content"][0]["type"], "input_text");
+            let text = body["content"][0]["text"].as_str().unwrap();
+            let message: serde_json::Value = serde_json::from_str(
+                text.strip_prefix("<agent_message>\n")
+                    .unwrap()
+                    .strip_suffix("\n</agent_message>")
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                message,
+                json!({"author":"child-agent","recipient":"parent-agent","content":["ULTRA_CHILD_OK"]})
+            );
+        }
+        assert_eq!(prompt.input, vec![original.clone()]);
+    }
+}
+
+#[test]
+fn third_party_ultra_does_not_forward_or_silently_discard_encrypted_agent_content() {
+    let prompt = Prompt {
+        input: vec![ResponseItem::AgentMessage {
+            id: None,
+            author: "child".to_string(),
+            recipient: "parent".to_string(),
+            content: vec![
+                codex_protocol::models::AgentMessageInputContent::EncryptedContent {
+                    encrypted_content: "private-ciphertext".to_string(),
+                },
+            ],
+            internal_chat_message_metadata_passthrough: None,
+        }],
+        ..Default::default()
+    };
+    let client = test_model_client(SessionSource::Cli);
+    let error = client
+        .build_responses_request(
+            &prompt,
+            &test_model_info(),
+            None,
+            codex_protocol::config_types::ReasoningSummary::None,
+            None,
+            &test_responses_metadata_for_client(
+                &client,
+                None,
+                format!("{}:0", client.state.thread_id),
+                None,
+                TestCodexResponsesRequestKind::Turn,
+            ),
+            false,
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("encrypted inter-agent messages"));
+    assert!(!error.to_string().contains("private-ciphertext"));
+}
+
+#[test]
 fn custom_provider_omits_unadvertised_reasoning_and_preserves_supported_efforts() {
     let client = test_model_client(SessionSource::Cli);
     let mut model = test_model_info();

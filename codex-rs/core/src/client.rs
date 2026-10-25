@@ -88,6 +88,8 @@ use codex_protocol::auth::AuthMode;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::config_types::Verbosity as VerbosityConfig;
+use codex_protocol::models::AgentMessageInputContent;
+use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
@@ -1099,6 +1101,36 @@ impl ModelClient {
         }
         if !is_openai {
             for item in &mut input {
+                if let ResponseItem::AgentMessage {
+                    author,
+                    recipient,
+                    content,
+                    ..
+                } = item
+                {
+                    let content = content.iter().map(|part| match part {
+                        AgentMessageInputContent::InputText { text } => Ok(text.as_str()),
+                        AgentMessageInputContent::EncryptedContent { .. } => Err(CodexErr::InvalidRequest(
+                            "This provider cannot replay encrypted inter-agent messages. Start a new conversation with this provider.".to_string()
+                        )),
+                    }).collect::<Result<Vec<_>>>()?;
+                    let message = serde_json::json!({
+                        "author": author,
+                        "recipient": recipient,
+                        "content": content,
+                    });
+                    *item = ResponseItem::Message {
+                        id: None,
+                        role: "user".to_string(),
+                        content: vec![ContentItem::InputText {
+                            text: format!("<agent_message>\n{message}\n</agent_message>"),
+                        }],
+                        encrypted_content: None,
+                        status: None,
+                        phase: None,
+                        internal_chat_message_metadata_passthrough: None,
+                    };
+                }
                 item.clear_internal_chat_message_metadata_passthrough();
                 if !matches!(
                     item,

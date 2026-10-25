@@ -5,8 +5,7 @@
   "description": "Lemex CLI is a fork of the OpenAI Codex coding agent.",
   "license": "Apache-2.0",
   "bin": {
-    "lemex": "bin/lemex.js",
-    "lemex-ultracode": "bin/ultracode.js"
+    "lemex": "bin/lemex.js"
   },
   "type": "module",
   "engines": {
@@ -14,14 +13,8 @@
   },
   "files": [
     "bin/lemex.js",
-    "bin/ultracode.js",
     "vendor"
   ],
-  "optionalDependencies": {
-    "bun": "1.4.3",
-    "typescript": "6.0.2",
-    "ultracode": "5.15.0"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Lemmy00/lemex.git",

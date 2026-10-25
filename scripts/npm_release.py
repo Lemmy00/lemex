@@ -221,10 +221,13 @@ def release_tarballs(directory: Path, version: str) -> list[tuple[Path, str]]:
             if not {"package/LICENSE", "package/NOTICE"}.issubset(files):
                 raise RuntimeError(f"Missing license or notices in {tarball}")
             if name == "lemex":
-                expected_dependencies = npm.launcher_optional_dependencies(version)
+                expected_dependencies = {
+                    key: f"npm:{NPM_NAME}@{version}-{spec['npm_tag']}"
+                    for key, spec in PLATFORMS.items()
+                }
                 if manifest.get("optionalDependencies") != expected_dependencies:
                     raise RuntimeError("Launcher dependencies do not match this release")
-                if not {"package/bin/lemex.js", "package/bin/ultracode.js"}.issubset(files):
+                if "package/bin/lemex.js" not in files:
                     raise RuntimeError("Missing npm launcher")
             else:
                 spec = PLATFORMS[name]

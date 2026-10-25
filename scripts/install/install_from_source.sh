@@ -254,7 +254,6 @@ PY
     mkdir -p "$LEMEX_PACKAGE_DIR/bin"
     cp "$CODEX_CLI_DIR/package.json" "$LEMEX_PACKAGE_DIR/package.json"
     cp "$CODEX_CLI_DIR/bin/lemex.js" "$LEMEX_PACKAGE_DIR/bin/lemex.js"
-    cp "$CODEX_CLI_DIR/bin/ultracode.js" "$LEMEX_PACKAGE_DIR/bin/ultracode.js"
     VENDOR_DIR="$LEMEX_PACKAGE_DIR/vendor/$HOST_TARGET/bin"
     mkdir -p "$VENDOR_DIR"
     cp "$BUILD_OUTPUT_DIR/lemex" "$VENDOR_DIR/lemex"

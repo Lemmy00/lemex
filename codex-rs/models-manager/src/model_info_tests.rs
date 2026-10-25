@@ -17,6 +17,63 @@ use codex_protocol::openai_models::ToolMessage;
 use codex_protocol::openai_models::ToolMessages;
 use pretty_assertions::assert_eq;
 
+#[test]
+fn local_ultra_uses_native_orchestration_and_supported_request_effort() {
+    for (efforts, expected) in [
+        (
+            vec![ReasoningEffort::Low, ReasoningEffort::Max],
+            ReasoningEffort::Max,
+        ),
+        (
+            vec![ReasoningEffort::Low, ReasoningEffort::XHigh],
+            ReasoningEffort::XHigh,
+        ),
+        (
+            vec![ReasoningEffort::Low, ReasoningEffort::High],
+            ReasoningEffort::High,
+        ),
+    ] {
+        let mut model = model_info_from_slug("provider/reasoner");
+        model.used_fallback_model_metadata = false;
+        model.default_reasoning_level = Some(ReasoningEffort::Low);
+        model.supported_reasoning_levels = efforts
+            .into_iter()
+            .map(|effort| ReasoningEffortPreset {
+                description: effort.to_string(),
+                effort,
+            })
+            .collect();
+        let model = with_local_ultra(model);
+        assert_eq!(model.multi_agent_version, Some(MultiAgentVersion::V2));
+        assert_eq!(model.default_reasoning_level, Some(ReasoningEffort::Low));
+        assert_eq!(
+            model.resolve_reasoning_effort(ReasoningEffort::Ultra),
+            expected
+        );
+        assert_eq!(with_local_ultra(model.clone()), model);
+    }
+}
+
+#[test]
+fn local_ultra_preserves_explicit_orchestration_policy_and_unknown_capabilities() {
+    let mut model = model_info_from_slug("provider/reasoner");
+    model
+        .supported_reasoning_levels
+        .push(ReasoningEffortPreset {
+            effort: ReasoningEffort::High,
+            description: "high".to_string(),
+        });
+    assert_eq!(with_local_ultra(model.clone()), model);
+    model.used_fallback_model_metadata = false;
+    for version in [MultiAgentVersion::Disabled, MultiAgentVersion::V1] {
+        model.multi_agent_version = Some(version);
+        assert_eq!(with_local_ultra(model.clone()), model);
+    }
+    model.multi_agent_version = None;
+    model.supported_reasoning_levels.clear();
+    assert_eq!(with_local_ultra(model.clone()), model);
+}
+
 fn config_with_personality(personality: Option<Personality>) -> ModelsManagerConfig {
     ModelsManagerConfig {
         personality,

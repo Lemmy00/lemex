@@ -192,7 +192,6 @@ esac
         (fixture / "cli/bin").mkdir(parents=True)
         shutil.copy2(ROOT / "codex-cli/package.json", fixture / "cli/package.json")
         shutil.copy2(ROOT / "codex-cli/bin/lemex.js", fixture / "cli/bin/lemex.js")
-        shutil.copy2(ROOT / "codex-cli/bin/ultracode.js", fixture / "cli/bin/ultracode.js")
         if install:
             # Earlier installs may have left runtimes for other hosts behind.
             stale = fixture / "cli/vendor/obsolete/bin/lemex"
@@ -226,7 +225,6 @@ python3() {
             *-linux-*) test -f "$LEMEX_PACKAGE_DIR/vendor/$HOST_TARGET/codex-resources/bwrap" ;;
         esac
         test -f "$LEMEX_PACKAGE_DIR/bin/lemex.js"
-        test -f "$LEMEX_PACKAGE_DIR/bin/ultracode.js"
         test -f "$LEMEX_PACKAGE_DIR/package.json"
     fi
 }

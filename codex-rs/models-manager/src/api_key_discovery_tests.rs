@@ -4,6 +4,44 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn api_key_ultra_is_available_in_picker_and_inference_without_rewriting_catalog() {
+    let model = remote_model("provider/reasoner", "Provider reasoner", 0);
+    let catalog = ModelsResponse {
+        models: vec![model.clone()],
+    };
+    let manager = StaticModelsManager::new(
+        Some(AuthManager::from_auth_for_testing(CodexAuth::from_api_key(
+            "test-key",
+        ))),
+        catalog.clone(),
+    );
+    let preset = manager.try_list_models().unwrap().remove(0);
+    assert!(
+        preset
+            .supported_reasoning_efforts
+            .iter()
+            .any(|option| option.effort == codex_protocol::openai_models::ReasoningEffort::Ultra)
+    );
+    let resolved = manager
+        .get_model_info(&model.slug, &ModelsManagerConfig::default())
+        .await;
+    assert_eq!(
+        resolved.multi_agent_version,
+        Some(codex_protocol::protocol::MultiAgentVersion::V2)
+    );
+    assert_eq!(
+        resolved.resolve_reasoning_effort(codex_protocol::openai_models::ReasoningEffort::Ultra),
+        codex_protocol::openai_models::ReasoningEffort::Medium,
+    );
+    assert_eq!(
+        manager
+            .raw_model_catalog(RefreshStrategy::Offline, DEFAULT_HTTP_CLIENT_FACTORY)
+            .await,
+        catalog
+    );
+}
+
+#[tokio::test]
 async fn api_key_discovery_disabled_preserves_command_auth_discovery_and_merging() {
     let models = vec![remote_model(
         "command-auth",
@@ -70,7 +108,10 @@ async fn api_key_discovery_flag_controls_fetches_and_cached_catalogs() {
         models
     );
     assert_eq!(endpoint.fetch_count(), 1);
-    assert_eq!(manager.get_model_info("dynamic", &config).await, models[0]);
+    assert_eq!(
+        manager.get_model_info("dynamic", &config).await,
+        model_info::with_local_ultra(models[0].clone())
+    );
 
     // A runtime rollback must also suppress the already-loaded catalog.
     manager.set_api_key_model_discovery_enabled(/*enabled*/ false);

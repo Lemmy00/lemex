@@ -2,8 +2,7 @@
 
 The `Lemex npm release` workflow builds precompiled CLI packages for macOS and
 Linux on x64 and ARM64. Windows users install the Linux package inside WSL2.
-End users need Node.js 24+ and npm for the complete installation with UltraCode;
-the core CLI also supports Node.js 22 without Rust, Python, or a compiler.
+End users need Node.js 22+ and npm, without Rust, Python, or a compiler.
 
 All five tarballs use the single npm package name `@lemmy00/lemex`. The four native
 versions have suffixes such as `0.1.0-linux-x64`; the launcher at `0.1.0` selects
@@ -99,10 +98,6 @@ the voice helper build commit, initializes the packaged GStreamer libraries,
 creates an audio SDP offer, and shuts the helper down. This does not open audio
 devices or prove a live backend conversation. The public-release receipt seals
 verified runtime bytes; it does not assert Apple signing or notarization.
-The installation check also initializes the bundled UltraCode server over MCP
-and indexes a TypeScript fixture, requiring actual graph entities. UltraCode,
-its Bun runtime, and TypeScript are pinned optional dependencies; semantic
-embedding providers are configured separately with `lemex-ultracode setup`.
 The final assembly validates and dry-runs the complete release before the
 optional publishing job runs. npm scans accepted uploads before they become
 installable; an upload success or an initial 404 is not a completed publication.
@@ -148,7 +143,19 @@ python3 -m unittest discover -s scripts -p 'test_npm_release.py'
 These tests include a small executable fixture to verify npm's dependency
 selection offline. Full compiled-binary checks run in the release workflow.
 
-## Temporary security exception for 0.1.3
+## Dependency audits
+
+`Lemex checks` runs `pnpm audit` against the committed workspace lockfile. Run it
+locally after changing Node dependencies, along with the SDK tests. Rust release
+checks use `cargo deny`; keep its exceptions aligned with `.cargo/audit.toml`.
+
+Workspace resolutions do not apply to dependencies installed by consumers of a
+published npm package. Audit a fresh consumer installation separately. Version
+0.1.4 removes the unrelated UltraCode search package added in 0.1.3, including
+its Bun/TypeScript dependencies and vulnerable Java-parser Lodash pins. Codex-style
+Ultra reasoning uses the native runtime and requires no third-party MCP package.
+
+## Temporary security exception for 0.1.3 and 0.1.4
 
 The release owner approved a temporary exception on 2026-10-25 for
 [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387.html).
@@ -157,7 +164,9 @@ information. It is reached through `elliptic-curve 0.13` in age/hpke, AWS login,
 RTC, and user verification. The 0.5 series has no patched release; the fixed
 0.7.6+ series does not satisfy these parent dependencies' version constraints.
 
-This exception accepts the reported risk; it does not fix the vulnerability.
+The dependency path was reviewed again for 0.1.4; the release owner requested
+publication after being told this issue remains. The exception accepts the
+reported risk; it does not fix the vulnerability.
 It is recorded in both `codex-rs/deny.toml` and `codex-rs/.cargo/audit.toml` and
 applies only to this advisory. Review it before the next release or by
 2026-11-24, and remove it when the parent dependencies can use the patched

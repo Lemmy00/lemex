@@ -7,7 +7,10 @@ ignoredBuiltDependencies:
   - esbuild
 
 minimumReleaseAge: 10080
-minimumReleaseAgeExclude: []
+minimumReleaseAgeExclude:
+  # Targeted security fixes: GHSA-w74x-v6f9-j3xg and GHSA-27r3-jxmh-p828.
+  - fast-uri@3.1.9
+  - body-parser@2.4.0
 
 blockExoticSubdeps: true
 strictDepBuilds: true

@@ -1,5 +1,4 @@
 mod application;
-mod bundled_mcp;
 mod layer_io;
 mod local;
 #[cfg(target_os = "macos")]
@@ -481,13 +480,6 @@ pub async fn load_config_layers_state(
             raw_toml_base_dir,
         ));
     }
-
-    bundled_mcp::add_ultracode_defaults(
-        &mut layers,
-        std::env::var("LEMEX_BUNDLED_ULTRACODE_CONFIG")
-            .ok()
-            .as_deref(),
-    );
 
     if let Err(err) = validate_enabled_config_layers(&layers) {
         if let Some(config_error) = typed_first_layer_config_error_from_entries::<

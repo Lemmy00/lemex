@@ -43,6 +43,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
+      - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+        with:
+          run_install: false
+      - name: Audit Node dependencies
+        run: pnpm audit
       - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
         with:
           components: rustfmt

@@ -6,12 +6,11 @@ Lemex reads `~/.lemex/config.toml` and stores its state in `~/.lemex`. Set `LEME
 
 Run `lemex setup` to save an API key and endpoint. The default endpoint is RCP (`https://inference.rcp.epfl.ch/v1`). No environment variables are required after setup.
 
-| Variable         | When to set it |
-| ---------------- | -------------- |
+| Variable         | When to set it                                                           |
+| ---------------- | ------------------------------------------------------------------------ |
 | `LEMEX_API_KEY`  | Optional API key; overrides the saved key for the built-in RCP provider. |
-| `LEMEX_BASE_URL` | Optional endpoint override; takes precedence over the saved RCP URL. |
-| `LEMEX_HOME`     | Optional configuration and state directory; defaults to `~/.lemex`. |
-| `LEMEX_DISABLE_ULTRACODE` | Set to `1` to skip the bundled UltraCode MCP server. Custom registrations are preserved. |
+| `LEMEX_BASE_URL` | Optional endpoint override; takes precedence over the saved RCP URL.     |
+| `LEMEX_HOME`     | Optional configuration and state directory; defaults to `~/.lemex`.      |
 
 Custom providers read the environment variable named by their `env_key` setting.
 
@@ -19,17 +18,17 @@ Custom providers read the environment variable named by their `env_key` setting.
 
 The bundled configuration selects the RCP provider, loads `models.json`, uses a 240,000-token context window with compaction at 220,000 tokens, shows raw reasoning, and disables automatic daemon startup. It includes the requested trusted project paths and marks screen-reader detection complete. Edit `config.toml` to adapt these defaults:
 
-| Setting                          | Purpose                                                                     |
-| -------------------------------- | --------------------------------------------------------------------------- |
-| `model`                          | Default model ID. Choose one available from your provider and catalog.      |
-| `model_provider`                 | Provider selected from `model_providers` or the built-in providers.         |
-| `model_catalog_json`             | Model catalog path, relative to the configuration file or absolute.         |
+| Setting                          | Purpose                                                                      |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| `model`                          | Default model ID. Choose one available from your provider and catalog.       |
+| `model_provider`                 | Provider selected from `model_providers` or the built-in providers.          |
+| `model_catalog_json`             | Model catalog path, relative to the configuration file or absolute.          |
 | `model_picker_models`            | Saved model IDs in `/model`; RCP defaults to the six bundled curated models. |
-| `model_context_window`           | Context window to use, within the model's supported limit.                  |
-| `model_auto_compact_token_limit` | Token threshold for automatic context compaction.                           |
-| `model_reasoning_effort`         | Optional reasoning effort; leave unset to use each model's catalog default. |
-| `show_raw_agent_reasoning`       | Show provider reasoning; defaults to `true` even when omitted.              |
-| `mcp_servers`                    | MCP servers that provide additional tools.                                  |
+| `model_context_window`           | Context window to use, within the model's supported limit.                   |
+| `model_auto_compact_token_limit` | Token threshold for automatic context compaction.                            |
+| `model_reasoning_effort`         | Optional reasoning effort; leave unset to use each model's catalog default.  |
+| `show_raw_agent_reasoning`       | Show provider reasoning; defaults to `true` even when omitted.               |
+| `mcp_servers`                    | MCP servers that provide additional tools.                                   |
 
 Keep top-level settings above any `[table]` headers. Restart Lemex after editing configuration files. Use `/model` to select a model interactively or override settings for one launch:
 
@@ -113,6 +112,16 @@ the configured default, rather than every discovered model.
 
 `lemex model MODEL --reasoning EFFORT` validates the model and its effort before saving and adds it to the list. Omitting `--reasoning` clears the previous model's override. `lemex model` opens the saved-list and search flow in the terminal.
 
+For Codex-style **Ultra** mode, open `/model`, select a reasoning-capable model,
+then choose **More reasoning… → Ultra**. You can also save it with
+`lemex model MODEL_ID --reasoning ultra`. Ultra uses Lemex's native agent
+orchestration for automatic delegation and maps each inference request to an
+effort the provider supports, such as `max` for DeepSeek or `xhigh` for Qwen.
+Existing model catalogs and caches gain this option automatically. Normal
+reasoning defaults are preserved. Models with unknown reasoning capabilities or
+an explicit legacy/disabled orchestration policy keep their advertised options.
+Ultra is part of Lemex; it requires no additional npm package or MCP server.
+
 Live, explicitly advertised reasoning values take priority. The verified bundled
 profiles below are used for the RCP provider only. Other providers do not inherit
 RCP effort values just because a model ID matches. A generic reasoning capability
@@ -122,14 +131,14 @@ effort left in configuration when sending a request to a third-party provider.
 
 The bundled RCP catalog was checked on 2026-10-18:
 
-| Model ID | Reasoning efforts | Catalog default |
-| --- | --- | --- |
-| `deepseek-ai/DeepSeek-V4.1-Flash-1017` | `none`, `low`, `high`, `xhigh`, `max` | `max` |
-| `deepseek-ai/DeepSeek-V4.1-Flash` | `none`, `low`, `high`, `xhigh`, `max` | `high` |
-| `Qwen/Qwen3.8-Flash-Next` | `none`, `low`, `medium`, `xhigh` | `medium` |
-| `Qwen/Qwen3.8-27B` | `none`, `low`, `medium`, `xhigh` | `medium` |
-| `zai-org/GLM-5.3-Flash` | `low`, `high`, `max` | `max` |
-| `mistralai/Leanstral-2603` | `none`, `high` | `high` |
+| Model ID                               | Reasoning efforts                     | Catalog default |
+| -------------------------------------- | ------------------------------------- | --------------- |
+| `deepseek-ai/DeepSeek-V4.1-Flash-1017` | `none`, `low`, `high`, `xhigh`, `max` | `max`           |
+| `deepseek-ai/DeepSeek-V4.1-Flash`      | `none`, `low`, `high`, `xhigh`, `max` | `high`          |
+| `Qwen/Qwen3.8-Flash-Next`              | `none`, `low`, `medium`, `xhigh`      | `medium`        |
+| `Qwen/Qwen3.8-27B`                     | `none`, `low`, `medium`, `xhigh`      | `medium`        |
+| `zai-org/GLM-5.3-Flash`                | `low`, `high`, `max`                  | `max`           |
+| `mistralai/Leanstral-2603`             | `none`, `high`                        | `high`          |
 
 `none` disables reasoning where supported. DeepSeek V4.1 rejects `minimal` and
 `medium`; Qwen 3.8 rejects `minimal`, `high`, and `max`.

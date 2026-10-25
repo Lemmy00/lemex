@@ -1782,8 +1782,9 @@ fn build_available_models_picks_default_after_hiding_hidden_models() {
     let visible_model =
         remote_model_with_visibility("visible", "Visible", /*priority*/ 1, "list");
 
-    let expected_hidden = ModelPreset::from(hidden_model.clone());
-    let mut expected_visible = ModelPreset::from(visible_model.clone());
+    let expected_hidden = ModelPreset::from(model_info::with_local_ultra(hidden_model.clone()));
+    let mut expected_visible =
+        ModelPreset::from(model_info::with_local_ultra(visible_model.clone()));
     expected_visible.is_default = true;
 
     let available = manager.build_available_models(vec![hidden_model, visible_model]);
@@ -1818,6 +1819,12 @@ async fn static_manager_reads_latest_auth_mode() {
             .collect::<Vec<_>>(),
         vec!["chatgpt-only", "api-model"]
     );
+    assert!(chatgpt_models.iter().all(|model| {
+        model
+            .supported_reasoning_efforts
+            .iter()
+            .all(|option| option.effort != codex_protocol::openai_models::ReasoningEffort::Ultra)
+    }));
 
     auth_manager
         .set_external_auth(Arc::new(TestExternalApiKeyAuth))
@@ -1833,6 +1840,12 @@ async fn static_manager_reads_latest_auth_mode() {
             .map(|model| model.model.as_str())
             .collect::<Vec<_>>(),
         vec!["api-model"]
+    );
+    assert!(
+        api_models[0]
+            .supported_reasoning_efforts
+            .iter()
+            .any(|option| option.effort == codex_protocol::openai_models::ReasoningEffort::Ultra)
     );
 }
 

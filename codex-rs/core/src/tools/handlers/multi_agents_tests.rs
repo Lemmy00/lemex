@@ -865,6 +865,11 @@ async fn multi_agent_v2_full_history_fork_inherits_root_service_tier() {
         .with_model("gpt-5.5".to_string(), &session.services.models_manager)
         .await;
     let mut config = (*turn.config).clone();
+    // These assertions exercise the first-party encrypted-message/service-tier policy.
+    config.model_provider_id = "openai".to_string();
+    config.model_provider =
+        codex_model_provider_info::ModelProviderInfo::create_openai_provider(None);
+    config.model_catalog = Some(service_tier_test_catalog());
     config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
     config
         .features
@@ -884,6 +889,10 @@ async fn multi_agent_v2_full_history_fork_inherits_root_service_tier() {
             .local_agent_runtime
             .control(root.thread.session.session_id()),
     );
+    session.services.models_manager = Arc::new(StaticModelsManager::new(
+        /*auth_manager*/ None,
+        service_tier_test_catalog(),
+    ));
     session.thread_id = root.thread_id;
     let session = Arc::new(session);
     let turn = Arc::new(turn);
@@ -1115,6 +1124,10 @@ async fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_pat
     set_agent_control(&mut session, manager.agent_control());
     session.thread_id = root.thread_id;
     let mut config = (*turn.config).clone();
+    // These assertions exercise the first-party encrypted-message/service-tier policy.
+    config.model_provider_id = "openai".to_string();
+    config.model_provider =
+        codex_model_provider_info::ModelProviderInfo::create_openai_provider(None);
     config
         .features
         .enable(Feature::MultiAgentV2)
@@ -1303,6 +1316,10 @@ async fn multi_agent_v2_send_message_accepts_root_target_from_child() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
     let mut config = (*turn.config).clone();
+    // These assertions exercise the first-party encrypted-message/service-tier policy.
+    config.model_provider_id = "openai".to_string();
+    config.model_provider =
+        codex_model_provider_info::ModelProviderInfo::create_openai_provider(None);
     config
         .features
         .enable(Feature::MultiAgentV2)
@@ -1898,6 +1915,10 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
     let mut config = turn.config.as_ref().clone();
+    // These assertions exercise the first-party encrypted-message/service-tier policy.
+    config.model_provider_id = "openai".to_string();
+    config.model_provider =
+        codex_model_provider_info::ModelProviderInfo::create_openai_provider(None);
     let _ = config.features.enable(Feature::MultiAgentV2);
     set_turn_config(&mut turn, config);
     let root = manager

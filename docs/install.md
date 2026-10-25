@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Use Node.js 24+ and npm on macOS or Linux (x64 or ARM64) for the complete installation, including UltraCode. The core CLI also supports Node.js 22. On Windows, install Node.js inside WSL2 and run Lemex there.
+Use Node.js 22+ and npm on macOS or Linux (x64 or ARM64). On Windows, install Node.js inside WSL2 and run Lemex there.
 
 ## Install from npm
 
@@ -12,7 +12,7 @@ lemex setup
 lemex
 ```
 
-npm downloads the precompiled runtime for your platform, including the code-mode host, ripgrep, and the Linux sandbox helper. The core CLI does not require Rust, Python, a compiler, or a source checkout. `lemex setup` installs the bundled provider settings and model catalog in `${LEMEX_HOME:-$HOME/.lemex}`, preserving existing files, then helps configure your API key and model.
+npm downloads the precompiled runtime for your platform, including the code-mode host, ripgrep, and the Linux sandbox helper. Rust, Python, a compiler, and a source checkout are not required. `lemex setup` installs the bundled provider settings and model catalog in `${LEMEX_HOME:-$HOME/.lemex}`, preserving existing files, then helps configure your API key and model.
 
 If you previously installed the unscoped `lemex` package from source, remove it with `npm uninstall -g lemex` before installing `@lemmy00/lemex`. Your settings in `~/.lemex` are retained.
 
@@ -30,28 +30,6 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Add that PATH setting to your shell profile to keep it for future terminals. See [API setup](authentication.md) for providers and credentials.
-
-## UltraCode
-
-The npm package includes UltraCode 5.15.0 and its Bun 1.4.3 runtime as optional dependencies. On Node.js 24+, Lemex automatically exposes its code-search and analysis tools through MCP. No separate Bun install, global UltraCode install, or `lemex mcp add` command is needed. The default uses dependencies inside the current Lemex installation, so updates and relocated installations pick up the correct paths. A custom `mcp_servers.ultracode` command or URL takes precedence.
-
-UltraCode adds approximately 331 MB before its dependencies and the Bun runtime, and may need platform-specific native components. If npm cannot install it, Lemex's core CLI still works. Check availability with `lemex mcp list` and `lemex-ultracode --version`.
-
-For semantic search, configure an embedding provider and model with:
-
-```sh
-lemex-ultracode setup
-```
-
-Embedding setup may download models or install additional runtimes, depending on the provider. See [UltraCode's documentation](https://github.com/faxenoff/ultracode) for those requirements. Structural code analysis does not require configuring an embedding provider.
-
-To launch without the bundled MCP server:
-
-```sh
-LEMEX_DISABLE_ULTRACODE=1 lemex
-```
-
-This disables the bundled default for that invocation. It does not disable a server you registered explicitly. UltraCode is a separate project licensed under AGPL-3.0 or a commercial license; its own license remains in its npm package.
 
 ## Source build requirements
 

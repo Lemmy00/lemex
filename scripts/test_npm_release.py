@@ -3,7 +3,6 @@
 import io
 import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -63,10 +62,9 @@ class NpmReleaseTests(unittest.TestCase):
         self.archive("lemex", {
             "name": package_name, "version": "0.1.0",
             "optionalDependencies": {
-                **release.npm.launcher_optional_dependencies("0.1.0"),
-                **{key: f"npm:{package_name}@0.1.0-{spec['npm_tag']}" for key, spec in release.PLATFORMS.items()},
+                key: f"npm:{package_name}@0.1.0-{spec['npm_tag']}" for key, spec in release.PLATFORMS.items()
             },
-        }, {"bin/lemex.js": "fixture", "bin/ultracode.js": "fixture", "LICENSE": "license", "NOTICE": "notice"})
+        }, {"bin/lemex.js": "fixture", "LICENSE": "license", "NOTICE": "notice"})
 
     def test_missing_or_tampered_voice_is_rejected_before_publishing(self):
         self.release_archives()
@@ -105,61 +103,11 @@ class NpmReleaseTests(unittest.TestCase):
         self.assertNotIn("private", manifest)
         self.assertNotIn("scripts", manifest)
         self.assertEqual(manifest["name"], "@lemmy00/lemex")
-        self.assertEqual(set(manifest["optionalDependencies"]), set(release.PLATFORMS) | {"ultracode", "bun", "typescript"})
-        self.assertEqual(manifest["optionalDependencies"]["ultracode"], "5.15.0")
-        self.assertEqual(manifest["optionalDependencies"]["bun"], "1.4.3")
-        self.assertEqual(manifest["optionalDependencies"]["typescript"], "6.0.2")
-        self.assertEqual(manifest["bin"]["lemex-ultracode"], "bin/ultracode.js")
+        self.assertEqual(set(manifest["optionalDependencies"]), set(release.PLATFORMS))
         self.assertEqual(manifest["optionalDependencies"]["lemex-linux-x64"], f"npm:{release.NPM_NAME}@0.1.0-linux-x64")
         self.assertEqual(manifest["os"], ["darwin", "linux"])
-        for name in ("LICENSE", "NOTICE", "README.md", "bin/ultracode.js"):
+        for name in ("LICENSE", "NOTICE", "README.md"):
             self.assertTrue((self.root / name).is_file(), name)
-
-    @unittest.skipUnless(shutil.which("node"), "Node.js required")
-    def test_launcher_discovers_bundled_ultracode_and_respects_opt_out(self):
-        platform = subprocess.check_output(["node", "-p", "process.platform + '-' + process.arch"], text=True).strip()
-        spec = release.PLATFORMS.get(f"lemex-{platform}")
-        if not spec:
-            self.skipTest("Unsupported host")
-        release.npm.stage_sources(self.root, "0.1.0", "lemex")
-        native = self.root / f"vendor/{spec['target_triple']}/bin/lemex"
-        native.parent.mkdir(parents=True)
-        native.write_text('#!/usr/bin/env node\nconsole.log(process.env.LEMEX_BUNDLED_ULTRACODE_CONFIG || "null");\n')
-        native.chmod(0o755)
-        dependency = self.root / "node_modules/ultracode"
-        dependency.mkdir(parents=True)
-        (dependency / "package.json").write_text('{"name":"ultracode","main":"index.js"}')
-        (dependency / "index.js").write_text('')
-        runtime = self.root / "node_modules/bun"
-        (runtime / "bin").mkdir(parents=True)
-        (runtime / "package.json").write_text('{"name":"bun"}')
-        (runtime / "bin/bun.exe").write_text('fixture')
-        compiler = self.root / "node_modules/typescript"
-        compiler.mkdir()
-        (compiler / "package.json").write_text('{"name":"typescript"}')
-        env = {**os.environ, "LEMEX_BUNDLED_ULTRACODE_CONFIG": "stale-parent-install"}
-        env.pop("LEMEX_DISABLE_ULTRACODE", None)
-        launcher = self.root / "bin/lemex.js"
-        def launch(environment=env):
-            return json.loads(subprocess.check_output(["node", str(launcher)], env=environment, text=True))
-        node_major = int(subprocess.check_output(["node", "-p", 'process.versions.node.split(".")[0]'], text=True))
-        if node_major >= 24:
-            config = launch()
-            self.assertEqual(config["args"], [str((self.root / "bin/ultracode.js").resolve()), "--stdio"])
-            self.assertTrue(Path(config["command"]).is_absolute())
-            self.assertIsNone(launch({**env, "LEMEX_DISABLE_ULTRACODE": "1"}))
-            relocated = self.root / "relocated package with spaces"
-            shutil.copytree(self.root / "bin", relocated / "bin")
-            shutil.copytree(self.root / "vendor", relocated / "vendor")
-            shutil.copytree(self.root / "node_modules", relocated / "node_modules")
-            shutil.copy2(self.root / "package.json", relocated / "package.json")
-            launcher = relocated / "bin/lemex.js"
-            self.assertEqual(launch()["args"][0], str((relocated / "bin/ultracode.js").resolve()))
-            launcher = self.root / "bin/lemex.js"
-        else:
-            self.assertIsNone(launch())
-        shutil.rmtree(dependency)
-        self.assertIsNone(launch())
 
     def test_incomplete_release_cannot_start_publishing(self):
         self.release_archives()
@@ -312,15 +260,9 @@ class NpmReleaseTests(unittest.TestCase):
             "name": release.NPM_NAME, "version": f"0.1.0-{spec['npm_tag']}",
             "os": [spec["os"]], "cpu": [spec["cpu"]],
         }, {f"vendor/{spec['target_triple']}/codex-package.json": "{}", f"vendor/{spec['target_triple']}/bin/lemex": '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "lemex 0.1.0"; fi\n'})
-        ultracode = self.archive("ultracode", {
-            "name": "ultracode", "version": "5.15.0", "main": "dist/index.js",
-        }, {"dist/index.js": "fixture"})
-        bun = self.archive("bun", {"name": "bun", "version": "1.4.3"}, {"bin/bun.exe": "fixture"})
-        typescript = self.archive("typescript", {"name": "typescript", "version": "6.0.2"}, {})
-        with patch("smoke_npm_release.verify_voice") as verify, patch("smoke_npm_release.verify_ultracode") as verify_ultracode:
-            smoke(launcher, native, bundled_fixtures={"ultracode": ultracode, "bun": bun, "typescript": typescript})
+        with patch("smoke_npm_release.verify_voice") as verify:
+            smoke(launcher, native)
             verify.assert_called_once()
-            verify_ultracode.assert_called_once()
 
 
 if __name__ == "__main__":

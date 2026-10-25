@@ -18,9 +18,7 @@ With Node.js 22 or later on macOS, Linux, or Windows through WSL2:
 npm install -g @lemmy00/lemex
 ```
 
-npm installs the precompiled runtime for your computer (x64 or ARM64), including its helper tools. The core CLI does not require Rust, Python, or a compiler. Run `lemex setup` to configure your provider; existing settings in `~/.lemex` are preserved. Update with `npm install -g @lemmy00/lemex@latest`.
-
-On Node.js 24+, npm also installs UltraCode for code search and analysis. Lemex connects it automatically; no separate MCP registration is needed. UltraCode is optional, so a failed install leaves the core CLI available. Run `lemex-ultracode setup` to configure semantic search and embedding models. See [UltraCode setup](docs/install.md#ultracode) for requirements and how to disable it.
+npm installs the precompiled runtime for your computer (x64 or ARM64), including its helper tools. Rust, Python, and a compiler are not required. Run `lemex setup` to configure your provider; existing settings in `~/.lemex` are preserved. Update with `npm install -g @lemmy00/lemex@latest`.
 
 Alternatively, build from source with Git, Python 3.11+, and a C/C++ toolchain:
 
@@ -33,6 +31,9 @@ cd lemex
 See the [source installation guide](docs/install.md#source-build-requirements) for platform prerequisites and build options. Rust is installed automatically if needed.
 
 Fresh installations use RCP's `deepseek-ai/DeepSeek-V4.1-Flash-1017` with `max` reasoning, a 240k-token context, and compaction at 220k. The bundled catalog includes DeepSeek V4.1, Qwen 3.8, GLM 5.3 Flash, and Leanstral; see [available models and reasoning efforts](docs/config.md#model-catalog-and-tools).
+
+For automatic task delegation, select **Ultra** under `/model → your model → More reasoning…`.
+This uses Lemex's native agent orchestration and the provider's supported reasoning effort.
 
 ## Run
 

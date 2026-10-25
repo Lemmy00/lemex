@@ -189,10 +189,20 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
     fn build_available_models(&self, mut remote_models: Vec<ModelInfo>) -> Vec<ModelPreset> {
         remote_models.sort_by_key(|model| model.priority);
 
-        let mut presets: Vec<ModelPreset> = remote_models.into_iter().map(Into::into).collect();
         let uses_codex_backend = self
             .auth_manager()
             .is_some_and(AuthManager::current_auth_uses_codex_backend);
+        let mut presets: Vec<ModelPreset> = remote_models
+            .into_iter()
+            .map(|model| {
+                if uses_codex_backend {
+                    model
+                } else {
+                    model_info::with_local_ultra(model)
+                }
+            })
+            .map(Into::into)
+            .collect();
         presets = ModelPreset::filter_by_auth(presets, uses_codex_backend);
 
         ModelPreset::mark_default_by_picker_visibility(&mut presets);
@@ -255,7 +265,10 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
         Box::pin(
             async move {
                 let remote_models = self.get_remote_models().await;
-                construct_model_info_from_candidates(model, &remote_models, config)
+                with_local_orchestration(
+                    construct_model_info_from_candidates(model, &remote_models, config),
+                    self.auth_manager(),
+                )
             }
             .instrument(tracing::info_span!("get_model_info", model = model)),
         )
@@ -523,7 +536,10 @@ impl ModelsManager for OpenAiModelsManager {
                     }
                 }
             };
-            construct_model_info(model, remote, config)
+            with_local_orchestration(
+                construct_model_info(model, remote, config),
+                self.auth_manager(),
+            )
         })
     }
 
@@ -845,9 +861,12 @@ impl ModelsManager for StaticModelsManager {
         model: &'a str,
         config: &'a ModelsManagerConfig,
     ) -> ModelsManagerFuture<'a, ModelInfo> {
-        Box::pin(
-            async move { construct_model_info_from_candidates(model, &self.remote_models, config) },
-        )
+        Box::pin(async move {
+            with_local_orchestration(
+                construct_model_info_from_candidates(model, &self.remote_models, config),
+                self.auth_manager(),
+            )
+        })
     }
 
     fn get_default_model<'a>(
@@ -1016,6 +1035,15 @@ fn construct_model_info(
         model_info::model_info_from_slug(model)
     };
     model_info::with_config_overrides(model_info, config)
+}
+
+fn with_local_orchestration(model: ModelInfo, auth: Option<&AuthManager>) -> ModelInfo {
+    if auth.is_some_and(AuthManager::current_auth_uses_codex_backend) {
+        // First-party catalogs retain their account/model eligibility gates.
+        model
+    } else {
+        model_info::with_local_ultra(model)
+    }
 }
 
 #[cfg(test)]

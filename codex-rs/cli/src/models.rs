@@ -82,14 +82,21 @@ async fn load(overrides: &CliConfigOverrides) -> anyhow::Result<Config> {
 }
 
 async fn catalog(config: &Config, offline: bool) -> anyhow::Result<ModelsResponse> {
-    if offline {
-        return config.model_catalog.clone().context(
+    let mut catalog = if offline {
+        config.model_catalog.clone().context(
             "No offline model catalog is configured. Run `lemex models` to query the endpoint.",
-        );
-    }
-    let auth = AuthManager::shared_from_config(config, true).await?;
-    discover_model_catalog(config.model_provider.clone(), Some(auth), config.model_catalog.clone(), config.http_client_factory())
-        .await.context("Could not fetch models from your endpoint. Check `lemex setup` and try again, or use --offline.")
+        )?
+    } else {
+        let auth = AuthManager::shared_from_config(config, true).await?;
+        discover_model_catalog(config.model_provider.clone(), Some(auth), config.model_catalog.clone(), config.http_client_factory())
+            .await.context("Could not fetch models from your endpoint. Check `lemex setup` and try again, or use --offline.")?
+    };
+    catalog.models = catalog
+        .models
+        .into_iter()
+        .map(codex_models_manager::model_info::with_local_ultra)
+        .collect();
+    Ok(catalog)
 }
 
 fn saved_ids(config: &Config, catalog: &ModelsResponse) -> Vec<String> {

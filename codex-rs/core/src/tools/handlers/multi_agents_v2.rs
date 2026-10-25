@@ -53,14 +53,46 @@ pub(crate) async fn emit_sub_agent_activity(
 fn agent_message_from_tool(
     message: String,
     source: &crate::tools::context::ToolCallSource,
+    provider: &codex_model_provider_info::ModelProviderInfo,
 ) -> AgentMessage {
-    if matches!(
-        source,
-        crate::tools::context::ToolCallSource::DirectPlaintextMessage
-            | crate::tools::context::ToolCallSource::CodeMode { .. }
-    ) {
+    if !provider.is_openai()
+        || matches!(
+            source,
+            crate::tools::context::ToolCallSource::DirectPlaintextMessage
+                | crate::tools::context::ToolCallSource::CodeMode { .. }
+        )
+    {
         AgentMessage::Plaintext(message)
     } else {
         AgentMessage::Encrypted(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::context::ToolCallSource;
+    use codex_model_provider_info::ModelProviderInfo;
+
+    #[test]
+    fn third_party_ultra_tool_messages_remain_plaintext_and_first_party_policy_is_preserved() {
+        for (provider, encrypted) in [
+            (ModelProviderInfo::create_rcp_provider(None), false),
+            (ModelProviderInfo::default(), false),
+            (ModelProviderInfo::create_openai_provider(None), true),
+        ] {
+            let message = agent_message_from_tool(
+                "child task".to_string(),
+                &ToolCallSource::Direct,
+                &provider,
+            );
+            assert_eq!(matches!(message, AgentMessage::Encrypted(_)), encrypted);
+            let message = agent_message_from_tool(
+                "child task".to_string(),
+                &ToolCallSource::DirectPlaintextMessage,
+                &provider,
+            );
+            assert!(matches!(message, AgentMessage::Plaintext(_)));
+        }
     }
 }
