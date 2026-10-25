@@ -11,6 +11,7 @@ Run `lemex setup` to save an API key and endpoint. The default endpoint is RCP (
 | `LEMEX_API_KEY`  | Optional API key; overrides the saved key for the built-in RCP provider. |
 | `LEMEX_BASE_URL` | Optional endpoint override; takes precedence over the saved RCP URL. |
 | `LEMEX_HOME`     | Optional configuration and state directory; defaults to `~/.lemex`. |
+| `LEMEX_DISABLE_ULTRACODE` | Set to `1` to skip the bundled UltraCode MCP server. Custom registrations are preserved. |
 
 Custom providers read the environment variable named by their `env_key` setting.
 

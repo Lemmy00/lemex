@@ -233,6 +233,22 @@ def prepare_staging_dir(staging_dir: Path | None) -> tuple[Path, bool]:
     return temp_dir, True
 
 
+def launcher_optional_dependencies(version: str) -> dict[str, str]:
+    with open(CODEX_CLI_ROOT / "package.json", encoding="utf-8") as source:
+        bundled = json.load(source).get("optionalDependencies", {})
+    return {
+        **bundled,
+        **{
+            LEMEX_PLATFORM_PACKAGES[name]["npm_name"]: (
+                f"npm:{LEMEX_NPM_NAME}@"
+                f"{compute_platform_package_version(version, LEMEX_PLATFORM_PACKAGES[name]['npm_tag'])}"
+            )
+            for name in PACKAGE_EXPANSIONS["lemex"]
+            if name != "lemex"
+        },
+    }
+
+
 def stage_sources(staging_dir: Path, version: str, package: str) -> None:
     package_json: dict
     package_json_path: Path | None = None
@@ -240,7 +256,8 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
     if package == "lemex":
         bin_dir = staging_dir / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(CODEX_CLI_ROOT / "bin" / "lemex.js", bin_dir / "lemex.js")
+        for name in ("lemex.js", "ultracode.js"):
+            shutil.copy2(CODEX_CLI_ROOT / "bin" / name, bin_dir / name)
 
         readme_src = CODEX_CLI_ROOT / "README.md"
         if readme_src.exists():
@@ -302,17 +319,10 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
 
     if package == "lemex":
         package_json["name"] = LEMEX_NPM_NAME
-        package_json["files"] = ["bin/lemex.js"]
+        package_json["files"] = ["bin/lemex.js", "bin/ultracode.js"]
         package_json["os"] = ["darwin", "linux"]
         package_json["cpu"] = ["x64", "arm64"]
-        package_json["optionalDependencies"] = {
-            LEMEX_PLATFORM_PACKAGES[platform_package]["npm_name"]: (
-                f"npm:{LEMEX_NPM_NAME}@"
-                f"{compute_platform_package_version(version, LEMEX_PLATFORM_PACKAGES[platform_package]['npm_tag'])}"
-            )
-            for platform_package in PACKAGE_EXPANSIONS["lemex"]
-            if platform_package != "lemex"
-        }
+        package_json["optionalDependencies"] = launcher_optional_dependencies(version)
 
     elif package == "lemex-sdk":
         scripts = package_json.get("scripts")

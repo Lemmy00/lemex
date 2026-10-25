@@ -245,6 +245,37 @@ const env = {
   // The native doctor's upstream provenance check still uses this name.
   CODEX_MANAGED_PACKAGE_ROOT: lemexPackageRoot,
 };
+// Use the dependency from this installation, including with pnpm's isolated
+// layout. The native config loader supplies it below user/project settings.
+// Never reuse a parent Lemex process's package path after an update or move.
+delete env.LEMEX_BUNDLED_ULTRACODE_CONFIG;
+if (
+  process.env.LEMEX_DISABLE_ULTRACODE !== "1" &&
+  Number(process.versions.node.split(".")[0]) >= 24
+) {
+  try {
+    require.resolve("ultracode");
+    const bunExecutable = require.resolve("bun/bin/bun.exe");
+    const typeScriptModules = path.dirname(
+      path.dirname(require.resolve("typescript/package.json")),
+    );
+    env.LEMEX_BUNDLED_ULTRACODE_CONFIG = JSON.stringify({
+      command: bunExecutable,
+      args: [path.join(__dirname, "ultracode.js"), "--stdio"],
+      // UltraCode omits TypeScript from its runtime dependencies. NODE_PATH
+      // also makes our explicit dependency visible in pnpm's isolated layout.
+      env: {
+        NODE_PATH: [typeScriptModules, process.env.NODE_PATH]
+          .filter(Boolean)
+          .join(path.delimiter),
+      },
+      startup_timeout_sec: 60,
+      tool_timeout_sec: 300,
+    });
+  } catch {
+    // npm may omit the optional dependency on unsupported hosts.
+  }
+}
 delete env.LEMEX_MANAGED_BY_NPM;
 delete env.LEMEX_MANAGED_BY_BUN;
 delete env.LEMEX_MANAGED_BY_PNPM;

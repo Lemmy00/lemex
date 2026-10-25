@@ -18,7 +18,9 @@ With Node.js 22 or later on macOS, Linux, or Windows through WSL2:
 npm install -g @lemmy00/lemex
 ```
 
-npm installs the precompiled runtime for your computer (x64 or ARM64), including its helper tools. Rust, Python, and a compiler are not required. Run `lemex setup` to configure your provider; existing settings in `~/.lemex` are preserved. Update with `npm install -g @lemmy00/lemex@latest`.
+npm installs the precompiled runtime for your computer (x64 or ARM64), including its helper tools. The core CLI does not require Rust, Python, or a compiler. Run `lemex setup` to configure your provider; existing settings in `~/.lemex` are preserved. Update with `npm install -g @lemmy00/lemex@latest`.
+
+On Node.js 24+, npm also installs UltraCode for code search and analysis. Lemex connects it automatically; no separate MCP registration is needed. UltraCode is optional, so a failed install leaves the core CLI available. Run `lemex-ultracode setup` to configure semantic search and embedding models. See [UltraCode setup](docs/install.md#ultracode) for requirements and how to disable it.
 
 Alternatively, build from source with Git, Python 3.11+, and a C/C++ toolchain:
 

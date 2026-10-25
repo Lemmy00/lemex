@@ -2,7 +2,8 @@
 
 The `Lemex npm release` workflow builds precompiled CLI packages for macOS and
 Linux on x64 and ARM64. Windows users install the Linux package inside WSL2.
-End users need Node.js 22+ and npm; they do not need Rust, Python, or a compiler.
+End users need Node.js 24+ and npm for the complete installation with UltraCode;
+the core CLI also supports Node.js 22 without Rust, Python, or a compiler.
 
 All five tarballs use the single npm package name `@lemmy00/lemex`. The four native
 versions have suffixes such as `0.1.0-linux-x64`; the launcher at `0.1.0` selects
@@ -98,6 +99,10 @@ the voice helper build commit, initializes the packaged GStreamer libraries,
 creates an audio SDP offer, and shuts the helper down. This does not open audio
 devices or prove a live backend conversation. The public-release receipt seals
 verified runtime bytes; it does not assert Apple signing or notarization.
+The installation check also initializes the bundled UltraCode server over MCP
+and indexes a TypeScript fixture, requiring actual graph entities. UltraCode,
+its Bun runtime, and TypeScript are pinned optional dependencies; semantic
+embedding providers are configured separately with `lemex-ultracode setup`.
 The final assembly validates and dry-runs the complete release before the
 optional publishing job runs. npm scans accepted uploads before they become
 installable; an upload success or an initial 404 is not a completed publication.
