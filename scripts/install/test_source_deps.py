@@ -16,7 +16,9 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 os.environ.setdefault("CODEX_REPO_ROOT", str(ROOT))
-spec = importlib.util.spec_from_file_location("prepare_source_deps", Path(__file__).with_name("prepare_source_deps.py"))
+spec = importlib.util.spec_from_file_location(
+    "prepare_source_deps", Path(__file__).with_name("prepare_source_deps.py")
+)
 deps = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deps)
 
@@ -28,19 +30,36 @@ class DependencyTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.stack.enter_context(patch.dict(os.environ, {
-            "LEMEX_DEPS_DIR": str(self.root), "HOME": str(self.root),
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "CODEX_REPO_ROOT": str(ROOT),
-        }, clear=True))
+        self.stack.enter_context(
+            patch.dict(
+                os.environ,
+                {
+                    "LEMEX_DEPS_DIR": str(self.root),
+                    "HOME": str(self.root),
+                    "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                    "CODEX_REPO_ROOT": str(ROOT),
+                },
+                clear=True,
+            )
+        )
 
     def ready(self, **overrides):
         mocks = {}
-        defaults = dict(build_tools=[], compiler_check=None, libcap_check=True,
-                        library_available=True, system_packages=False)
+        defaults = dict(
+            build_tools=[],
+            compiler_check=None,
+            libcap_check=True,
+            library_available=True,
+            system_packages=False,
+        )
         defaults.update(overrides)
         for name, result in defaults.items():
-            mocks[name] = self.stack.enter_context(patch.object(deps, name, return_value=result))
-        self.stack.enter_context(patch.object(deps.shutil, "which", return_value="/tools/rg"))
+            mocks[name] = self.stack.enter_context(
+                patch.object(deps, name, return_value=result)
+            )
+        self.stack.enter_context(
+            patch.object(deps.shutil, "which", return_value="/tools/rg")
+        )
         return mocks
 
     def test_existing_linux_dependencies_do_not_install_anything(self):
@@ -94,19 +113,34 @@ class DependencyTests(unittest.TestCase):
     def test_no_sudo_uses_static_libcap_and_preserves_custom_pkg_config_path(self):
         mocks = self.ready(libcap_check=False)
         mocks["libcap_check"].side_effect = [False, False, True]
-        with patch.dict(os.environ, {"PKG_CONFIG_PATH": "/custom/pkgconfig"}), patch.object(deps, "prepare_libcap") as build:
+        with (
+            patch.dict(os.environ, {"PKG_CONFIG_PATH": "/custom/pkgconfig"}),
+            patch.object(deps, "prepare_libcap") as build,
+        ):
             result = deps.prepare("aarch64-unknown-linux-gnu")
         build.assert_called_once()
         self.assertEqual(result["LIBCAP_STATIC"], "1")
-        self.assertEqual(result["PKG_CONFIG_PATH"], str((self.root / "aarch64-unknown-linux-gnu/libcap-2.78/lib/pkgconfig").resolve()) + ":/custom/pkgconfig")
+        self.assertEqual(
+            result["PKG_CONFIG_PATH"],
+            str(
+                (
+                    self.root / "aarch64-unknown-linux-gnu/libcap-2.78/lib/pkgconfig"
+                ).resolve()
+            )
+            + ":/custom/pkgconfig",
+        )
 
     def test_openssl_missing_uses_cargos_bundled_build(self):
         self.ready(library_available=False)
-        self.assertEqual(deps.prepare("x86_64-unknown-linux-gnu")["LEMEX_VENDORED_OPENSSL"], "1")
+        self.assertEqual(
+            deps.prepare("x86_64-unknown-linux-gnu")["LEMEX_VENDORED_OPENSSL"], "1"
+        )
 
     def test_musl_already_vendors_openssl(self):
         mocks = self.ready(library_available=False)
-        self.assertEqual(deps.prepare("x86_64-unknown-linux-musl")["LEMEX_VENDORED_OPENSSL"], "0")
+        self.assertEqual(
+            deps.prepare("x86_64-unknown-linux-musl")["LEMEX_VENDORED_OPENSSL"], "0"
+        )
         mocks["library_available"].assert_not_called()
 
     def test_check_only_mode_does_not_download_or_install(self):
@@ -119,7 +153,12 @@ class DependencyTests(unittest.TestCase):
 
     def test_missing_ripgrep_uses_verified_platform_manifest(self):
         self.ready()
-        with patch.object(deps.shutil, "which", return_value=None), patch("codex_package.ripgrep.resolve_rg_bin", return_value=self.root / "rg") as fetch:
+        with (
+            patch.object(deps.shutil, "which", return_value=None),
+            patch(
+                "codex_package.ripgrep.resolve_rg_bin", return_value=self.root / "rg"
+            ) as fetch,
+        ):
             result = deps.prepare("aarch64-apple-darwin")
         self.assertEqual(result["LEMEX_RG_BIN"], str(self.root / "rg"))
         self.assertEqual(fetch.call_args.args[0].target, "aarch64-apple-darwin")
@@ -130,23 +169,59 @@ class DependencyTests(unittest.TestCase):
                 args = deps.package_command(manager, ["example-devel"])
                 self.assertEqual(args[0], manager)
                 self.assertEqual(args[-1], "example-devel")
-                self.assertTrue(any(flag in args for flag in ("-y", "--non-interactive", "--noconfirm", "--no-cache")))
+                self.assertTrue(
+                    any(
+                        flag in args
+                        for flag in (
+                            "-y",
+                            "--non-interactive",
+                            "--noconfirm",
+                            "--no-cache",
+                        )
+                    )
+                )
 
     def test_no_passwordless_sudo_does_not_modify_system(self):
-        with patch.object(deps.shutil, "which", side_effect=lambda name: "/usr/bin/" + name if name in ("apt-get", "sudo") else None), patch.object(deps.os, "geteuid", return_value=1000), patch.object(deps.subprocess, "run", return_value=Mock(returncode=1)) as invoke, patch.object(deps, "run") as install:
+        with (
+            patch.object(
+                deps.shutil,
+                "which",
+                side_effect=lambda name: (
+                    "/usr/bin/" + name if name in ("apt-get", "sudo") else None
+                ),
+            ),
+            patch.object(deps.os, "geteuid", return_value=1000),
+            patch.object(
+                deps.subprocess, "run", return_value=Mock(returncode=1)
+            ) as invoke,
+            patch.object(deps, "run") as install,
+        ):
             self.assertFalse(deps.system_packages("linux"))
         invoke.assert_called_once()
         self.assertEqual(invoke.call_args.args[0], ["sudo", "-n", "true"])
         install.assert_not_called()
 
     def test_apt_updates_package_lists_before_installing(self):
-        with patch.object(deps.shutil, "which", side_effect=lambda name: name if name == "apt-get" else None), patch.object(deps.os, "geteuid", return_value=0), patch.object(deps, "run") as invoke:
+        with (
+            patch.object(
+                deps.shutil,
+                "which",
+                side_effect=lambda name: name if name == "apt-get" else None,
+            ),
+            patch.object(deps.os, "geteuid", return_value=0),
+            patch.object(deps, "run") as invoke,
+        ):
             self.assertTrue(deps.system_packages("linux"))
         self.assertEqual(invoke.call_args_list[0].args[0], ["apt-get", "update"])
         self.assertIn("libcap-dev", invoke.call_args_list[1].args[0])
 
     def test_libcap_bad_checksum_never_runs_source(self):
-        with patch.object(deps, "urlopen", return_value=io.BytesIO(b"untrusted download")), patch.object(deps, "run") as build:
+        with (
+            patch.object(
+                deps, "urlopen", return_value=io.BytesIO(b"untrusted download")
+            ),
+            patch.object(deps, "run") as build,
+        ):
             with self.assertRaisesRegex(RuntimeError, "SHA-256"):
                 deps.prepare_libcap(self.root / "prefix", {})
         build.assert_not_called()
@@ -158,7 +233,10 @@ class DependencyTests(unittest.TestCase):
             path = prefix / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("cached")
-        with patch.object(deps, "urlopen") as download, patch.object(deps, "run") as build:
+        with (
+            patch.object(deps, "urlopen") as download,
+            patch.object(deps, "run") as build,
+        ):
             deps.prepare_libcap(prefix, {})
         download.assert_not_called()
         build.assert_not_called()
@@ -167,20 +245,62 @@ class DependencyTests(unittest.TestCase):
     def test_environment_file_quotes_paths_as_data(self):
         destination = self.root / "env.sh"
         path = str(self.root / "rg '$(false)`false`")
-        with patch.object(sys, "argv", ["prepare_source_deps", "--target", "aarch64-apple-darwin", "--env-file", str(destination)]), patch.object(deps, "prepare", return_value={"LEMEX_RG_BIN": path}):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "prepare_source_deps",
+                    "--target",
+                    "aarch64-apple-darwin",
+                    "--env-file",
+                    str(destination),
+                ],
+            ),
+            patch.object(deps, "prepare", return_value={"LEMEX_RG_BIN": path}),
+        ):
             deps.main()
-        value = subprocess.check_output(["/bin/bash", "-c", 'set -eu; source "$1"; printf "%s" "$LEMEX_RG_BIN"', "test", str(destination)], text=True)
+        value = subprocess.check_output(
+            [
+                "/bin/bash",
+                "-c",
+                'set -eu; source "$1"; printf "%s" "$LEMEX_RG_BIN"',
+                "test",
+                str(destination),
+            ],
+            text=True,
+        )
         self.assertEqual(value, path)
 
     def test_git_bash_is_rejected_before_running_cargo(self):
-        result = subprocess.run(["/bin/bash", "-c", 'source "$1"; uname() { printf "MINGW64_NT\\n"; }; check_base_deps', "test", str(ROOT / "scripts/install/install_from_source.sh")], capture_output=True, text=True)
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                'source "$1"; uname() { printf "MINGW64_NT\\n"; }; check_base_deps',
+                "test",
+                str(ROOT / "scripts/install/install_from_source.sh"),
+            ],
+            capture_output=True,
+            text=True,
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("WSL2", result.stderr)
 
     def test_writable_npm_prefix_is_preserved(self):
         prefix = self.root / "custom prefix"
         script = 'source "$1"; fixture_prefix="$2"; npm() { printf "%s\\n" "$fixture_prefix"; }; prepare_install_prefix; printf "%s" "${LEMEX_INSTALL_PREFIX:-default}"'
-        result = subprocess.check_output(["/bin/bash", "-c", script, "test", str(ROOT / "scripts/install/install_from_source.sh"), str(prefix)], text=True)
+        result = subprocess.check_output(
+            [
+                "/bin/bash",
+                "-c",
+                script,
+                "test",
+                str(ROOT / "scripts/install/install_from_source.sh"),
+                str(prefix),
+            ],
+            text=True,
+        )
         self.assertEqual(result, "default")
 
     @unittest.skipIf(os.geteuid() == 0, "root can write ordinary read-only directories")
@@ -190,11 +310,21 @@ class DependencyTests(unittest.TestCase):
         prefix.chmod(0o555)
         self.addCleanup(prefix.chmod, 0o755)
         script = 'source "$1"; fixture_prefix="$2"; npm() { printf "%s\\n" "$fixture_prefix"; }; prepare_install_prefix; printf "%s" "$LEMEX_INSTALL_PREFIX"'
-        result = subprocess.check_output(["/bin/bash", "-c", script, "test", str(ROOT / "scripts/install/install_from_source.sh"), str(prefix)], text=True)
+        result = subprocess.check_output(
+            [
+                "/bin/bash",
+                "-c",
+                script,
+                "test",
+                str(ROOT / "scripts/install/install_from_source.sh"),
+                str(prefix),
+            ],
+            text=True,
+        )
         self.assertEqual(result, str(self.root / ".local"))
 
     def test_dependency_environment_is_applied_and_temporary_file_removed(self):
-        script = r'''
+        script = r"""
 source "$1"
 rustc() { printf 'host: x86_64-unknown-linux-gnu\n'; }
 python3() {
@@ -204,8 +334,20 @@ prepare_build_deps
 test "$LEMEX_RG_BIN" = /cache/ripgrep
 test "$LIBCAP_STATIC" = 1
 test -z "$LEMEX_TEMP_DEPS_DIR"
-'''
-        subprocess.run(["/bin/bash", "-c", script, "test", str(ROOT / "scripts/install/install_from_source.sh")], check=True, env=dict(os.environ, TMPDIR=str(self.root)), capture_output=True, text=True)
+"""
+        subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                script,
+                "test",
+                str(ROOT / "scripts/install/install_from_source.sh"),
+            ],
+            check=True,
+            env=dict(os.environ, TMPDIR=str(self.root)),
+            capture_output=True,
+            text=True,
+        )
         self.assertEqual(list(self.root.iterdir()), [])
 
 

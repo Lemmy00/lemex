@@ -1,6 +1,6 @@
 //! Purely omits checklist-tool guidance from Codex-owned prompts, before adding caller text.
 
-/// Call only for Codex-owned prompt text; custom instructions must remain unchanged.
+/// Call only for Lemex-owned prompt text; custom instructions must remain unchanged.
 pub fn without_update_plan_instructions(instructions: &str) -> String {
     let lines = instructions.split_inclusive('\n').collect::<Vec<_>>();
     let mut rendered = String::with_capacity(instructions.len());

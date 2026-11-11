@@ -1,10 +1,10 @@
 # Lemex CLI
 
-Lemex is a local coding agent based on OpenAI Codex. It runs as `lemex` and keeps its configuration and state in `~/.lemex`, so you can use it alongside Codex.
+Lemex is a local coding agent for the terminal. Run it as `lemex`; your configuration and saved chats live in `~/.lemex`.
 
 External analytics and feedback reporting are removed. Local logs and token usage are preserved. Custom OpenTelemetry exporters require explicit configuration.
 
-Lemex does not include ChatGPT cloud tasks, account sign-in, or the Codex desktop-app installer. Developer test tooling is kept outside the installed CLI.
+Lemex does not include ChatGPT cloud tasks, account sign-in, or a desktop-app installer. Developer test tooling is kept outside the installed CLI.
 
 The CLI also omits account analytics dashboards, purchase/reset-credit promotions, cloud app commands, terminal pets and automatic terminal-size reporting. Voice and coding tools remain. See the [upstream maintenance policy](docs/lemex-maintenance.md).
 
@@ -105,3 +105,12 @@ See [Configuration](docs/config.md) for provider setup and catalog customization
 To check your setup, run `lemex doctor`.
 
 Licensed under [Apache-2.0](LICENSE).
+
+### Saved chats
+
+Lemex saves chats locally in `~/.lemex` (or your configured `LEMEX_HOME`). Run
+`lemex history`, or use `/history` during a conversation, to browse and resume
+saved chats across projects and providers, including coding sessions started
+with `lemex exec`. Background subagent threads stay out of this list. The picker
+supports search, transcript previews, and archived chats. Use `lemex resume` or
+`/resume` for the current project's interactive chats.

@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// Source authority that owns a skill package and must be used to read it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SkillSourceKind {
-    /// Codex-hosted skills, including bundled, user, repo, plugin-installed,
+    /// Lemex-hosted skills, including bundled, user, repo, plugin-installed,
     /// and downloaded/materialized remote skills.
     Host,
     /// Skills owned by an execution environment.
@@ -302,6 +302,13 @@ impl SkillCatalogEntry {
 
     pub(crate) fn source_locations(&self) -> impl Iterator<Item = SkillSourceLocation> + '_ {
         std::iter::once(self.primary_source()).chain(self.sources.iter().cloned())
+    }
+
+    pub(crate) fn unaliased_locator(&self) -> &str {
+        match &self.authority.kind {
+            SkillSourceKind::Executor | SkillSourceKind::Cloud => self.id.0.as_str(),
+            SkillSourceKind::Host | SkillSourceKind::Custom(_) => self.rendered_path(),
+        }
     }
 
     pub(crate) fn rendered_path(&self) -> &str {

@@ -69,7 +69,11 @@ PACKAGE_EXPANSIONS: dict[str, list[str]] = {
     # Native Windows releases are not supported yet; use the Linux package in WSL2.
     "lemex": [
         "lemex",
-        *(name for name, spec in LEMEX_PLATFORM_PACKAGES.items() if spec["os"] != "win32"),
+        *(
+            name
+            for name, spec in LEMEX_PLATFORM_PACKAGES.items()
+            if spec["os"] != "win32"
+        ),
     ],
 }
 
@@ -412,6 +416,17 @@ def copy_native_binaries(
             if dest_target_dir.exists():
                 shutil.rmtree(dest_target_dir)
             shutil.copytree(target_dir, dest_target_dir)
+            # standalone exec-server is a binary that is equal to codex exec-server, do not publish it to npm
+            for name in ("codex-exec-server", "codex-exec-server.exe"):
+                (dest_target_dir / "bin" / name).unlink(missing_ok=True)
+            metadata_path = dest_target_dir / "codex-package.json"
+            if metadata_path.is_file():
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if "execServer" in metadata:
+                    metadata.pop("execServer")
+                    metadata_path.write_text(
+                        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+                    )
         else:
             dest_target_dir.mkdir(parents=True, exist_ok=True)
 

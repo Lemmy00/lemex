@@ -17,7 +17,7 @@ use serde_json::Value;
 use std::path::Path;
 
 /// Determines the conditions under which the user is consulted to approve
-/// running the command proposed by Codex.
+/// running the command proposed by Lemex.
 #[allow(dead_code)]
 #[derive(JsonSchema)]
 #[schemars(rename = "AskForApproval")]
@@ -86,6 +86,15 @@ pub fn features_schema(schema_gen: &mut SchemaGenerator) -> Schema {
                 feature.key.to_string(),
                 schema_gen.subschema_for::<codex_features::FeatureToml<
                     codex_features::GuardianV2ConfigToml,
+                >>(),
+            );
+            continue;
+        }
+        if feature.id == codex_features::Feature::GuardianV3 {
+            validation.properties.insert(
+                feature.key.to_string(),
+                schema_gen.subschema_for::<codex_features::FeatureToml<
+                    codex_features::GuardianV3ConfigToml,
                 >>(),
             );
             continue;

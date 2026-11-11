@@ -15,7 +15,6 @@ use codex_extension_api::ToolCall;
 use codex_extension_api::ToolContributor;
 use codex_extension_api::ToolExecutor;
 use codex_login::AuthManager;
-use codex_model_provider::create_model_provider;
 use codex_protocol::AgentPath;
 use codex_protocol::openai_models::HistoryToolMessages;
 use codex_protocol::openai_models::NotesToolMessages;
@@ -43,19 +42,24 @@ struct HistoryNotesAgentIdentity {
 
 impl HistoryNotesExtension {
     fn update_config(&self, thread_store: &ExtensionData, config: &Config) {
+        let auth = thread_store
+            .get::<codex_model_provider::ProviderAuthContext>()
+            .unwrap_or_else(|| {
+                Arc::new(codex_model_provider::ProviderAuthContext {
+                    credentials: Arc::clone(&self.auth_manager),
+                    runtime_auth: None,
+                })
+            });
         if config
             .token_budget
             .as_ref()
             .is_some_and(|token_budget| token_budget.use_history_notes_extension)
             && config.model_provider.is_openai()
-            && self.auth_manager.current_auth_uses_codex_backend()
+            && auth.credentials.current_auth_uses_codex_backend()
         {
             thread_store.insert(HistoryNotesExtensionConfig {
                 backend: HistoryNotesBackend::new(
-                    create_model_provider(
-                        config.model_provider.clone(),
-                        Some(self.auth_manager.clone()),
-                    ),
+                    auth.model_provider(config.model_provider.clone()),
                     config.http_client_factory(),
                 ),
             });
@@ -203,7 +207,7 @@ impl HistoryNotesExtension {
     }
 }
 
-/// Installs the standalone history and notes tools backed by the Codex backend.
+/// Installs the standalone history and notes tools backed by the Lemex backend.
 pub fn install(registry: &mut ExtensionRegistryBuilder<Config>, auth_manager: Arc<AuthManager>) {
     let extension = Arc::new(HistoryNotesExtension { auth_manager });
     registry.thread_lifecycle_contributor(extension.clone());

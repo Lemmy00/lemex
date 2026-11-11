@@ -4,7 +4,7 @@ expression: sanitized
 ---
 /status
 
-  >_ RCP AI Lemex (v0.0.0)
+  >_ Lemex (v0.0.0)
 
   Model:        gpt-5.1-codex-max (reasoning none, summaries auto)
   Directory:    [[workspace]]

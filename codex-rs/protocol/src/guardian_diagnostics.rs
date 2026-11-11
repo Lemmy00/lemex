@@ -48,7 +48,7 @@ pub enum GuardianReviewSessionKind {
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GuardianApprovalRequestSource {
-    /// Approval requested directly by the main Codex turn.
+    /// Approval requested directly by the main Lemex turn.
     MainTurn,
     /// Approval requested by a delegated subagent and routed through the parent
     /// session for guardian review.
@@ -82,6 +82,7 @@ impl From<&AdditionalPermissionProfile> for GuardianAdditionalPermissions {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum GuardianReviewedAction {
+    NativeToolCall {},
     Shell {
         sandbox_permissions: SandboxPermissions,
         additional_permissions: Option<GuardianAdditionalPermissions>,

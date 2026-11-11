@@ -1,6 +1,7 @@
 //! API-key discovery opt-outs must gate network requests and cached catalog authority.
 
 use super::*;
+use codex_protocol::openai_models::ModelOrigin;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -14,6 +15,7 @@ async fn api_key_ultra_is_available_in_picker_and_inference_without_rewriting_ca
             "test-key",
         ))),
         catalog.clone(),
+        ModelOrigin::ExplicitConfig,
     );
     let preset = manager.try_list_models().unwrap().remove(0);
     assert!(
@@ -110,7 +112,10 @@ async fn api_key_discovery_flag_controls_fetches_and_cached_catalogs() {
     assert_eq!(endpoint.fetch_count(), 1);
     assert_eq!(
         manager.get_model_info("dynamic", &config).await,
-        model_info::with_local_ultra(models[0].clone())
+        CatalogModel {
+            model: model_info::with_local_ultra(models[0].clone()).into(),
+            origin: ModelOrigin::Provider
+        }
     );
 
     // A runtime rollback must also suppress the already-loaded catalog.
@@ -123,11 +128,9 @@ async fn api_key_discovery_flag_controls_fetches_and_cached_catalogs() {
         bundled
     );
     assert_eq!(manager.try_get_remote_models().unwrap(), bundled);
-    assert!(
-        manager
-            .get_model_info("dynamic", &config)
-            .await
-            .used_fallback_model_metadata
+    assert_eq!(
+        manager.get_model_info("dynamic", &config).await.origin,
+        ModelOrigin::Synthetic
     );
     assert_eq!(endpoint.fetch_count(), 1);
 

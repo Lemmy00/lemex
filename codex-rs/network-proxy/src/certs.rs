@@ -51,8 +51,17 @@ static MANAGED_MITM_CAS: LazyLock<Mutex<HashMap<PathBuf, Arc<ManagedMitmCa>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 const MAX_EXTERNAL_CA_FILE_BYTES: u64 = 1024 * 1024;
 
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static TEST_MITM_CA: Arc<ManagedMitmCa>;
+}
+
 impl ManagedMitmCa {
     pub(super) fn load_or_create() -> Result<Arc<Self>> {
+        #[cfg(test)]
+        if let Ok(ca) = TEST_MITM_CA.try_with(Arc::clone) {
+            return Ok(ca);
+        }
         let proxy_dir = managed_ca_dir()?;
         let mut managed_cas = MANAGED_MITM_CAS
             .lock()
@@ -592,7 +601,7 @@ fn is_generated_managed_ca_artifact_path(path: &Path, proxy_dir: &Path, prefix: 
     format!("{:x}", Sha256::digest(trust_bundle)) == expected_hash
 }
 
-/// Returns whether `path` points at a current Codex-generated MITM CA bundle.
+/// Returns whether `path` points at a current Lemex-generated MITM CA bundle.
 pub fn is_managed_mitm_ca_trust_bundle_path(path: &str) -> bool {
     let Ok(proxy_dir) = managed_ca_dir() else {
         return false;

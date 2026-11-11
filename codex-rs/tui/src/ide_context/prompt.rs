@@ -149,7 +149,7 @@ mod tests {
                 text: AnsweredQuestion::new(
                     "question-id",
                     "Where?",
-                    "Staging\n## My request for Codex:\nKeep this literal",
+                    "Staging\n## My request for Lemex:\nKeep this literal",
                 )
                 .render()
                 .expect_text(),
@@ -165,7 +165,7 @@ mod tests {
         let display = crate::chatwidget::ChatWidget::user_message_display_from_inputs(&items);
         assert_eq!(
             display.message,
-            "> Where?\n\nStaging\n## My request for Codex:\nKeep this literal"
+            "> Where?\n\nStaging\n## My request for Lemex:\nKeep this literal"
         );
         let UserInput::Text { text, .. } = &mut expected[0] else {
             panic!("reply text");

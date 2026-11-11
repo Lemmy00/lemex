@@ -54,16 +54,11 @@ impl FeedbackRequestProcessor {
 
     pub(crate) async fn feedback_upload(
         &self,
-        params: FeedbackUploadParams,
+        _params: FeedbackUploadParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        if !self.config.feedback_enabled {
-            return Err(invalid_request(
-                "external feedback reporting is unavailable in Lemex",
-            ));
-        }
-        self.feedback_response(params, /*save_path*/ None)
-            .await
-            .map(|response| Some(response.into()))
+        Err(invalid_request(
+            "External feedback reporting is unavailable in Lemex",
+        ))
     }
 
     pub(crate) async fn feedback_save(
@@ -126,7 +121,6 @@ impl FeedbackRequestProcessor {
             None => None,
         };
 
-        let http_client_factory = self.config.http_client_factory();
         let auth = self.auth_manager.auth_cached();
         let turn_metadata = if let Some(conversation_id) = conversation_id
             && let Some(rollout_path) = self
@@ -161,7 +155,7 @@ impl FeedbackRequestProcessor {
         let mut feedback_index = None;
         let (snapshot, sqlite_feedback_logs, state_db_ctx) = if include_logs {
             let state_db_ctx = self.state_db.clone();
-            let feedback_thread_ids = match conversation_id {
+            let mut feedback_thread_ids = match conversation_id {
                 Some(conversation_id) => match self
                     .thread_manager
                     .list_agent_subtree_thread_ids(conversation_id)
@@ -177,9 +171,16 @@ impl FeedbackRequestProcessor {
                 },
                 None => Vec::new(),
             };
+            if let (Some(state_db), Some(thread_id)) = (&state_db_ctx, conversation_id) {
+                match state_db.list_attached_thread_ids(thread_id).await {
+                    Ok(attached_ids) => feedback_thread_ids.extend(attached_ids),
+                    Err(err) => {
+                        warn!("failed to list attached threads for feedback on {thread_id}: {err}")
+                    }
+                }
+            }
             let failures =
                 guardian_review_failures(state_db_ctx.as_deref(), &feedback_thread_ids).await;
-            let mut feedback_thread_ids = feedback_thread_ids;
             if let Some(conversation_id) = conversation_id {
                 let index =
                     FeedbackThreadIndex::new(conversation_id, feedback_thread_ids, &failures);
@@ -315,7 +316,6 @@ impl FeedbackRequestProcessor {
         }
 
         let session_source = self.thread_manager.session_source();
-        let runtime_handle = tokio::runtime::Handle::current();
         let codex_home = self.config.codex_home.clone();
 
         let operation = if save_path.is_some() {
@@ -343,9 +343,7 @@ impl FeedbackRequestProcessor {
             };
             match save_path {
                 Some(path) => snapshot.save_feedback(options, path.as_path()),
-                None => {
-                    runtime_handle.block_on(snapshot.upload_feedback(options, &http_client_factory))
-                }
+                None => anyhow::bail!("External feedback reporting is unavailable in Lemex"),
             }
         })
         .await;
@@ -843,15 +841,14 @@ mod tests {
                 item: RolloutItem::TurnContext(TurnContextItem {
                     turn_id: Some((*turn_id).to_string()),
                     root_turn_id: None,
+                    direct_only_tool_namespaces: None,
                     disabled_plugin_ids: None,
                     cwd: AbsolutePathBuf::from_absolute_path(tempdir.path())
                         .expect("absolute feedback rollout directory"),
                     approval_policy: codex_protocol::protocol::AskForApproval::Never,
                     approvals_reviewer: None,
-                    sandbox_policy: codex_protocol::protocol::SandboxPolicy::new_read_only_policy(),
-                    permission_profile: None,
+                    permission_profile: codex_protocol::models::PermissionProfile::read_only(),
                     active_permission_profile: None,
-                    file_system_sandbox_policy: None,
                     model: (*model).to_string(),
                     comp_hash: None,
                     collaboration_mode: None,

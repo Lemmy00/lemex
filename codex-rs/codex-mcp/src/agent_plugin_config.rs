@@ -69,7 +69,7 @@ enum AgentPluginMcpServer {
     },
 }
 
-/// Translates an Agent Plugins `mcp.json` into Codex MCP configuration.
+/// Translates an Agent Plugins `mcp.json` into Lemex MCP configuration.
 pub fn parse_agent_plugin_mcp_config(
     plugin_root: &Path,
     plugin_data_root: &Path,

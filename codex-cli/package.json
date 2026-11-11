@@ -2,7 +2,7 @@
   "name": "lemex",
   "version": "0.0.0-dev",
   "private": true,
-  "description": "Lemex CLI is a fork of the OpenAI Codex coding agent.",
+  "description": "Lemex is a local coding agent for the terminal.",
   "license": "Apache-2.0",
   "bin": {
     "lemex": "bin/lemex.js"

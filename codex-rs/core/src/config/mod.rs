@@ -19,12 +19,14 @@ use codex_config::FeatureRequirementsToml;
 use codex_config::ManagedAuthPolicy;
 use codex_config::McpEnterpriseManagedAuthConfig;
 use codex_config::McpServerRequirement;
+use codex_config::PermissionConfig;
 use codex_config::PluginRequirementsToml;
 use codex_config::ProfileV2Name;
 use codex_config::ResidencyRequirement;
 use codex_config::SandboxModeRequirement;
 use codex_config::Sourced;
 use codex_config::ThreadConfigLoader;
+use codex_config::apply_default_gcp_auth;
 use codex_config::config_toml::CircuitBreakAction;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
@@ -37,7 +39,9 @@ use codex_config::loader::load_config_layers_state;
 use codex_config::loader::project_trust_key;
 use codex_config::permissions_toml::PermissionProfileToml;
 use codex_config::permissions_toml::PermissionsToml;
+use codex_config::resolve_permission_config;
 use codex_config::sandbox_mode_requirement_for_permission_profile;
+use codex_config::translate_legacy_permissions;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::AuthKeyringBackendKind;
@@ -75,6 +79,7 @@ use codex_features::Features;
 use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
 use codex_features::NetworkProxyConfigToml;
+use codex_features::RuntimeAuthMode;
 use codex_features::SleepToolMode;
 use codex_features::TokenBudgetConfigToml;
 use codex_git_utils::resolve_root_git_project_for_trust;
@@ -88,11 +93,15 @@ use codex_mcp::McpPluginAttribution;
 use codex_mcp::McpProtocolMode;
 use codex_mcp::McpServerRegistration;
 use codex_mcp::ResolvedMcpCatalog;
+use codex_model_provider::ChatgptBaseUrl;
+use codex_model_provider::DEFAULT_CHATGPT_BASE_URL;
 use codex_model_provider::ProviderCapabilities;
 use codex_model_provider_info::GCP_PROVIDER_ID;
+use codex_model_provider_info::GatewayOAuthConfig;
 use codex_model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
+use codex_model_provider_info::OPENAI_PROVIDER_ID;
 use codex_model_provider_info::RCP_PROVIDER_ID;
 use codex_model_provider_info::built_in_model_providers;
 use codex_model_provider_info::merge_configured_model_providers;
@@ -102,7 +111,6 @@ use codex_protocol::MemoryVersion;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::AutoCompactTokenLimitScope;
 use codex_protocol::config_types::ForcedLoginMethod;
-use codex_protocol::config_types::ModelProviderAuthInfo;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
@@ -138,12 +146,14 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use codex_utils_path_uri::PathConvention;
 use codex_utils_path_uri::PathUri;
+use codex_utils_path_uri::Platform;
 use http::HeaderValue;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::FormElicitationCapability;
 use rmcp::model::UrlElicitationCapability;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::IntoDeserializer;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -166,6 +176,7 @@ use toml_edit::DocumentMut;
 
 mod auth_keyring;
 pub mod edit;
+mod guardian_policy;
 mod managed_features;
 mod metrics;
 mod network_config;
@@ -177,6 +188,8 @@ mod permission_profile_selection;
 mod permissions;
 mod requirements;
 mod resolved_permission_profile;
+pub(crate) use guardian_policy::resolve_guardian_policy_text;
+pub(crate) use guardian_policy::resolve_guardian_reviewer;
 mod runtime_refresh;
 pub(crate) use runtime_refresh::RuntimeConfigRefresh;
 #[cfg(test)]
@@ -196,11 +209,14 @@ use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 pub use codex_sandboxing::system_bwrap_warning;
 pub use managed_features::ManagedFeatures;
 pub(crate) use metrics::emit_session_start_metrics;
+pub(crate) use metrics::legacy_multi_agent_disabled_sources;
 pub use network_config::EnvironmentNetworkConfigError;
 pub use network_config::NetworkConfigInputs;
 pub use network_config::PreparedNetworkConfig;
 pub use network_config::project_environment_profile_network;
 pub use network_config::validate_environment_network_policy;
+#[cfg(test)]
+pub(crate) use network_proxy_spec::McpNetworkRoute;
 pub use network_proxy_spec::NetworkProxySpec;
 pub use network_proxy_spec::StartedNetworkProxy;
 pub use permission_profile_catalog::PermissionProfileCatalogEntry;
@@ -316,6 +332,13 @@ pub(crate) async fn test_config() -> Config {
     Config::load_from_base_config_with_overrides(
         ConfigToml {
             model: Some("gpt-5.5".to_string()),
+            features: Some(
+                BTreeMap::from([
+                    (Feature::ToolSuggest.key().to_string(), false),
+                    (Feature::RecommendedPlugins.key().to_string(), false),
+                ])
+                .into(),
+            ),
             ..Default::default()
         },
         ConfigOverrides::default(),
@@ -442,7 +465,7 @@ impl Permissions {
     }
 
     /// Workspace roots that came from user-visible configuration or runtime
-    /// selection. Internal Codex-only writable roots are intentionally excluded.
+    /// selection. Internal Lemex-only writable roots are intentionally excluded.
     pub fn user_visible_workspace_roots(&self) -> &[AbsolutePathBuf] {
         &self.workspace_roots
     }
@@ -691,6 +714,9 @@ pub struct Config {
     /// been escalated. This does not disable separate safety checks such as
     /// ARC.
     pub approvals_reviewer: ApprovalsReviewer,
+    /// Requested reviewer when managed requirements replace the effective choice.
+    /// `None` uses `approvals_reviewer`, including programmatically constructed configs.
+    pub requested_approvals_reviewer: Option<ApprovalsReviewer>,
 
     /// enforce_residency means web traffic cannot be routed outside of a
     /// particular geography. HTTP clients should direct their requests
@@ -720,17 +746,21 @@ pub struct Config {
     /// `# Policy Configuration` section rather than replacing the whole
     /// guardian developer prompt.
     pub guardian_policy_config: Option<String>,
+    /// Guardian publication observed before startup loading or last policy refresh.
+    pub guardian_policy_revision: u64,
 
-    /// Additional Guardian policy from requirements.toml or config.toml.
+    /// Additional Guardian policy supplied by managed requirements or the host.
     /// Rendered into `{{ extra_policy }}` alongside the resolved tenant policy.
     pub guardian_extra_policy: Option<String>,
 
-    /// Guardian prompt template override from config.toml.
+    /// Guardian prompt template supplied by the host.
     /// The resolved policy config replaces its `{{ tenant_policy_config }}`
     /// placeholder when a review session is built.
     pub guardian_policy_template: Option<String>,
     /// Transcript encoding shared by Guardian review and scoring.
     pub guardian_transcript_mode: codex_protocol::TranscriptFormat,
+    /// Frozen section policy for sync Guardian; absence keeps fixed budgeting.
+    pub guardian_sync_elastic_budget: Option<codex_guardian_context::ElasticBudgetConfig>,
 
     /// Optional replacement for the gated history-retrieval instructions.
     /// Blank config values are treated as unset, like other Guardian policy overrides.
@@ -742,6 +772,9 @@ pub struct Config {
 
     /// Include a structured error when Guardian's circuit breaker interrupts a turn.
     pub guardian_circuit_break_action: CircuitBreakAction,
+
+    /// Overall Guardian review budget. None means unlimited; cancellation still applies.
+    pub guardian_review_timeout: Option<Duration>,
 
     /// Whether to inject the `<permissions instructions>` developer block.
     pub include_permissions_instructions: bool,
@@ -773,23 +806,23 @@ pub struct Config {
     /// Compact prompt override.
     pub compact_prompt: Option<String>,
 
-    /// Optional external notifier command. When set, Codex will spawn this
+    /// Optional external notifier command. When set, Lemex will spawn this
     /// program after each completed *turn* (i.e. when the agent finishes
     /// processing a user submission). The value must be the full command
-    /// broken into argv tokens **without** the trailing JSON argument - Codex
+    /// broken into argv tokens **without** the trailing JSON argument - Lemex
     /// appends one extra argument containing a JSON payload describing the
     /// event.
     ///
     /// Example `~/.lemex/config.toml` snippet:
     ///
     /// ```toml
-    /// notify = ["notify-send", "Codex"]
+    /// notify = ["notify-send", "Lemex"]
     /// ```
     ///
     /// which will be invoked as:
     ///
     /// ```shell
-    /// notify-send Codex '{"type":"agent-turn-complete","turn-id":"12345"}'
+    /// notify-send Lemex '{"type":"agent-turn-complete","turn-id":"12345"}'
     /// ```
     ///
     /// If unset the feature is disabled.
@@ -828,6 +861,10 @@ pub struct Config {
 
     /// Own the fullscreen transcript when the alternate screen is enabled.
     pub tui_fullscreen_transcript: bool,
+    pub tui_collapse_turn_details: bool,
+
+    /// Preferred docked sidebar width as a percentage of the terminal.
+    pub tui_sidebar_width_percent: Option<u8>,
 
     /// Mouse wheel speed multiplier for transcript scrolling; defaults to one row per event.
     pub tui_mouse_scroll_speed: Option<f64>,
@@ -914,12 +951,12 @@ pub struct Config {
     pub workspace_roots_explicit: bool,
 
     /// Preferred store for CLI auth credentials.
-    /// file (default): Use a file in the Codex home directory.
+    /// file (default): Use a file in the Lemex home directory.
     /// keyring: Use an OS-specific keyring service.
     /// auto: Use the OS-specific keyring service if available, otherwise use a file.
     pub cli_auth_credentials_store_mode: AuthCredentialsStoreMode,
 
-    /// Definition for MCP servers that Codex can reach out to for tool calls.
+    /// Definition for MCP servers that Lemex can reach out to for tool calls.
     pub mcp_servers: Constrained<HashMap<String, McpServerConfig>>,
 
     /// Trusted IdP shared by all permitted EMA MCP registrations.
@@ -930,16 +967,16 @@ pub struct Config {
 
     /// Preferred store for MCP OAuth credentials.
     /// keyring: Use an OS-specific keyring service.
-    ///          Credentials stored in the keyring will only be readable by Codex unless the user explicitly grants access via OS-level keyring access.
+    ///          Credentials stored in the keyring will only be readable by Lemex unless the user explicitly grants access via OS-level keyring access.
     ///          https://github.com/openai/codex/blob/main/codex-rs/rmcp-client/src/oauth.rs#L2
     /// file: LEMEX_HOME/.credentials.json
-    ///       This file will be readable to Codex and other applications running as the same user.
+    ///       This file will be readable to Lemex and other applications running as the same user.
     /// auto (default): keyring if available, otherwise file.
     pub mcp_oauth_credentials_store_mode: OAuthCredentialsStoreMode,
 
     /// Optional fixed port to use for the local HTTP callback server used during MCP OAuth login.
     ///
-    /// When unset, Codex will bind to an ephemeral port chosen by the OS.
+    /// When unset, Lemex will bind to an ephemeral port chosen by the OS.
     pub mcp_oauth_callback_port: Option<u16>,
 
     /// Optional redirect URI to use during MCP OAuth login.
@@ -991,11 +1028,11 @@ pub struct Config {
     /// Memories subsystem settings.
     pub memories: MemoriesConfig,
 
-    /// Directory containing all Codex state (defaults to `~/.lemex` but can be
+    /// Directory containing all Lemex state (defaults to `~/.lemex` but can be
     /// overridden by the `LEMEX_HOME` environment variable).
     pub codex_home: AbsolutePathBuf,
 
-    /// Resolved configuration shared by all Codex SQLite databases.
+    /// Resolved configuration shared by all Lemex SQLite databases.
     pub sqlite: codex_state::SqliteConfig,
 
     /// Directory for log files (defaults to `$LEMEX_HOME/log`).
@@ -1009,6 +1046,10 @@ pub struct Config {
     /// When true, session is not persisted on disk. Default to `false`
     pub ephemeral: bool,
 
+    /// Enable persistent dynamic tool updates only when every reader, including rollback
+    /// versions, can restore the updated tools and preserve them through compaction.
+    pub allow_persistent_dynamic_tool_updates: bool,
+
     /// Optional extra configuration fields for the thread.
     pub extra_config: Option<ExtraConfig>,
 
@@ -1021,7 +1062,7 @@ pub struct Config {
     /// output will be hyperlinked using the specified URI scheme.
     pub file_opener: UriBasedFileOpener,
 
-    /// Path to the current Codex executable. This cannot be set in the config
+    /// Path to the current Lemex executable. This cannot be set in the config
     /// file: it must be set in code via [`ConfigOverrides`].
     pub codex_self_exe: Option<PathBuf>,
 
@@ -1067,7 +1108,10 @@ pub struct Config {
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: String,
 
-    /// Whether Codex-owned clients should respect host system proxy settings.
+    /// Whether configuration or managed requirements explicitly selected the ChatGPT base URL.
+    pub chatgpt_base_url_is_explicit: bool,
+
+    /// Whether Lemex-owned clients should respect host system proxy settings.
     pub respect_system_proxy: bool,
 
     /// Optional product SKU forwarded to the host-owned apps MCP server.
@@ -1155,6 +1199,8 @@ pub struct Config {
     pub current_time_reminder: Option<CurrentTimeReminderConfig>,
     /// How the sleep tool is selected when its feature gate is enabled.
     pub sleep_tool_mode: SleepToolMode,
+    /// Authentication mode used when runtime agent instances are enabled.
+    pub runtime_auth_mode: RuntimeAuthMode,
 
     /// Centralized feature flags; source of truth for feature gating.
     pub features: ManagedFeatures,
@@ -1175,8 +1221,8 @@ pub struct Config {
     /// Collection of various notices we show the user
     pub notices: Notice,
 
-    /// When `true`, checks for Codex updates on startup and surfaces update prompts.
-    /// Set to `false` only if your Codex updates are centrally managed.
+    /// When `true`, checks for Lemex updates on startup and surfaces update prompts.
+    /// Set to `false` only if your Lemex updates are centrally managed.
     /// Defaults to `true`.
     pub check_for_update_on_startup: bool,
 
@@ -1349,6 +1395,7 @@ impl Default for TokenBudgetConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RolloutBudgetConfig {
+    pub enforce_limit: bool,
     pub limit_tokens: i64,
     pub reminder_at_remaining_tokens: Vec<i64>,
     pub sampling_token_weight: f64,
@@ -1547,10 +1594,23 @@ impl ConfigBuilder {
 
     pub async fn build(self) -> std::io::Result<Config> {
         // Keep the large config-loading future off small runtime thread stacks.
-        Box::pin(self.build_inner()).await
+        // Avoid an additional async frame for ordinary config loads.
+        Box::pin(self.build_inner(|_, _, _| Ok(()))).await
     }
 
-    async fn build_inner(self) -> std::io::Result<Config> {
+    /// Validates the same loaded configuration that will be materialized, before provider
+    /// selection or initialization. Validation cannot alter the loaded configuration.
+    pub async fn build_with_validation(
+        self,
+        validate: impl FnOnce(&ConfigToml, &ConfigOverrides, &ConfigLayerStack) -> std::io::Result<()>,
+    ) -> std::io::Result<Config> {
+        Box::pin(self.build_inner(validate)).await
+    }
+
+    async fn build_inner(
+        self,
+        validate: impl FnOnce(&ConfigToml, &ConfigOverrides, &ConfigLayerStack) -> std::io::Result<()>,
+    ) -> std::io::Result<Config> {
         let Self {
             codex_home,
             cli_overrides,
@@ -1569,7 +1629,11 @@ impl ConfigBuilder {
         let cli_overrides = cli_overrides.unwrap_or_default();
         let mut harness_overrides = harness_overrides.unwrap_or_default();
         let loader_overrides = loader_overrides.unwrap_or_default();
-        let cwd_override = harness_overrides.cwd.as_deref().or(fallback_cwd.as_deref());
+        let cwd_override = harness_overrides
+            .cwd
+            .as_deref()
+            .or(fallback_cwd.as_deref())
+            .or(loader_overrides.default_cwd.as_deref());
         let cwd = match cwd_override {
             Some(path) => AbsolutePathBuf::relative_to_current_dir(path)?,
             None => AbsolutePathBuf::current_dir()?,
@@ -1591,6 +1655,7 @@ impl ConfigBuilder {
         )
         .await?;
         let config_toml = config_toml_from_layers(&config_layer_stack).await?;
+        validate(&config_toml, &harness_overrides, &config_layer_stack)?;
         Config::load_config_with_layer_stack(
             LOCAL_FS.as_ref(),
             config_toml,
@@ -1609,7 +1674,7 @@ impl ConfigBuilder {
 
 async fn config_toml_from_layers(layers: &ConfigLayerStack) -> std::io::Result<ConfigToml> {
     // The loader resolves paths relative to each layer's file before deserialization.
-    match layers.effective_config().try_into() {
+    match ConfigToml::try_from(layers.effective_config()) {
         Ok(config_toml) => Ok(config_toml),
         Err(err) => {
             if let Some(config_error) = codex_config::first_layer_config_error::<ConfigToml>(
@@ -1630,6 +1695,15 @@ async fn config_toml_from_layers(layers: &ConfigLayerStack) -> std::io::Result<C
 }
 
 impl Config {
+    /// Capture storage and sync preparation use one session-static rollout choice.
+    pub(crate) fn guardian_context_budgeting(&self) -> codex_guardian_context::ContextBudgeting {
+        if self.guardian_sync_elastic_budget.is_some() {
+            codex_guardian_context::ContextBudgeting::Elastic
+        } else {
+            codex_guardian_context::ContextBudgeting::Fixed
+        }
+    }
+
     pub fn sqlite_config(&self) -> &codex_state::SqliteConfig {
         &self.sqlite
     }
@@ -1657,6 +1731,14 @@ impl Config {
         self.guardian_policy_config
             .as_deref()
             .unwrap_or(model_messages.auto_review().policy)
+    }
+
+    /// Native Guardian agent history requires the reviewed thread's OpenAI provider.
+    pub fn guardian_native_multi_agent_history_enabled(&self) -> bool {
+        self.model_provider_id == OPENAI_PROVIDER_ID
+            && self
+                .features
+                .enabled(Feature::GuardianNativeMultiAgentHistory)
     }
 
     pub(crate) fn multi_agent_version_override(&self) -> Option<MultiAgentVersion> {
@@ -1757,6 +1839,15 @@ impl Config {
         }
     }
 
+    /// Returns backend routing that can resolve defaults against the request's auth snapshot.
+    pub fn chatgpt_backend_url(&self) -> ChatgptBaseUrl {
+        if !self.chatgpt_base_url_is_explicit && self.chatgpt_base_url == DEFAULT_CHATGPT_BASE_URL {
+            ChatgptBaseUrl::Default
+        } else {
+            ChatgptBaseUrl::Configured(self.chatgpt_base_url.clone())
+        }
+    }
+
     /// Returns auth routing resolved from the effective feature configuration.
     pub fn auth_route_config(&self) -> AuthRouteConfig {
         self.application_auth_route_config
@@ -1778,6 +1869,14 @@ impl Config {
         };
         let mut factory = HttpClientFactory::new(outbound_proxy_policy)
             .with_network_policy(self.application_network_policy.clone());
+        if self
+            .model_provider
+            .gateway_oauth
+            .as_ref()
+            .is_some_and(GatewayOAuthConfig::uses_credential_export)
+        {
+            factory = factory.with_sensitive_header_protection();
+        }
         if !self.respect_system_proxy && self.features.enabled(Feature::SystemProxyFallback) {
             factory = factory.with_system_proxy_fallback();
         }
@@ -1799,6 +1898,12 @@ impl Config {
             self.chatgpt_base_url.clone(),
             self.http_client_factory(),
             self.apps_mcp_product_sku.clone(),
+        )
+        .with_plugin_recommendations_enabled(self.features.plugin_recommendations_enabled())
+        .with_runtime_auth_mode(
+            (self.features.enabled(Feature::RuntimeAgentInstances)
+                && codex_runtime_agent_instance::is_openai_api_url(&self.chatgpt_base_url))
+            .then_some(self.runtime_auth_mode),
         )
     }
 
@@ -1919,16 +2024,20 @@ impl Config {
                 .enabled(Feature::SkillMcpDependencyInstall),
             approval_policy: self.permissions.approval_policy.clone(),
             permission_profile: self.permissions.permission_profile().clone(),
+            host_cwd: self.cwd.clone(),
             config_layer_stack: self.config_layer_stack.clone(),
             plugins: self.plugins.clone(),
             approvals_reviewer: self.approvals_reviewer,
             environment_cwds: HashMap::new(),
             environment_use_mxc: HashMap::new(),
-            server_permission_profiles: HashMap::new(),
+            server_permissions: HashMap::new(),
             codex_self_exe: self.codex_self_exe.clone(),
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
             use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
+            apps_early_resource_discovery: self
+                .features
+                .enabled(Feature::AppsEarlyResourceDiscovery),
             prefix_mcp_tool_names: self.prefix_mcp_tool_names(),
             non_prefixed_mcp_tool_servers: if self
                 .features
@@ -1941,6 +2050,7 @@ impl Config {
                 Vec::new()
             },
             protocol_mode: self.mcp_protocol_mode(),
+            discover_local_stdio: self.features.enabled(Feature::McpConnectionSharing),
             host_owned_apps_protocol_mode: if self.features.enabled(Feature::CodexAppsMcp20260728) {
                 McpProtocolMode::V20260728
             } else {
@@ -2057,7 +2167,7 @@ impl Config {
         .await
     }
 
-    /// Load a default configuration for a specific Codex home without reading
+    /// Load a default configuration for a specific Lemex home without reading
     /// user, project, or system config layers.
     pub async fn load_default_with_cli_overrides_for_codex_home(
         codex_home: PathBuf,
@@ -2084,7 +2194,7 @@ impl Config {
     }
     /// This is a secondary way of creating [Config], which is appropriate when
     /// the harness is meant to be used with a specific configuration that
-    /// ignores user settings. For example, the `codex exec` subcommand is
+    /// ignores user settings. For example, the `lemex exec` subcommand is
     /// designed to use [AskForApproval::Never] exclusively.
     ///
     /// Further, [ConfigOverrides] contains some options that are not supported
@@ -2205,8 +2315,7 @@ pub fn deserialize_config_toml_with_base(
     // This guard ensures that any relative paths that is deserialized into an
     // [AbsolutePathBuf] is resolved against `config_base_dir`.
     let _guard = AbsolutePathBufGuard::new(config_base_dir);
-    root_value
-        .try_into()
+    ConfigToml::try_from(root_value)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
@@ -2601,18 +2710,6 @@ fn is_session_layer(source: &ConfigLayerSource) -> bool {
     matches!(source, ConfigLayerSource::SessionFlags)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PermissionConfigSyntax {
-    Legacy,
-    Profiles,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct PermissionSelectionToml {
-    default_permissions: Option<String>,
-    sandbox_mode: Option<SandboxMode>,
-}
-
 // Resolve the named-profile catalog and selected profile id together. Runtime
 // profile constraints are applied later after this selection compiles into a
 // concrete `PermissionProfile`.
@@ -2634,66 +2731,14 @@ impl EffectivePermissionSelection<'_> {
     fn profiles_are_active(
         &self,
         default_permissions_override: Option<&str>,
-        permission_config_syntax: Option<PermissionConfigSyntax>,
+        permission_config: Option<PermissionConfig<'_>>,
     ) -> bool {
         self.persisted_profile_id_was_provided
             || self.requirements_force_profile_selection
             || default_permissions_override.is_some()
-            || matches!(
-                permission_config_syntax,
-                Some(PermissionConfigSyntax::Profiles)
-            )
-            || permission_config_syntax.is_none()
+            || matches!(permission_config, Some(PermissionConfig::Named { .. }))
+            || permission_config.is_none()
     }
-}
-
-fn resolve_permission_config_syntax(
-    config_layer_stack: &ConfigLayerStack,
-    cfg: &ConfigToml,
-    sandbox_mode_override: Option<SandboxMode>,
-) -> Option<PermissionConfigSyntax> {
-    if sandbox_mode_override.is_some() {
-        return Some(PermissionConfigSyntax::Legacy);
-    }
-
-    let session_flags_select_profiles = config_layer_stack
-        .layers_high_to_low()
-        .find(|layer| matches!(layer.name, ConfigLayerSource::SessionFlags))
-        .and_then(|layer| {
-            layer
-                .config
-                .clone()
-                .try_into::<PermissionSelectionToml>()
-                .ok()
-        })
-        .is_some_and(|selection| selection.default_permissions.is_some());
-    if session_flags_select_profiles {
-        return Some(PermissionConfigSyntax::Profiles);
-    }
-
-    let mut selection = None;
-    for layer in config_layer_stack.layers_low_to_high() {
-        let Ok(layer_selection) = layer.config.clone().try_into::<PermissionSelectionToml>() else {
-            continue;
-        };
-
-        if layer_selection.sandbox_mode.is_some() {
-            selection = Some(PermissionConfigSyntax::Legacy);
-        }
-        if layer_selection.default_permissions.is_some() {
-            selection = Some(PermissionConfigSyntax::Profiles);
-        }
-    }
-
-    selection.or_else(|| {
-        if cfg.default_permissions.is_some() {
-            Some(PermissionConfigSyntax::Profiles)
-        } else if cfg.sandbox_mode.is_some() {
-            Some(PermissionConfigSyntax::Legacy)
-        } else {
-            None
-        }
-    })
 }
 
 /// Optional overrides for user configuration (e.g., from CLI flags).
@@ -3031,6 +3076,7 @@ fn resolve_rollout_budget_config(
         }
     }
     Ok(Some(RolloutBudgetConfig {
+        enforce_limit: config.enforce_limit.unwrap_or(true),
         limit_tokens,
         reminder_at_remaining_tokens,
         sampling_token_weight,
@@ -3394,6 +3440,15 @@ impl Config {
             config_layer_stack.requirements(),
             &mut startup_warnings,
         );
+        // Packaged defaults supply a URL even when no override was configured.
+        let chatgpt_base_url_is_explicit =
+            config_layer_stack.requirements().chatgpt_base_url.is_some()
+                || config_layer_stack
+                    .layers_high_to_low()
+                    .find(|layer| layer.config.get("chatgpt_base_url").is_some())
+                    .map_or(cfg.chatgpt_base_url.is_some(), |layer| {
+                        !matches!(layer.name, ConfigLayerSource::PackagedDefaults { .. })
+                    });
         // Destructure every field to ensure ConfigRequirements additions are
         // either applied above or handled while constructing the final Config.
         let ConfigRequirements {
@@ -3402,6 +3457,7 @@ impl Config {
             cli_auth_credentials_store,
             chatgpt_base_url: _,
             sqlite_home: _,
+            unsafe_enforce_sqlite_journal_mode,
             log_dir: _,
             model_catalog_json: _,
             model_provider: _,
@@ -3409,6 +3465,7 @@ impl Config {
             check_for_update_on_startup: _,
             allow_login_shell: _,
             feedback: _,
+            otel: _,
             approval_policy: mut constrained_approval_policy,
             approvals_reviewer: mut constrained_approvals_reviewer,
             auto_review_required_models: _,
@@ -3503,7 +3560,7 @@ impl Config {
             web_search_request: override_tools_web_search_request,
         };
 
-        let configured_features = Features::from_sources(
+        let mut configured_features = Features::from_sources(
             FeatureConfigSource {
                 features: cfg.features.as_ref(),
                 experimental_use_unified_exec_tool: cfg.experimental_use_unified_exec_tool,
@@ -3513,11 +3570,30 @@ impl Config {
             },
             feature_overrides,
         );
+        if cfg.agents.as_ref().and_then(|agents| agents.enabled) == Some(true)
+            && !configured_features.enabled(Feature::Collab)
+            && managed_features::project_overrides_legacy_subagent_opt_out(&config_layer_stack)
+        {
+            configured_features.enable(Feature::Collab);
+        }
+        let runtime_auth_mode = managed_features::resolve_runtime_auth_mode(
+            &cfg, feature_requirements.as_ref(),
+        )?;
         let features = ManagedFeatures::from_configured_with_warnings(
             configured_features,
             feature_requirements,
             &mut startup_warnings,
         )?;
+        if let Some(FeatureToml::Config(guardian)) = cfg
+            .features
+            .as_ref()
+            .and_then(|features| features.guardianv2.as_ref())
+            && guardian.async_classifier_mode.is_some()
+        {
+            startup_warnings.push(
+                "`[features.guardianv2].async_classifier_mode` is deprecated and ignored. Async classification always uses conversations; remove this setting from config.toml or profile configuration files.".to_owned(),
+            );
+        }
         let mcp_enterprise_managed_auth = McpEnterpriseManagedAuthConfig::resolve(
             &config_layer_stack,
             cfg.mcp_enterprise_managed_auth.as_ref(),
@@ -3584,7 +3660,7 @@ impl Config {
                 repo_root.as_ref().map(AbsolutePathBuf::as_path),
             )
             .unwrap_or(ProjectConfig { trust_level: None });
-        let permission_config_syntax = resolve_permission_config_syntax(
+        let permission_config = resolve_permission_config(
             &config_layer_stack,
             &cfg,
             sandbox_mode,
@@ -3632,8 +3708,8 @@ impl Config {
         )?;
         if effective_permission_selection.has_profiles()
             && !matches!(
-                permission_config_syntax,
-                Some(PermissionConfigSyntax::Legacy)
+                permission_config,
+                Some(PermissionConfig::Legacy { .. })
             )
             && effective_permission_selection.selected_profile_id.is_none()
             && !effective_permission_selection.requirements_force_profile_selection
@@ -3662,7 +3738,7 @@ impl Config {
 
         let profiles_are_active = effective_permission_selection.profiles_are_active(
             default_permissions_override.as_deref(),
-            permission_config_syntax,
+            permission_config,
         );
         let prefer_mxc = features.enabled(Feature::PreferMxc)
             && config_allows_mxc(
@@ -3685,8 +3761,8 @@ impl Config {
             .persisted_profile_id_was_provided
             || default_permissions_override.is_some()
             || matches!(
-                permission_config_syntax,
-                Some(PermissionConfigSyntax::Profiles)
+                permission_config,
+                Some(PermissionConfig::Named { .. })
             );
         let custom_permission_profiles = permission_profile_catalog_from_permissions(
             &config_layer_stack,
@@ -3698,14 +3774,14 @@ impl Config {
         .collect();
         let using_implicit_builtin_profile = !effective_permission_selection
             .persisted_profile_id_was_provided
-            && permission_config_syntax.is_none()
+            && permission_config.is_none()
             && effective_permission_selection.selected_profile_id.is_none();
         let should_seed_legacy_workspace_roots = effective_permission_selection
             .selected_profile_id
             .is_none()
             && matches!(
-                permission_config_syntax,
-                None | Some(PermissionConfigSyntax::Legacy)
+                permission_config,
+                None | Some(PermissionConfig::Legacy { .. })
             );
         let legacy_workspace_roots_explicit = should_seed_legacy_workspace_roots
             && cfg
@@ -3838,14 +3914,22 @@ impl Config {
             // Derive the old `sandbox_mode` defaults as a profile first, then
             // keep a legacy-compatible projection only for the remaining code
             // paths that still speak `SandboxPolicy`.
-            let mut permission_profile = cfg
-                .derive_permission_profile(
+            let mut permission_profile = if let Some(PermissionConfig::Legacy { mode, workspace_write }) = permission_config {
+                translate_legacy_permissions(
+                    mode,
+                    workspace_write,
+                    Platform::native(),
+                    legacy_windows_sandbox_level,
+                )
+            } else {
+                cfg.derive_permission_profile(
                     sandbox_mode,
                     legacy_windows_sandbox_level,
                     Some(&active_project),
                     Some(&constrained_permission_profile),
                 )
-                .await;
+                .await
+            };
             // The legacy-derived profiles above are expected to be
             // representable as `SandboxPolicy`. This guard keeps the old safe
             // fallback behavior if future changes make this branch derive a
@@ -3927,6 +4011,7 @@ impl Config {
         let mut approvals_reviewer = approvals_reviewer_override
             .or(cfg.approvals_reviewer)
             .unwrap_or(ApprovalsReviewer::User);
+        let requested_approvals_reviewer = approvals_reviewer;
         if !approvals_reviewer_was_explicit
             && let Err(err) = constrained_approvals_reviewer.can_set(&approvals_reviewer)
         {
@@ -3984,21 +4069,8 @@ impl Config {
             merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
                 .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
 
-        if let Some(provider) = model_providers.get_mut(GCP_PROVIDER_ID)
-            && provider.auth.is_none()
-        {
-            // Registry construction must not depend on the process cwd, which may be deleted.
-            provider.auth = Some(ModelProviderAuthInfo {
-                command: if cfg!(windows) { "gcloud.cmd" } else { "gcloud" }.to_string(),
-                args: vec![
-                    "auth".into(),
-                    "application-default".into(),
-                    "print-access-token".into(),
-                ],
-                timeout_ms: std::num::NonZeroU64::new(30_000).unwrap_or(std::num::NonZeroU64::MIN),
-                refresh_interval_ms: 3_000_000,
-                cwd: resolved_cwd.clone(),
-            });
+        if let Some(provider) = model_providers.get_mut(GCP_PROVIDER_ID) {
+            apply_default_gcp_auth(provider, &resolved_cwd);
         }
 
         let model_provider_id = config_layer_stack.required_model_provider().map(str::to_string)
@@ -4097,7 +4169,7 @@ impl Config {
             .unwrap_or(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS)
             .max(MIN_EMPTY_YIELD_TIME_MS);
         let thread_unload_delay =
-            Duration::from_secs(cfg.thread_unload_delay_secs.unwrap_or(/*default*/ 1800));
+            Duration::from_secs(cfg.thread_unload_delay_secs.unwrap_or(/*default*/ 60));
         if std::time::Instant::now()
             .checked_add(thread_unload_delay)
             .is_none()
@@ -4209,26 +4281,9 @@ impl Config {
             .and_then(|skills| skills.max_context_tokens);
         let include_environment_context = cfg.include_environment_context.unwrap_or(true);
         let include_environment_context_time = cfg.include_environment_context_time.unwrap_or(true);
-        let guardian_policy_config =
-            guardian_policy_config_from_requirements(config_layer_stack.requirements_toml())
-                .or_else(|| {
-                    cfg.auto_review
-                        .as_ref()
-                        .and_then(|auto_review| normalize_guardian_policy_config(
-                            auto_review.policy.as_deref(),
-                        ))
-                });
-        let guardian_extra_policy = normalize_guardian_policy_config(
-            config_layer_stack
-                .requirements_toml()
-                .guardian_extra_policy
-                .as_deref(),
-        )
-        .or_else(|| {
-            cfg.auto_review.as_ref().and_then(|auto_review| {
-                normalize_guardian_policy_config(auto_review.extra_policy.as_deref())
-            })
-        });
+        let (guardian_policy_config, guardian_extra_policy) = resolve_guardian_policy_text(
+            config_layer_stack.requirements_toml(), cfg.auto_review.as_ref(),
+        );
         let guardian_transcript_mode = cfg
             .features
             .as_ref()
@@ -4238,14 +4293,37 @@ impl Config {
                 FeatureToml::Enabled(_) => None,
             })
             .unwrap_or_default();
-        let guardian_policy_template = cfg
-            .auto_review
-            .as_ref()
-            .and_then(|auto_review| {
-                normalize_guardian_policy_config(
-                    auto_review.experimental_policy_template.as_deref(),
-                )
-            });
+        let guardian_sync_elastic_budget = cfg.features.as_ref()
+            .and_then(|features| features.guardianv2.as_ref())
+            .and_then(|feature| match feature {
+                FeatureToml::Config(guardian) if guardian.sync_elastic_budgeting == Some(true) => Some(guardian),
+                FeatureToml::Config(_) | FeatureToml::Enabled(_) => None,
+            })
+            .map(|guardian| {
+                let sections = guardian.sync_elastic_sections.as_ref().filter(|sections| !sections.is_empty())
+                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData,
+                        "sync_elastic_sections is required when sync_elastic_budgeting is enabled"))?;
+                let mut decoded_sections = BTreeMap::new();
+                for (name, limits) in sections {
+                    let section = codex_guardian_context::ElasticSection::deserialize(name.as_str().into_deserializer())
+                        .map_err(|error: serde::de::value::Error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+                    let mut section_limits = codex_guardian_context::ElasticSectionLimits::new(
+                        limits.min_total_section_tokens,
+                        limits.max_section_entry_tokens,
+                    ).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+                    if let Some(maximum) = limits.max_total_section_tokens {
+                        section_limits = section_limits.with_max_total_section_tokens(maximum)
+                            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+                    }
+                    if decoded_sections.insert(section, section_limits).is_some() {
+                        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
+                            format!("duplicate sync_elastic_sections section: {name}")));
+                    }
+                }
+                let policy = codex_guardian_context::ElasticBudgetConfig { sections: decoded_sections };
+                policy.validate().map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+                Ok::<_, std::io::Error>(policy)
+            }).transpose()?;
         let guardian_conversation_history_prompt = cfg.auto_review.as_ref().and_then(|auto_review| {
             normalize_guardian_policy_config(
                 auto_review.experimental_conversation_history_prompt.as_deref(),
@@ -4307,7 +4385,12 @@ impl Config {
             .cloned()
             .or(sqlite_home_env)
             .unwrap_or_else(|| codex_home.clone());
-        let mut sqlite = codex_state::SqliteConfig::from_sqlite_home(sqlite_home);
+        let enforce_delete_on_nfs =
+            unsafe_enforce_sqlite_journal_mode.is_some_and(|required| required.value);
+        let mut sqlite = codex_state::SqliteConfig::from_sqlite_home_with_nfs_enforcement(
+            sqlite_home,
+            enforce_delete_on_nfs,
+        );
         let requirements = config_layer_stack.requirements_toml();
         if cfg.log_dir.is_some() && requirements.sqlite_home.is_none() {
             sqlite = sqlite.with_local_logs_home(log_dir.clone());
@@ -4531,6 +4614,9 @@ impl Config {
             explicit_permission_profile_mode,
             custom_permission_profiles,
             approvals_reviewer: constrained_approvals_reviewer.value(),
+            requested_approvals_reviewer: (requested_approvals_reviewer
+                != constrained_approvals_reviewer.value())
+            .then_some(requested_approvals_reviewer),
             enforce_residency: enforce_residency.value,
             notify: cfg.notify,
             base_instructions,
@@ -4616,6 +4702,7 @@ impl Config {
             application_auth_route_config: None,
             history,
             ephemeral: ephemeral.unwrap_or_default(),
+            allow_persistent_dynamic_tool_updates: false,
             extra_config: None,
             bypass_hook_trust,
             file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
@@ -4630,11 +4717,20 @@ impl Config {
                 .or(show_raw_agent_reasoning)
                 .unwrap_or(true),
             guardian_policy_config,
+            guardian_policy_revision: 0,
             guardian_extra_policy,
-            guardian_policy_template,
+            guardian_policy_template: None,
             guardian_transcript_mode,
+            guardian_sync_elastic_budget,
             guardian_conversation_history_prompt,
             guardian_conversation_history_max_output_tokens,
+            guardian_review_timeout: cfg
+                .auto_review
+                .as_ref()
+                .and_then(|auto_review| auto_review.timeout_ms)
+                .map_or(Some(codex_guardian_reviewer::REVIEW_TIMEOUT), |timeout_ms| {
+                    (timeout_ms != 0).then(|| Duration::from_millis(u64::from(timeout_ms)))
+                }),
             guardian_circuit_break_action: cfg
                 .auto_review
                 .as_ref()
@@ -4646,9 +4742,10 @@ impl Config {
             model_catalog,
             model_picker_models,
             model_verbosity: cfg.model_verbosity,
+            chatgpt_base_url_is_explicit,
             chatgpt_base_url: cfg
                 .chatgpt_base_url
-                .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
+                .unwrap_or_else(|| DEFAULT_CHATGPT_BASE_URL.to_string()),
             respect_system_proxy,
             apps_mcp_product_sku: cfg.apps_mcp_product_sku.clone(),
             responses_api_metadata: cfg.responses_api_metadata.unwrap_or_default(),
@@ -4695,6 +4792,7 @@ impl Config {
             rollout_budget,
             current_time_reminder,
             sleep_tool_mode,
+            runtime_auth_mode,
             features,
             runtime_feature_defaults: BTreeMap::new(),
             suppress_unstable_features_warning: cfg
@@ -4744,10 +4842,12 @@ impl Config {
                 .as_ref()
                 .map(|t| t.raw_output_mode)
                 .unwrap_or(false),
+            tui_collapse_turn_details: cfg.tui.as_ref().is_some_and(|tui| tui.collapse_turn_details),
             tui_fullscreen_transcript: cfg
                 .tui
                 .as_ref()
                 .is_none_or(|tui| tui.fullscreen_transcript),
+            tui_sidebar_width_percent: cfg.tui.as_ref().and_then(|tui| tui.sidebar_width_percent),
             tui_mouse_scroll_speed: cfg.tui.as_ref().and_then(|tui| tui.mouse_scroll_speed),
             tui_copy_on_select: cfg
                 .tui
@@ -4875,11 +4975,7 @@ impl Config {
         !matches!(
             self.permissions.permission_profile(),
             PermissionProfile::Disabled
-        ) && self
-            .config_layer_stack
-            .requirements_toml()
-            .network
-            .is_some()
+        ) && self.config_layer_stack.requirements().network.is_some()
     }
 
     /// Resolves a named permission profile from effective config and managed requirements.
@@ -4887,11 +4983,8 @@ impl Config {
         &self,
         profile_name: &str,
     ) -> std::io::Result<PermissionProfileToml> {
-        let cfg: ConfigToml = self
-            .config_layer_stack
-            .effective_config()
-            .try_into()
-            .map_err(|err| {
+        let cfg =
+            ConfigToml::try_from(self.config_layer_stack.effective_config()).map_err(|err| {
                 std::io::Error::new(
                     ErrorKind::InvalidInput,
                     format!(
@@ -4915,11 +5008,8 @@ impl Config {
     ) -> std::io::Result<Option<NetworkProxySpec>> {
         let profile_allows_network_proxy =
             profile_allows_configured_network_proxy(permission_profile);
-        let cfg: ConfigToml = self
-            .config_layer_stack
-            .effective_config()
-            .try_into()
-            .map_err(|err| {
+        let cfg =
+            ConfigToml::try_from(self.config_layer_stack.effective_config()).map_err(|err| {
                 std::io::Error::new(
                     ErrorKind::InvalidInput,
                     format!(
@@ -5203,7 +5293,7 @@ fn normalize_guardian_policy_config(value: Option<&str>) -> Option<String> {
     })
 }
 
-/// Returns the path to the Codex configuration directory, which can be
+/// Returns the path to the Lemex configuration directory, which can be
 /// specified by the `LEMEX_HOME` environment variable. If not set, defaults to
 /// `~/.lemex`.
 ///
@@ -5215,7 +5305,7 @@ pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {
     codex_utils_home_dir::find_codex_home()
 }
 
-/// Returns the path to the folder where Codex logs are stored. Does not verify
+/// Returns the path to the folder where Lemex logs are stored. Does not verify
 /// that the directory exists.
 pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
     Ok(cfg.log_dir.clone())
@@ -5228,3 +5318,7 @@ mod tests;
 #[cfg(test)]
 #[path = "config_loader_tests.rs"]
 mod config_loader_tests;
+
+#[cfg(test)]
+#[path = "runtime_auth_tests.rs"]
+mod runtime_auth_tests;

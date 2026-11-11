@@ -13,6 +13,10 @@ use serde::Serialize;
 pub struct ModelProviderCapabilities {
     /// Whether custom tools accept grammar-constrained input instead of plain text.
     pub custom_tool_grammar: Option<bool>,
+    /// Whether the provider accepts explicit `access_programs.cyber` selections.
+    /// Defaults to enabled for the built-in OpenAI provider and disabled otherwise.
+    /// This does not grant program access or change authentication.
+    pub cyber_access_programs: Option<bool>,
     /// Whether hosted web search may access the live web.
     pub external_web_access: Option<bool>,
     /// Remote context-compaction protocol; omission preserves provider defaults.

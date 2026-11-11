@@ -1,5 +1,5 @@
 use codex_core::config::ConfigBuilder;
-use codex_core::plugins_manager_for_config;
+use codex_core::plugins_manager_for_config_with_runtime;
 use codex_core_plugins::PluginInstallError;
 use codex_core_plugins::PluginInstallRequest;
 use codex_core_plugins::marketplace::MarketplaceError;
@@ -105,8 +105,10 @@ impl ExternalAgentConfigService {
             .map_err(|err| io::Error::other(format!("failed to load config: {err}")))?;
         let requirements = config.config_layer_stack.requirements().clone();
         let mut outcome = PluginImportOutcome::default();
-        let plugins_manager = plugins_manager_for_config(&config, Arc::clone(&self.auth_manager));
-
+        let plugins_manager =
+            plugins_manager_for_config_with_runtime(&config, Arc::clone(&self.auth_manager))
+                .await
+                .map_err(io::Error::other)?;
         let configured_marketplace_paths = plugins_manager
             .list_marketplaces_for_config(
                 &config.plugins_config_input(),

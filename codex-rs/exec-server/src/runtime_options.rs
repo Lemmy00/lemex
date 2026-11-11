@@ -8,10 +8,10 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 /// Paths and sandbox settings initialized when creating an executor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecServerRuntimeOptions {
-    /// Stable path to the Codex executable used to launch hidden helper modes.
+    /// Stable path to the Lemex executable used to launch hidden helper modes.
     pub codex_self_exe: AbsolutePathBuf,
     /// Path to the Linux sandbox helper alias used when the platform sandbox
-    /// needs to re-enter Codex by argv0.
+    /// needs to re-enter Lemex by argv0.
     pub codex_linux_sandbox_exe: Option<AbsolutePathBuf>,
     /// Trusted startup policy; requests and repository config cannot change PID isolation.
     pub linux_sandbox_pid_namespace: LinuxSandboxPidNamespace,

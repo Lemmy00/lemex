@@ -18,7 +18,7 @@ pub use conversation::*;
 pub use runtime::*;
 pub use session::*;
 
-/// Codex conversation/session UUID.
+/// Lemex conversation/session UUID.
 pub type AgentThreadId = String;
 /// Stable multi-agent routing path such as `/root` or `/root/search_docs`.
 pub type AgentPath = String;
@@ -38,7 +38,7 @@ pub type ModelVisibleCallId = String;
 pub type CodeModeRuntimeToolId = String;
 /// Reducer-owned ID for one model-authored `exec` JavaScript cell.
 pub type CodeCellId = String;
-/// Process/session ID returned by Codex's terminal runtime.
+/// Process/session ID returned by Lemex's terminal runtime.
 pub type TerminalId = String;
 /// Reducer-owned ID for one command/write/poll operation against a terminal.
 pub type TerminalOperationId = String;
@@ -51,13 +51,13 @@ pub type EdgeId = String;
 /// Reducer-owned ID for request/log correlation metadata.
 pub type CorrelationId = String;
 
-/// Canonical reduced graph for one Codex rollout.
+/// Canonical reduced graph for one Lemex rollout.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RolloutTrace {
     pub schema_version: u32,
     /// Unique identity for this trace capture.
     ///
-    /// `rollout_id` names the Codex rollout/session being observed. `trace_id`
+    /// `rollout_id` names the Lemex rollout/session being observed. `trace_id`
     /// names the diagnostic artifact produced for that rollout, which keeps
     /// storage/replay identity separate from the product-level session identity.
     pub trace_id: String,
@@ -67,6 +67,9 @@ pub struct RolloutTrace {
     /// Wall-clock timestamp for terminal rollout status. `None` means running or partial trace.
     pub ended_at_unix_ms: Option<i64>,
     pub status: RolloutStatus,
+    /// All recorder handles closed without a recorded write failure; not task success.
+    #[serde(default)]
+    pub recording_complete: bool,
     pub root_thread_id: AgentThreadId,
     pub threads: BTreeMap<AgentThreadId, AgentThread>,
     pub codex_turns: BTreeMap<CodexTurnId, CodexTurn>,
@@ -105,6 +108,7 @@ impl RolloutTrace {
             started_at_unix_ms,
             ended_at_unix_ms: None,
             status: RolloutStatus::Running,
+            recording_complete: false,
             root_thread_id,
             threads: BTreeMap::new(),
             codex_turns: BTreeMap::new(),

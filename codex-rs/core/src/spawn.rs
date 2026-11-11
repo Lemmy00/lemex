@@ -13,7 +13,7 @@ use codex_protocol::shell_environment::is_non_inheritable_env_var;
 /// Experimental environment variable that will be set to some non-empty value
 /// if both of the following are true:
 ///
-/// 1. The process was spawned by Codex as part of a shell tool call.
+/// 1. The process was spawned by Lemex as part of a shell tool call.
 /// 2. NetworkSandboxPolicy is restricted for the tool call.
 ///
 /// We may try to have just one environment variable for all sandboxing
@@ -63,8 +63,16 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
 
     env.retain(|name, _| !is_non_inheritable_env_var(name));
 
+    // Both command arguments and environment variables can contain credentials.
     trace!(
-        "spawn_child_async: {program:?} {args:?} {arg0:?} {cwd:?} {network_sandbox_policy:?} {stdio_policy:?} {env:?}"
+        ?program,
+        ?cwd,
+        ?network_sandbox_policy,
+        ?stdio_policy,
+        arg_count = args.len(),
+        has_arg0_override = arg0.is_some(),
+        env_count = env.len(),
+        "spawn_child_async"
     );
 
     let mut cmd = match stdio_policy {
@@ -135,3 +143,7 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
 
     cmd.kill_on_drop(true).spawn()
 }
+
+#[cfg(test)]
+#[path = "spawn_tests.rs"]
+mod tests;

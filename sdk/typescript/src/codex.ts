@@ -4,7 +4,7 @@ import { Thread } from "./thread";
 import { ThreadOptions } from "./threadOptions";
 
 /**
- * Codex is the main class for interacting with the Codex agent.
+ * The main client for interacting with the Lemex agent.
  *
  * Use the `startThread()` method to start a new thread or `resumeThread()` to resume a previously started thread.
  */

@@ -134,7 +134,6 @@ pub(crate) fn decode_provider_catalog(
         }
         model.visibility = ModelVisibility::List;
         model.supported_in_api = true;
-        model.used_fallback_model_metadata = false;
         model.supports_reasoning_summary_parameter = false;
         model.default_reasoning_summary = ReasoningSummary::None;
         model.supports_search_tool = false;

@@ -15,7 +15,7 @@ fn desktop_config(entries: [(&str, Value); 3]) -> HashMap<String, Value> {
 
 #[test]
 fn default_settings_match_desktop_worktree_defaults() {
-    let codex_home = tempfile::tempdir().expect("create Codex home");
+    let codex_home = tempfile::tempdir().expect("create Lemex home");
 
     let settings = WorktreeSettings::from_desktop_config(codex_home.path(), /*desktop*/ None)
         .expect("load default worktree settings");
@@ -32,7 +32,7 @@ fn default_settings_match_desktop_worktree_defaults() {
 
 #[test]
 fn desktop_settings_use_existing_root_and_retention_keys() {
-    let codex_home = tempfile::tempdir().expect("create Codex home");
+    let codex_home = tempfile::tempdir().expect("create Lemex home");
     let custom_root = codex_home.path().join("custom-managed-worktrees");
     let desktop = desktop_config([
         (
@@ -58,7 +58,7 @@ fn desktop_settings_use_existing_root_and_retention_keys() {
 
 #[test]
 fn desktop_settings_reject_invalid_root_and_retention_values() {
-    let codex_home = tempfile::tempdir().expect("create Codex home");
+    let codex_home = tempfile::tempdir().expect("create Lemex home");
     let invalid_configs = [
         HashMap::from([("git-worktree-root".to_owned(), json!("relative/worktrees"))]),
         HashMap::from([("worktree-auto-cleanup-enabled".to_owned(), json!("yes"))]),

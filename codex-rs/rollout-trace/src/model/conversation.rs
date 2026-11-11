@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::payload::RawPayloadId;
+use crate::raw_event::RawEventSeq;
 
 use super::AgentPath;
 use super::AgentThreadId;
@@ -29,12 +30,19 @@ pub struct ConversationItem {
     /// history acceptance and exact inference without matching rendered text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub responses_item_id: Option<String>,
+    /// Wall-clock time of the first local HistoryItemAccepted event in trace order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_at_unix_ms: Option<i64>,
+    /// Sequence of the same event for this Responses item in this thread.
+    /// Seeing the item in inherited or prepared context is not an acceptance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_seq: Option<RawEventSeq>,
     pub thread_id: AgentThreadId,
     /// Runtime activation that first introduced this item locally, when known.
     pub codex_turn_id: Option<CodexTurnId>,
     pub first_seen_at_unix_ms: i64,
     pub role: ConversationRole,
-    /// Codex channel for assistant/tool content, when the item is channel-specific.
+    /// Lemex channel for assistant/tool content, when the item is channel-specific.
     pub channel: Option<ConversationChannel>,
     pub kind: ConversationItemKind,
     /// Routing metadata carried by a Responses `agent_message` item.
@@ -67,7 +75,7 @@ pub enum ConversationRole {
     Tool,
 }
 
-/// Codex channel for model-visible content.
+/// Lemex channel for model-visible content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationChannel {
@@ -138,6 +146,9 @@ pub enum ConversationPart {
     PayloadRef {
         label: String,
         raw_payload_id: RawPayloadId,
+        /// Content identity across snapshots, independent of the containing payload file.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content_sha256: Option<String>,
     },
 }
 

@@ -140,7 +140,7 @@ download_file() {
     return
   fi
 
-  echo "curl or wget is required to install Codex." >&2
+  echo "curl or wget is required to install Lemex." >&2
   exit 1
 }
 
@@ -171,7 +171,7 @@ download_text() {
     return
   fi
 
-  echo "curl or wget is required to install Codex." >&2
+  echo "curl or wget is required to install Lemex." >&2
   exit 1
 }
 
@@ -340,7 +340,7 @@ parse_downloaded_release_metadata() {
   requested_release="$1"
   source_name="$2"
   if ! release_metadata="$(printf '%s\n' "$release_json" | parse_release_metadata)"; then
-    echo "Could not parse $source_name release metadata for Codex $requested_release." >&2
+    echo "Could not parse $source_name release metadata for Lemex $requested_release." >&2
     return 1
   fi
 }
@@ -352,7 +352,7 @@ resolve_metadata_version() {
     *) metadata_version="" ;;
   esac
   if [ -z "$metadata_version" ]; then
-    echo "Failed to resolve the latest Codex release version." >&2
+    echo "Failed to resolve the latest Lemex release version." >&2
     return 1
   fi
   validate_version "$metadata_version"
@@ -370,7 +370,7 @@ resolve_release_from_github() {
   fi
 
   if ! release_json="$(download_text "$metadata_url")"; then
-    echo "Could not fetch GitHub release metadata for Codex $requested_release. GitHub API may be unavailable or rate limited." >&2
+    echo "Could not fetch GitHub release metadata for Lemex $requested_release. GitHub API may be unavailable or rate limited." >&2
     exit 1
   fi
 
@@ -406,7 +406,7 @@ resolve_release_from_releases() {
     return 1
   fi
   if [ "$normalized_version" != "latest" ] && [ "$metadata_version" != "$normalized_version" ]; then
-    echo "Release metadata version did not match requested Codex version $normalized_version." >&2
+    echo "Release metadata version did not match requested Lemex version $normalized_version." >&2
     return 1
   fi
   resolved_version="$metadata_version"
@@ -487,7 +487,7 @@ select_release_assets() {
     install_layout="legacy-platform-npm"
     asset="codex-npm-$npm_tag-$resolved_version.tgz"
   else
-    echo "Could not find Codex package or platform npm release assets for Codex $resolved_version." >&2
+    echo "Could not find Lemex package or platform npm release assets for Lemex $resolved_version." >&2
     return 1
   fi
 
@@ -549,7 +549,7 @@ file_sha256() {
     return
   fi
 
-  echo "sha256sum, shasum, or openssl is required to verify the Codex download." >&2
+  echo "sha256sum, shasum, or openssl is required to verify the Lemex download." >&2
   exit 1
 }
 
@@ -559,7 +559,7 @@ verify_archive_digest() {
   actual_digest="$(file_sha256 "$archive_path")"
 
   if [ "$actual_digest" != "$expected_digest" ]; then
-    echo "Downloaded Codex archive checksum did not match expected digest." >&2
+    echo "Downloaded Lemex archive checksum did not match expected digest." >&2
     echo "expected: $expected_digest" >&2
     echo "actual:   $actual_digest" >&2
     return 1
@@ -568,7 +568,7 @@ verify_archive_digest() {
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    echo "$1 is required to install Codex." >&2
+    echo "$1 is required to install Lemex." >&2
     exit 1
   fi
 }
@@ -609,8 +609,8 @@ add_to_path() {
 
   profile="$(pick_profile)"
   path_profile="$profile"
-  begin_marker="# >>> Codex installer >>>"
-  end_marker="# <<< Codex installer <<<"
+  begin_marker="# >>> Lemex installer >>>"
+  end_marker="# <<< Lemex installer <<<"
   path_line="export PATH=\"$BIN_DIR:\$PATH\""
 
   if [ -f "$profile" ] && grep -F "$begin_marker" "$profile" >/dev/null 2>&1; then
@@ -743,7 +743,7 @@ release_install_lock() {
   if [ "$lock_kind" = "mkdir" ]; then
     rm -rf "$LOCK_DIR" 2>/dev/null || true
   elif [ "$lock_kind" = "flock" ] || [ "$lock_kind" = "lockf" ]; then
-    exec 9>&- 2>/dev/null || true
+    exec 9>&-
   fi
   lock_kind=""
 }
@@ -775,14 +775,14 @@ record_standalone_releases_in_use() {
         printf 'n%s\n' "$executable" >> "$tmp_dir/in-use" || return 1
       elif [ -d "$process" ]; then
         # Even same-user ssh-agent/systemd processes may deny exe inspection.
-        # Only an unreadable Codex or bundled helper prevents safe pruning.
+        # Only an unreadable Lemex or bundled helper prevents safe pruning.
         process_name="$(cat "$process/comm" 2>/dev/null)" || {
           [ ! -d "$process" ] && continue
           return 1
         }
         # Linux truncates comm to 15 bytes, including the code-mode host.
         case "$process_name" in
-          codex* | rg | bwrap)
+          lemex* | codex* | rg | bwrap)
             # A zombie has no files left open, even if its parent never reaps it.
             grep -Eq '^State:[[:space:]]*Z' "$process/status" 2>/dev/null && continue
             [ ! -d "$process" ] && continue
@@ -794,30 +794,43 @@ record_standalone_releases_in_use() {
   else
     # macOS lsof silently omits other users' processes, even with no errors.
     # ps can still report their executable names. As on Linux, decline to
-    # prune when an uninspectable Codex or helper may be using a release.
+    # prune when an uninspectable Lemex or helper may be using a release.
     current_uid="$(id -u)" || return 1
     ps -axo uid=,comm= > "$tmp_dir/processes" || return 1
     [ -s "$tmp_dir/processes" ] || return 1
     while read -r process_uid process_name; do
       [ "$process_uid" = "$current_uid" ] && continue
       case "${process_name##*/}" in
-        codex* | rg | bwrap) return 1 ;;
+        lemex* | codex* | rg | bwrap) return 1 ;;
       esac
     done < "$tmp_dir/processes"
     if /usr/sbin/lsof -nP -F n +D "$releases" > "$tmp_dir/in-use" 2> "$tmp_dir/lsof-error"; then
       :
     else
-      # lsof returns 1 for an empty result as well as for errors.
-      [ ! -s "$tmp_dir/in-use" ] && [ ! -s "$tmp_dir/lsof-error" ] || return 1
+      # macOS lsof +D can return 1 with matches when some files are not open.
+      # Keep those matches, but reject other failures and any stderr below.
+      [ "$?" -eq 1 ] || return 1
     fi
     [ ! -s "$tmp_dir/lsof-error" ] || return 1
   fi
 }
 
+release_is_unused() {
+  if [ "$os" = "linux" ]; then
+    path_field="n$1"
+  else
+    # lsof +D scopes the scan to this tree, but may escape bytes in CODEX_HOME.
+    # Match the installer-owned ASCII path, including the temporary retirement name.
+    path_field="/packages/${STANDALONE_ROOT##*/}/releases/${1#"$releases"/}"
+  fi
+  # Appending / also matches a process whose cwd is the release root itself.
+  LC_ALL=C RELEASE_PATH="$path_field/" awk 'index($0 "/", ENVIRON["RELEASE_PATH"]) { exit 1 }' "$tmp_dir/in-use"
+}
+
 # Run under the install lock, after the visible command has been verified.
 # Only retire ordinary, manifest-owned packages; never retry a retired tree.
 prune_standalone_releases() (
-  [ ! -L "$CODEX_HOME_DIR/packages" ] &&
+  [ ! -L "$LEMEX_HOME_DIR/packages" ] &&
     [ ! -L "$STANDALONE_ROOT" ] && [ ! -L "$RELEASES_DIR" ] || return 1
   releases="$(cd -P "$RELEASES_DIR" && pwd)" || return 1
   # Local process inspection cannot establish whether a network home is in
@@ -847,14 +860,14 @@ prune_standalone_releases() (
   for candidate in "$releases"/*; do
     [ -d "$candidate" ] && [ ! -L "$candidate" ] &&
       [ "$candidate" != "$selected" ] && [ "${candidate##*/}" != "$previous" ] || continue
-    grep -F "n$candidate/" "$tmp_dir/in-use" >/dev/null && continue
+    release_is_unused "$candidate" || continue
     [ -f "$candidate/codex-package.json" ] && [ ! -L "$candidate/codex-package.json" ] || continue
     metadata="$(parse_release_metadata < "$candidate/codex-package.json")" || continue
     version="$(printf '%s\n' "$metadata" | awk -F '\t' '$1 == "version" {print $2}')"
     target="$(printf '%s\n' "$metadata" | awk -F '\t' '$1 == "target" {print $2}')"
     entrypoint="$(printf '%s\n' "$metadata" | awk -F '\t' '$1 == "entrypoint" {print $2}')"
     [ "${candidate##*/}" = "$version-$target" ] && [ "$version" != "latest" ] &&
-      [ "$entrypoint" = "bin/codex" ] && [ -f "$candidate/bin/codex" ] || continue
+      [ "$entrypoint" = "bin/lemex" ] && [ -f "$candidate/bin/lemex" ] || continue
     validate_version "$version" >/dev/null 2>&1 || continue
     case "$target" in
       aarch64-apple-darwin | x86_64-apple-darwin | aarch64-unknown-linux-musl | x86_64-unknown-linux-musl) ;;
@@ -863,8 +876,8 @@ prune_standalone_releases() (
 
     # Reject symlinks (except the installer's own alias), special files and
     # mounts before rm -r. find -xdev alone would not protect nested mounts.
-    [ "$(readlink "$candidate/codex" 2>/dev/null)" = "bin/codex" ] || continue
-    if ! find "$candidate" -xdev ! -type f ! -type d ! -path "$candidate/codex" -print > "$tmp_dir/unowned"; then
+    [ "$(readlink "$candidate/lemex" 2>/dev/null)" = "bin/lemex" ] || continue
+    if ! find "$candidate" -xdev ! -type f ! -type d ! -path "$candidate/lemex" -print > "$tmp_dir/unowned"; then
       continue
     fi
     [ ! -s "$tmp_dir/unowned" ] || continue
@@ -893,7 +906,7 @@ prune_standalone_releases() (
       # Block new launches at the original path before the final use check.
       # Some systems report the old executable path, so check both names.
       if ! record_standalone_releases_in_use ||
-        grep -F -e "n$candidate/" -e "n$retired/release/" "$tmp_dir/in-use" >/dev/null; then
+        ! release_is_unused "$candidate" || ! release_is_unused "$retired/release"; then
         [ ! -e "$candidate" ] && [ ! -L "$candidate" ] || return 1
         mv "$retired/release" "$candidate" && rmdir "$retired" || return 1
         restore_candidate=""
@@ -1049,8 +1062,8 @@ print_launch_instructions() {
 }
 
 maybe_launch_lemex_now() {
-  if prompt_yes_no "Start Codex now?"; then
-    step "Launching Codex"
+  if prompt_yes_no "Start Lemex now?"; then
+    step "Launching Lemex"
     "$BIN_PATH"
   fi
 }
@@ -1065,8 +1078,8 @@ detect_conflicting_install() {
 
   conflict_manager="$manager"
   conflict_path="$existing_path"
-  step "Detected existing $manager-managed Codex at $existing_path"
-  warn "Multiple managed Codex installs can be ambiguous because PATH order decides which one runs."
+  step "Detected existing $manager-managed Lemex at $existing_path"
+  warn "Multiple managed Lemex installs can be ambiguous because PATH order decides which one runs."
 }
 
 handle_conflicting_install() {
@@ -1086,13 +1099,13 @@ handle_conflicting_install() {
       ;;
   esac
 
-  if prompt_yes_no "Uninstall the existing $conflict_manager-managed Codex now?"; then
+  if prompt_yes_no "Uninstall the existing $conflict_manager-managed Lemex now?"; then
     step "Running: $uninstall_cmd"
     if ! sh -c "$uninstall_cmd"; then
-      warn "Failed to uninstall the existing $conflict_manager-managed Codex. Continuing with the standalone install."
+      warn "Failed to uninstall the existing $conflict_manager-managed Lemex. Continuing with the standalone install."
     fi
   else
-    warn "Leaving the existing $conflict_manager-managed Codex installed. PATH order will determine which codex runs."
+    warn "Leaving the existing $conflict_manager-managed Lemex installed. PATH order will determine which lemex runs."
   fi
 }
 
@@ -1111,6 +1124,9 @@ install_package_release() {
     "$stage_release/codex-path/rg"
   if [ -f "$stage_release/codex-resources/bwrap" ]; then
     chmod 0755 "$stage_release/codex-resources/bwrap"
+  fi
+  if [ -f "$stage_release/bin/codex-exec-server" ]; then
+    chmod 0755 "$stage_release/bin/codex-exec-server"
   fi
   ln -sf "bin/lemex" "$stage_release/lemex"
 
@@ -1165,6 +1181,10 @@ release_dir_is_complete() {
         [ -x "$release_dir/lemex" ] &&
         [ -x "$release_dir/codex-path/rg" ] ||
         return 1
+      # Older canonical packages do not advertise or contain the executor.
+      if grep -Eq '"execServer"[[:space:]]*:' "$release_dir/codex-package.json"; then
+        [ -x "$release_dir/bin/codex-exec-server" ] || return 1
+      fi
       ;;
     legacy-platform-npm)
       [ -x "$release_dir/lemex" ] &&
@@ -1294,11 +1314,11 @@ release_dir="$RELEASES_DIR/$release_name"
 current_version="$(current_installed_version)"
 
 if [ -n "$current_version" ] && [ "$current_version" != "$resolved_version" ]; then
-  step "Updating Codex CLI from $current_version to $resolved_version"
+  step "Updating Lemex CLI from $current_version to $resolved_version"
 elif [ -n "$current_version" ]; then
-  step "Updating Codex CLI"
+  step "Updating Lemex CLI"
 else
-  step "Installing Codex CLI"
+  step "Installing Lemex CLI"
 fi
 step "Detected platform: $platform_label"
 step "Resolved version: $resolved_version"
@@ -1389,7 +1409,7 @@ if ! release_dir_is_complete "$release_dir" "$resolved_version" "$vendor_target"
   archive_path="$tmp_dir/$asset"
   checksum_path="$tmp_dir/$checksum_asset"
 
-  step "Downloading Codex CLI"
+  step "Downloading Lemex CLI"
   if [ "$install_layout" = "package" ]; then
     checksum_digest="$(release_asset_digest "$checksum_asset")"
     download_file_with_fallback "$checksum_url" "$checksum_fallback_url" "$checksum_path" "$checksum_digest" "$checksum_asset" "$asset"
@@ -1407,7 +1427,7 @@ if ! release_dir_is_complete "$release_dir" "$resolved_version" "$vendor_target"
   fi
 fi
 if ! release_dir_is_complete "$release_dir" "$resolved_version" "$vendor_target" "$install_layout"; then
-  echo "Installed Codex command did not report expected version $resolved_version." >&2
+  echo "Installed Lemex command did not report expected version $resolved_version." >&2
   exit 1
 fi
 if [ "$DAEMON_ONLY" = "1" ] && [ "${CODEX_INSTALL_DEFER_SELECTION:-0}" != "1" ]; then
@@ -1455,7 +1475,7 @@ update_visible_command "$release_dir"
 add_to_path
 verify_visible_command
 if ! prune_standalone_releases; then
-  warn "Could not safely inspect old Codex releases; skipped remaining cleanup."
+  warn "Could not safely inspect old Lemex releases; skipped remaining cleanup."
 fi
 release_install_lock
 handle_conflicting_install
@@ -1476,5 +1496,5 @@ case "$path_action" in
     ;;
 esac
 
-printf 'Codex CLI %s installed successfully.\n' "$resolved_version"
+printf 'Lemex CLI %s installed successfully.\n' "$resolved_version"
 maybe_launch_lemex_now

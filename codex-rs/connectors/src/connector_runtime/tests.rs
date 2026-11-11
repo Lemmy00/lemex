@@ -220,7 +220,7 @@ fn startup_cached_codex_apps_tools_loads_from_disk_cache() {
         CODEX_APPS_MCP_SERVER_NAME,
         "calendar_search",
     )];
-    let server_info = create_test_server_info("Codex Apps");
+    let server_info = create_test_server_info("Lemex Apps");
     write_cached_codex_apps_tools_for_test(&writer_cache_context, &server_info, &cached_tools);
     let cache_context = create_codex_apps_tools_cache_context(
         codex_home.path().to_path_buf(),
@@ -281,7 +281,7 @@ fn codex_apps_server_info_cache_survives_legacy_tools_cache_write() {
         Some("account-one"),
         Some("user-one"),
     );
-    let server_info = create_test_server_info("Codex Apps");
+    let server_info = create_test_server_info("Lemex Apps");
     write_cached_codex_apps_tools_for_test(
         &cache_context,
         &server_info,
@@ -367,7 +367,7 @@ fn codex_apps_tools_cache_publishes_newest_shared_snapshot() {
     );
     let older_ticket = cache_context_1.begin_fetch(ConnectorRuntimeFetchSource::Startup);
     let newer_ticket = cache_context_2.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh);
-    let server_info = create_test_server_info("Codex Apps");
+    let server_info = create_test_server_info("Lemex Apps");
     let newer_tools = vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "newer")];
     let older_tools = vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "older")];
 
@@ -420,7 +420,7 @@ fn codex_apps_tools_cache_keeps_live_publish_when_disk_persistence_fails() {
     let published_tools = cache_context
         .publish_runtime_if_newest_accepted(
             cache_context.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh),
-            &create_test_server_info("Codex Apps"),
+            &create_test_server_info("Lemex Apps"),
             tools.clone(),
             /*tool_list_meta*/ None,
         )
@@ -440,7 +440,7 @@ fn connector_runtime_without_cache_ignores_disk_state() {
         Some("user-one"),
     );
     let tools = vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "cached")];
-    let server_info = create_test_server_info("Codex Apps");
+    let server_info = create_test_server_info("Lemex Apps");
     write_cached_codex_apps_tools_for_test(&writer, &server_info, &tools);
     let context = ConnectorRuntimeManager::<TestTool>::new_without_cache().context(
         codex_home.path().to_path_buf(),
@@ -471,7 +471,7 @@ fn connector_runtime_without_cache_publishes_without_writing() {
     let published_tools = context
         .publish_runtime_if_newest_accepted(
             context.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh),
-            &create_test_server_info("Codex Apps"),
+            &create_test_server_info("Lemex Apps"),
             tools.clone(),
             /*tool_list_meta*/ None,
         )
@@ -529,7 +529,7 @@ fn live_catalogs_isolate_scopes_and_reject_older_refreshes() {
     let scope_b = context.with_live_scope("endpoint-b".to_string());
     let updates_a = scope_a.subscribe().expect("scope A subscription");
     let updates_b = scope_b.subscribe().expect("scope B subscription");
-    let server_info = create_test_server_info("Codex Apps");
+    let server_info = create_test_server_info("Lemex Apps");
     let older_a = scope_a.begin_fetch(ConnectorRuntimeFetchSource::Startup);
     let newer_a = scope_a.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh);
     let newest_b = scope_b.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh);
@@ -592,7 +592,7 @@ fn contexts_for_different_identities_keep_isolated_snapshots() {
     let tools_a = vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "tool-a")];
     let snapshot_a = context_a.publish_runtime_if_newest_accepted(
         context_a.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh),
-        &create_test_server_info("Codex Apps"),
+        &create_test_server_info("Lemex Apps"),
         tools_a.clone(),
         /*tool_list_meta*/ None,
     );
@@ -628,20 +628,20 @@ fn contexts_for_different_identities_keep_isolated_snapshots() {
     let tools_b = vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "tool-b")];
     let snapshot_b = context_b.publish_runtime_if_newest_accepted(
         context_b.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh),
-        &create_test_server_info("Codex Apps"),
+        &create_test_server_info("Lemex Apps"),
         tools_b.clone(),
         /*tool_list_meta*/ None,
     );
     let newer_tools_a = vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "newer-a")];
     let newer_snapshot_a = same_context_a.publish_runtime_if_newest_accepted(
         same_context_a.begin_fetch(ConnectorRuntimeFetchSource::HardRefresh),
-        &create_test_server_info("Codex Apps"),
+        &create_test_server_info("Lemex Apps"),
         newer_tools_a.clone(),
         /*tool_list_meta*/ None,
     );
     let stale_snapshot_a = context_a.publish_runtime_if_newest_accepted(
         older_ticket_a,
-        &create_test_server_info("Codex Apps"),
+        &create_test_server_info("Lemex Apps"),
         vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "stale-a")],
         /*tool_list_meta*/ None,
     );
@@ -791,7 +791,7 @@ fn accepted_generations_finish_persistence_in_order() {
     let older_publish = std::thread::spawn(move || {
         older_context.publish_runtime_if_newest_accepted_with(
             older_ticket,
-            &create_test_server_info("Codex Apps"),
+            &create_test_server_info("Lemex Apps"),
             vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "older")],
             /*tool_list_meta*/ None,
             move |_, _, _| {
@@ -811,7 +811,7 @@ fn accepted_generations_finish_persistence_in_order() {
     let newer_publish = std::thread::spawn(move || {
         newer_context.publish_runtime_if_newest_accepted_with(
             newer_ticket,
-            &create_test_server_info("Codex Apps"),
+            &create_test_server_info("Lemex Apps"),
             vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "newer")],
             /*tool_list_meta*/ None,
             move |_, _, _| {
@@ -854,7 +854,7 @@ fn personal_and_workspace_contexts_are_distinct_even_with_matching_ids() {
     let personal_tools = vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "personal")];
     let _ = personal_context.publish_runtime_if_newest_accepted(
         personal_context.begin_fetch(ConnectorRuntimeFetchSource::Startup),
-        &create_test_server_info("Codex Apps"),
+        &create_test_server_info("Lemex Apps"),
         personal_tools.clone(),
         /*tool_list_meta*/ None,
     );
@@ -871,7 +871,7 @@ fn personal_and_workspace_contexts_are_distinct_even_with_matching_ids() {
     let workspace_tools = vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "workspace")];
     let _ = workspace_context.publish_runtime_if_newest_accepted(
         workspace_context.begin_fetch(ConnectorRuntimeFetchSource::Startup),
-        &create_test_server_info("Codex Apps"),
+        &create_test_server_info("Lemex Apps"),
         workspace_tools.clone(),
         /*tool_list_meta*/ None,
     );
@@ -897,7 +897,7 @@ fn live_publish_sets_timestamp_and_stale_publish_preserves_it() {
     let before = SystemTime::now();
     let current = context.publish_runtime_if_newest_accepted(
         current_ticket,
-        &create_test_server_info("Codex Apps"),
+        &create_test_server_info("Lemex Apps"),
         vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "current")],
         /*tool_list_meta*/ None,
     );
@@ -908,7 +908,7 @@ fn live_publish_sets_timestamp_and_stale_publish_preserves_it() {
 
     let stale = context.publish_runtime_if_newest_accepted(
         stale_ticket,
-        &create_test_server_info("Codex Apps"),
+        &create_test_server_info("Lemex Apps"),
         vec![create_test_tool(CODEX_APPS_MCP_SERVER_NAME, "stale")],
         /*tool_list_meta*/ None,
     );

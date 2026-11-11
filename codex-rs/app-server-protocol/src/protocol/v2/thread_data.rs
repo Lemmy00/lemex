@@ -1,6 +1,7 @@
 use super::CodexErrorInfo;
 use super::ThreadEnvironment;
 use super::ThreadItem;
+use super::ThreadItemPayload;
 use super::ThreadStatus;
 use super::TurnStatus;
 use crate::JsonSchema;
@@ -202,7 +203,7 @@ pub struct ThreadSectionAppearance {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct Thread {
-    /// Identifier for this thread. Codex-generated thread IDs are UUIDv7.
+    /// Identifier for this thread. Lemex-generated thread IDs are UUIDv7.
     pub id: String,
     /// Current environments for a loaded thread, in priority order, primary first.
     /// `null` means the thread is not loaded or the server does not expose its selection.
@@ -217,6 +218,9 @@ pub struct Thread {
     pub session_id: String,
     /// Source thread id when this thread was created by forking another thread.
     pub forked_from_id: Option<String>,
+    /// Parent that owns this persisted attached thread, independent of fork or spawn lineage.
+    #[experimental("thread.attachedToThreadId")]
+    pub attached_to_thread_id: Option<String>,
     /// The ID of the parent thread. This will only be set if this thread is a subagent.
     pub parent_thread_id: Option<String>,
     /// Usually the first user message in the thread, if available.
@@ -304,6 +308,7 @@ struct ThreadCompatibility {
     extra: Option<ThreadExtra>,
     session_id: String,
     forked_from_id: Option<String>,
+    attached_to_thread_id: Option<String>,
     parent_thread_id: Option<String>,
     preview: String,
     ephemeral: bool,
@@ -349,6 +354,7 @@ impl<'de> Deserialize<'de> for Thread {
             extra: thread.extra,
             session_id: thread.session_id,
             forked_from_id: thread.forked_from_id,
+            attached_to_thread_id: thread.attached_to_thread_id,
             parent_thread_id: thread.parent_thread_id,
             preview: thread.preview,
             ephemeral: thread.ephemeral,
@@ -384,7 +390,7 @@ impl<'de> Deserialize<'de> for Thread {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct Turn {
-    /// Identifier for this turn. Codex-generated turn IDs are UUIDv7.
+    /// Identifier for this turn. Lemex-generated turn IDs are UUIDv7.
     pub id: String,
     /// ID of the first turn in the chain of work that led to this turn.
     /// Pass this as `rootTurnId` when starting work on behalf of this turn.
@@ -407,6 +413,15 @@ pub struct Turn {
     /// Duration between turn start and completion in milliseconds, if known.
     #[ts(type = "number | null")]
     pub duration_ms: Option<i64>,
+}
+
+impl Turn {
+    /// Iterates over the item payloads in this turn.
+    pub fn item_payloads(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &ThreadItemPayload> + ExactSizeIterator {
+        self.items.iter().map(|item| &item.payload)
+    }
 }
 
 #[derive(Default, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]

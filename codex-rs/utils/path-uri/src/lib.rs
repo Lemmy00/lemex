@@ -42,7 +42,7 @@ const BAD_PATH_URI_PREFIX: &str = "file:///%00/bad/path/";
 /// Only the `file:` scheme is currently accepted. Construction validates the
 /// URL, and the URI cannot be mutated after construction. [`Self::basename`],
 /// [`Self::parent`], and [`Self::join`] operate on URI path segments without
-/// interpreting them using the operating system running Codex. Fallback URIs
+/// interpreting them using the operating system running Lemex. Fallback URIs
 /// created by [`Self::from_abs_path`] are opaque to these lexical operations.
 ///
 /// `file:` paths retain their URI spelling so they can be parsed independently
@@ -587,11 +587,8 @@ impl PathUri {
                 use std::os::windows::ffi::OsStringExt;
                 path_bytes.len().is_multiple_of(2).then(|| {
                     let path_wide = path_bytes
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .copied()
-                        .map(u16::from_le_bytes)
+                        .chunks_exact(2)
+                        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
                         .collect::<Vec<_>>();
                     std::path::PathBuf::from(std::ffi::OsString::from_wide(&path_wide))
                 })
@@ -822,9 +819,7 @@ fn infer_opaque_path_convention(path_bytes: &[u8]) -> Option<PathConvention> {
     }
 
     let mut path_wide = path_bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
+        .chunks_exact(2)
         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]));
     let first = path_wide.next()?;
     let second = path_wide.next()?;

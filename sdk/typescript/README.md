@@ -2,7 +2,7 @@
 
 Embed the Lemex agent in your workflows and apps.
 
-The TypeScript SDK wraps the `lemex` CLI from `lemex`. It spawns the CLI and exchanges JSONL events over stdin/stdout.
+The TypeScript SDK wraps the `lemex` CLI from `@lemmy00/lemex`. It spawns the CLI and exchanges JSONL events over stdin/stdout.
 
 ## Installation
 
@@ -15,10 +15,10 @@ Requires Node.js 18+.
 ## Quickstart
 
 ```typescript
-import { Codex } from "lemex-sdk";
+import { Lemex } from "lemex-sdk";
 
-const codex = new Codex();
-const thread = codex.startThread();
+const lemex = new Lemex();
+const thread = lemex.startThread();
 const turn = await thread.run("Diagnose the test failure and propose a fix");
 
 console.log(turn.finalResponse);
@@ -52,7 +52,7 @@ for await (const event of events) {
 
 ### Structured output
 
-The Codex agent can produce a JSON response that conforms to a specified schema. The schema can be provided for each turn as a plain JSON object.
+The Lemex agent can produce a JSON response that conforms to a specified schema. The schema can be provided for each turn as a plain JSON object.
 
 ```typescript
 const schema = {
@@ -85,7 +85,7 @@ console.log(turn.finalResponse);
 
 ### Attaching images
 
-Provide structured input entries when you need to include images alongside text. Text entries are concatenated into the final prompt while image entries are passed to the Codex CLI via `--image`.
+Provide structured input entries when you need to include images alongside text. Text entries are concatenated into the final prompt while image entries are passed to the Lemex CLI via `--image`.
 
 ```typescript
 const turn = await thread.run([
@@ -101,28 +101,28 @@ Threads are persisted in `~/.lemex/sessions`. If you lose the in-memory `Thread`
 
 ```typescript
 const savedThreadId = process.env.CODEX_THREAD_ID!;
-const thread = codex.resumeThread(savedThreadId);
+const thread = lemex.resumeThread(savedThreadId);
 await thread.run("Implement the fix");
 ```
 
 ### Working directory controls
 
-Codex runs in the current working directory by default. To avoid unrecoverable errors, Codex requires the working directory to be a Git repository. You can skip the Git repository check by passing the `skipGitRepoCheck` option when creating a thread.
+Lemex runs in the current working directory by default. To avoid unrecoverable errors, Lemex requires the working directory to be a Git repository. You can skip the Git repository check by passing the `skipGitRepoCheck` option when creating a thread.
 
 ```typescript
-const thread = codex.startThread({
+const thread = lemex.startThread({
   workingDirectory: "/path/to/project",
   skipGitRepoCheck: true,
 });
 ```
 
-### Controlling the Codex CLI environment
+### Controlling the Lemex CLI environment
 
-By default, the Codex CLI inherits the Node.js process environment. Provide the optional `env` parameter when instantiating the
-`Codex` client to fully control which variables the CLI receives—useful for sandboxed hosts like Electron apps.
+By default, the Lemex CLI inherits the Node.js process environment. Provide the optional `env` parameter when instantiating the
+`Lemex` client to fully control which variables the CLI receives—useful for sandboxed hosts like Electron apps.
 
 ```typescript
-const codex = new Codex({
+const lemex = new Lemex({
   env: {
     PATH: "/usr/local/bin",
   },
@@ -134,11 +134,11 @@ The SDK still injects its required variables (such as `LEMEX_API_KEY`) on top of
 
 ### Passing `--config` overrides
 
-Use the `config` option to provide additional Codex CLI configuration overrides. The SDK accepts a JSON object, flattens it
+Use the `config` option to provide additional Lemex CLI configuration overrides. The SDK accepts a JSON object, flattens it
 into dotted paths, and serializes values as TOML literals before passing them as repeated `--config key=value` flags.
 
 ```typescript
-const codex = new Codex({
+const lemex = new Lemex({
   config: {
     show_raw_agent_reasoning: true,
     sandbox_workspace_write: { network_access: true },
@@ -150,7 +150,7 @@ For configuration keys that cannot be expressed as dotted paths, pass raw TOML o
 is forwarded unchanged as a separate `--config` argument, without modifying `LEMEX_HOME`:
 
 ```typescript
-const codex = new Codex({
+const lemex = new Lemex({
   config: { default_permissions: "audit" },
   configOverrides: ['permissions.audit.filesystem={":root"="read","/path/to/project/.env"="deny"}'],
 });

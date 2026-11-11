@@ -403,7 +403,7 @@ pub enum ExecutedToolCallArguments {
     },
 }
 
-/// A model-attempted Codex tool invocation captured at the shared runtime boundary.
+/// A model-attempted Lemex tool invocation captured at the shared runtime boundary.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
 pub struct ExecutedToolCall {
     pub name: String,

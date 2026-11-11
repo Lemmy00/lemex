@@ -440,8 +440,7 @@ pub(crate) fn resize_image(
 
 #[cfg(test)]
 #[path = "image_preparation_tests.rs"]
-mod tests;
-
+pub(crate) mod tests;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ImageDetailSetting {
@@ -449,7 +448,7 @@ pub(crate) enum ImageDetailSetting {
     Original,
 }
 
-/// Measurements for one successfully decoded image at the point where Codex prepares it for
+/// Measurements for one successfully decoded image at the point where Lemex prepares it for
 /// durable conversation history.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ImagePreparationMetadata {

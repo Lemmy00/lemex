@@ -134,7 +134,7 @@ impl AppServerFileSystem {
                 })?)
                 .wrap_err_with(|| format!("{method} returned invalid data"))
             }
-            AppServerRequestHandle::InProcess(_) => {
+            AppServerRequestHandle::InProcess(_) | AppServerRequestHandle::Channel(_) => {
                 let path = AbsolutePathBuf::from_absolute_path_checked(path.as_str())
                     .wrap_err_with(|| format!("invalid local app-server fs path {path}"))?;
                 self.request_handle

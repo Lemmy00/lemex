@@ -112,7 +112,7 @@ the configured default, rather than every discovered model.
 
 `lemex model MODEL --reasoning EFFORT` validates the model and its effort before saving and adds it to the list. Omitting `--reasoning` clears the previous model's override. `lemex model` opens the saved-list and search flow in the terminal.
 
-For Codex-style **Ultra** mode, open `/model`, select a reasoning-capable model,
+For **Ultra** mode, open `/model`, select a reasoning-capable model,
 then choose **More reasoning… → Ultra**. You can also save it with
 `lemex model MODEL_ID --reasoning ultra`. Ultra uses Lemex's native agent
 orchestration for automatic delegation and maps each inference request to an

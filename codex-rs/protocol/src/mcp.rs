@@ -95,7 +95,7 @@ pub enum McpAttributionErrorReason {
     Unknown,
 }
 
-/// One source and the first runtime turn in which Codex recorded it.
+/// One source and the first runtime turn in which Lemex recorded it.
 ///
 /// Server and tool names are retained when no stable identifier is available;
 /// they are not guaranteed to be globally unique or independently authenticated.
@@ -165,7 +165,7 @@ pub struct McpResourceOrigin {
 /// Client extensions that must not be advertised to MCP servers.
 const MCP_CLIENT_ONLY_EXTENSION_IDS: [&str; 1] = [OPENAI_STANDARD_FORM_INPUT_EXTENSION_ID];
 
-/// MCP extensions supplied by the client that created a Codex session.
+/// MCP extensions supplied by the client that created a Lemex session.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClientMcpExtensions {
     extensions: HashMap<String, serde_json::Value>,
@@ -359,6 +359,21 @@ pub struct CallToolResult {
     #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub meta: Option<serde_json::Value>,
+}
+
+/// Returns display text from an unannotated MCP text block. Some tools encode
+/// sources and UI data as JSON or fenced text, which history must keep inline.
+pub fn plain_output_text(block: &serde_json::Value) -> Option<&str> {
+    let fields = block.as_object()?;
+    if fields.len() != 2 || fields.get("type")?.as_str()? != "text" {
+        return None;
+    }
+    let text = fields.get("text")?.as_str()?;
+    let trimmed = text.trim_start_matches(|ch: char| ch.is_whitespace() || ch == '\u{feff}');
+    if trimmed.starts_with(['{', '[']) || trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+        return None;
+    }
+    Some(text)
 }
 
 // === Adapter helpers ===

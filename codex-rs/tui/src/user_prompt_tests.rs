@@ -15,8 +15,8 @@ fn extract_prompt_request_returns_text_after_last_delimiter() {
 #[test]
 fn mixed_legacy_and_lemex_delimiters_preserve_the_last_request_offset() {
     for message in [
-        "## My request for Codex:\nOld\n## My request for Lemex:\n  Latest 🦀\n",
-        "## My request for Lemex:\nOld\n## My request for Codex:\n  Latest 🦀\n",
+        "## My request for Lemex:\nOld\n## My request for Lemex:\n  Latest 🦀\n",
+        "## My request for Lemex:\nOld\n## My request for Lemex:\n  Latest 🦀\n",
     ] {
         assert_eq!(
             extract_prompt_request_with_offset(message),

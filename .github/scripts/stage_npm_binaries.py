@@ -6,7 +6,11 @@ import shutil
 import sys
 import tarfile
 
-ROOT = Path(os.environ["GITHUB_WORKSPACE"]) if "GITHUB_WORKSPACE" in os.environ else Path(__file__).resolve().parents[2]
+ROOT = (
+    Path(os.environ["GITHUB_WORKSPACE"])
+    if "GITHUB_WORKSPACE" in os.environ
+    else Path(__file__).resolve().parents[2]
+)
 sys.path.insert(0, str(ROOT / "scripts"))
 os.environ.setdefault("CODEX_REPO_ROOT", str(ROOT))
 
@@ -29,8 +33,14 @@ def main():
     target = os.environ["TARGET"]
     temporary = Path(os.environ["RUNNER_TEMP"])
     output = temporary / "lemex-binaries"
-    stage(Path(os.environ["CARGO_TARGET_DIR"]) / target / "release", output, TARGET_SPECS[target])
-    with tarfile.open(temporary / f"{os.environ['PACKAGE']}-binaries.tar.gz", "w:gz") as archive:
+    stage(
+        Path(os.environ["CARGO_TARGET_DIR"]) / target / "release",
+        output,
+        TARGET_SPECS[target],
+    )
+    with tarfile.open(
+        temporary / f"{os.environ['PACKAGE']}-binaries.tar.gz", "w:gz"
+    ) as archive:
         for path in sorted(output.iterdir()):
             archive.add(path, arcname=path.name)
 

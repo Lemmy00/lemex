@@ -13,3 +13,15 @@ Shared backend protocols and authentication types may still be needed by voice, 
 Ship voice as a working installed feature: all four native npm packages must include the same-build helper, pinned audio runtime, notices and integrity manifest. Check initialization and transport startup from a relocated npm installation; retaining voice source alone is insufficient. Live conversations require audio devices and a compatible configured realtime provider.
 
 Before publishing a sync, check that the removed commands stay absent and that voice, coding commands, transcript images and local token usage remain available. Run formatting, production compilation and relevant regression tests, then follow [npm release instructions](npm-release.md) from the verified merged commit.
+
+The terminal history entry points are `lemex history` and `/history`. They must list
+saved top-level chats across projects and providers, including `exec` sessions,
+without exposing background subagent threads or bypassing account ownership.
+Check transcript replay and continuing a saved chat after a fresh process starts;
+use temporary fixtures or a private state copy rather than modifying user chats.
+Keep `lemex resume` and `/resume` available for the current project's chats.
+
+Search public interface strings, help, onboarding, diagnostics and package descriptions
+for upstream product branding on every sync; use Lemex. Keep model IDs, existing
+history/config compatibility readers and required third-party attribution intact.
+Remove confirmed unused product integrations and dependencies as part of the sync.

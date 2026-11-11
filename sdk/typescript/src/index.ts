@@ -27,9 +27,9 @@ export type {
 export { Thread } from "./thread";
 export type { RunResult, RunStreamedResult, Input, UserInput } from "./thread";
 
-export { Codex } from "./codex";
+export { Codex as Lemex, Codex } from "./codex";
 
-export type { CodexOptions } from "./codexOptions";
+export type { CodexOptions as LemexOptions, CodexOptions } from "./codexOptions";
 
 export type {
   ThreadOptions,

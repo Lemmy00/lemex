@@ -822,7 +822,7 @@ describe("Codex", () => {
     }
   });
 
-  it("sets the codex sdk originator header", async () => {
+  it("sets the Lemex SDK originator header", async () => {
     const { url, close, requests } = await startResponsesTestProxy({
       statusCode: 200,
       responseBodies: [sse(responseStarted(), assistantMessage("Hi!"), responseCompleted())],
@@ -836,9 +836,9 @@ describe("Codex", () => {
       expect(requests.length).toBeGreaterThan(0);
       const originatorHeader = requests[0]!.headers["originator"];
       if (Array.isArray(originatorHeader)) {
-        expect(originatorHeader).toContain("codex_sdk_ts");
+        expect(originatorHeader).toContain("lemex_sdk_ts");
       } else {
-        expect(originatorHeader).toBe("codex_sdk_ts");
+        expect(originatorHeader).toBe("lemex_sdk_ts");
       }
     } finally {
       cleanup();

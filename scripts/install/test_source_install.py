@@ -12,10 +12,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("import_remote_config", Path(__file__).with_name("import_remote_config.py"))
+spec = importlib.util.spec_from_file_location(
+    "import_remote_config", Path(__file__).with_name("import_remote_config.py")
+)
 remote_config = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(remote_config)
-package_spec = importlib.util.spec_from_file_location("prepare_source_package", Path(__file__).with_name("prepare_source_package.py"))
+package_spec = importlib.util.spec_from_file_location(
+    "prepare_source_package", Path(__file__).with_name("prepare_source_package.py")
+)
 source_package = importlib.util.module_from_spec(package_spec)
 package_spec.loader.exec_module(source_package)
 
@@ -28,16 +32,26 @@ class SourceInstallTests(unittest.TestCase):
 
     def test_python_detection_skips_an_old_system_python(self):
         result = subprocess.run(
-            ["/bin/bash", "-c", r'''
+            [
+                "/bin/bash",
+                "-c",
+                r"""
 source "$1"
 command_exists() { case "$1" in python3|python3.11) return 0;; *) return 1;; esac; }
 python3() { return 1; }
 python3.11() { return 0; }
 select_python
 printf '%s' "$LEMEX_PYTHON_BIN"
-''', "test", str(ROOT / "scripts/install/install_from_source.sh")],
-            env={key: value for key, value in os.environ.items() if key != "LEMEX_PYTHON"},
-            capture_output=True, text=True, check=True,
+""",
+                "test",
+                str(ROOT / "scripts/install/install_from_source.sh"),
+            ],
+            env={
+                key: value for key, value in os.environ.items() if key != "LEMEX_PYTHON"
+            },
+            capture_output=True,
+            text=True,
+            check=True,
         )
         self.assertEqual(result.stdout, "python3.11")
 
@@ -46,27 +60,51 @@ printf '%s' "$LEMEX_PYTHON_BIN"
         python.write_text("#!/bin/sh\nexit 0\n")
         python.chmod(0o755)
         result = subprocess.run(
-            ["/bin/bash", "-c", 'source "$1"; select_python; printf "%s" "$LEMEX_PYTHON_BIN"',
-             "test", str(ROOT / "scripts/install/install_from_source.sh")],
-            env=dict(os.environ, LEMEX_PYTHON=str(python)), capture_output=True, text=True, check=True,
+            [
+                "/bin/bash",
+                "-c",
+                'source "$1"; select_python; printf "%s" "$LEMEX_PYTHON_BIN"',
+                "test",
+                str(ROOT / "scripts/install/install_from_source.sh"),
+            ],
+            env=dict(os.environ, LEMEX_PYTHON=str(python)),
+            capture_output=True,
+            text=True,
+            check=True,
         )
         self.assertEqual(result.stdout, str(python))
 
     def test_invalid_python_override_fails_before_building(self):
         result = subprocess.run(
-            ["/bin/bash", "-c", 'source "$1"; select_python',
-             "test", str(ROOT / "scripts/install/install_from_source.sh")],
+            [
+                "/bin/bash",
+                "-c",
+                'source "$1"; select_python',
+                "test",
+                str(ROOT / "scripts/install/install_from_source.sh"),
+            ],
             env=dict(os.environ, LEMEX_PYTHON=str(self.root / "missing-python")),
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("LEMEX_PYTHON must name a working Python 3.11+ executable", result.stderr)
+        self.assertIn(
+            "LEMEX_PYTHON must name a working Python 3.11+ executable", result.stderr
+        )
 
     def stage(self, catalog=None):
         staged = self.root / "staged"
         staged.mkdir()
-        (staged / "config.toml").write_text('model_catalog_json = "/home/alice/.lemex/models.json"\nworkspace = "/home/alice/work"\nunrelated = "/home/alice2/work"\n')
-        (staged / "models.json").write_text(json.dumps(catalog if catalog is not None else {"models": [{"slug": "custom/working-model"}]}))
+        (staged / "config.toml").write_text(
+            'model_catalog_json = "/home/alice/.lemex/models.json"\nworkspace = "/home/alice/work"\nunrelated = "/home/alice2/work"\n'
+        )
+        (staged / "models.json").write_text(
+            json.dumps(
+                catalog
+                if catalog is not None
+                else {"models": [{"slug": "custom/working-model"}]}
+            )
+        )
         return staged
 
     def test_remote_paths_and_catalog_are_preserved(self):
@@ -77,8 +115,11 @@ printf '%s' "$LEMEX_PYTHON_BIN"
         config = (destination / "config.toml").read_text()
         self.assertIn(str(destination / "models.json"), config)
         self.assertIn(str(home / "work"), config)
-        self.assertIn('/home/alice2/work', config)
-        self.assertEqual(json.loads((destination / "models.json").read_text())["models"][0]["slug"], "custom/working-model")
+        self.assertIn("/home/alice2/work", config)
+        self.assertEqual(
+            json.loads((destination / "models.json").read_text())["models"][0]["slug"],
+            "custom/working-model",
+        )
 
     def test_invalid_catalog_leaves_existing_settings(self):
         staged = self.stage({"models": []})
@@ -87,7 +128,9 @@ printf '%s' "$LEMEX_PYTHON_BIN"
         for name in ("config.toml", "models.json"):
             (destination / name).write_text("original")
         with self.assertRaises(ValueError):
-            remote_config.import_config(staged, "/home/alice/.lemex", destination, self.root)
+            remote_config.import_config(
+                staged, "/home/alice/.lemex", destination, self.root
+            )
         for name in ("config.toml", "models.json"):
             self.assertEqual((destination / name).read_text(), "original")
 
@@ -96,19 +139,30 @@ printf '%s' "$LEMEX_PYTHON_BIN"
         destination.mkdir()
         (destination / "config.toml").write_text("original")
         (destination / "config.toml.bak").write_text("older backup")
-        remote_config.import_config(self.stage(), "/home/alice/.lemex", destination, self.root)
+        remote_config.import_config(
+            self.stage(), "/home/alice/.lemex", destination, self.root
+        )
         self.assertEqual((destination / "config.toml.bak").read_text(), "older backup")
         self.assertEqual((destination / "config.toml.bak.1").read_text(), "original")
 
     def package(self, package):
         # Local source installs leave generated runtimes in vendor/. Build an
         # isolated fixture instead of copying large binaries or old aliases.
-        shutil.copytree(ROOT / "codex-cli", package, ignore=shutil.ignore_patterns("vendor"))
-        node_platform = subprocess.check_output(["node", "-p", 'process.platform + ":" + process.arch'], text=True).strip()
-        target = {"darwin:arm64": "aarch64-apple-darwin", "darwin:x64": "x86_64-apple-darwin", "linux:x64": "x86_64-unknown-linux-gnu", "linux:arm64": "aarch64-unknown-linux-gnu"}[node_platform]
+        shutil.copytree(
+            ROOT / "codex-cli", package, ignore=shutil.ignore_patterns("vendor")
+        )
+        node_platform = subprocess.check_output(
+            ["node", "-p", 'process.platform + ":" + process.arch'], text=True
+        ).strip()
+        target = {
+            "darwin:arm64": "aarch64-apple-darwin",
+            "darwin:x64": "x86_64-apple-darwin",
+            "linux:x64": "x86_64-unknown-linux-gnu",
+            "linux:arm64": "aarch64-unknown-linux-gnu",
+        }[node_platform]
         binary = package / "vendor" / target / "bin" / "lemex"
         binary.parent.mkdir(parents=True)
-        binary.write_text('''#!/bin/sh
+        binary.write_text("""#!/bin/sh
 case "$1" in
     --version) echo "lemex 0.0.0" ;;
     --provenance)
@@ -116,7 +170,7 @@ case "$1" in
         ;;
     *) printf 'runtime:%s\\n' "${LEMEX_MANAGED_BY_PNPM:-npm}" ;;
 esac
-''')
+""")
         binary.chmod(0o755)
         helper = binary.with_name("lemex-code-mode-host")
         shutil.copy2(binary, helper)
@@ -134,7 +188,9 @@ esac
         source_package.prepare_package(package_root, target, rg)
         return package
 
-    @unittest.skipUnless(shutil.which("npm") and shutil.which("node"), "Node/npm required")
+    @unittest.skipUnless(
+        shutil.which("npm") and shutil.which("node"), "Node/npm required"
+    )
     def test_global_install_survives_checkout_deletion(self):
         checkout = self.package(self.root / "checkout")
         prefix = self.root / "prefix"
@@ -144,16 +200,40 @@ esac
         (modules / "lemex").symlink_to(self.root / "deleted-checkout")
         (prefix / "bin").mkdir()
         (prefix / "bin/lemex").symlink_to("../lib/node_modules/lemex/bin/lemex.js")
-        env = dict(os.environ, npm_config_offline="true", npm_config_audit="false", npm_config_cache=str(self.root / "cache"), TMPDIR=str(self.root))
-        subprocess.run(["/bin/bash", "-c", 'source "$1"; CODEX_CLI_DIR="$2"; LEMEX_INSTALL_PREFIX="$3"; install_npm_package', "test", str(ROOT / "scripts/install/install_from_source.sh"), str(checkout), str(prefix)], env=env, check=True, capture_output=True, text=True)
+        env = dict(
+            os.environ,
+            npm_config_offline="true",
+            npm_config_audit="false",
+            npm_config_cache=str(self.root / "cache"),
+            TMPDIR=str(self.root),
+        )
+        subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                'source "$1"; CODEX_CLI_DIR="$2"; LEMEX_INSTALL_PREFIX="$3"; install_npm_package',
+                "test",
+                str(ROOT / "scripts/install/install_from_source.sh"),
+                str(checkout),
+                str(prefix),
+            ],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         self.assertFalse((prefix / "lib/node_modules/lemex").is_symlink())
         self.assertFalse((self.root / "cache").exists())
         self.assertEqual(list(self.root.glob("lemex-package.*")), [])
         shutil.rmtree(checkout)
-        result = subprocess.check_output([str(prefix / "bin/lemex"), "--probe"], env=env, text=True)
+        result = subprocess.check_output(
+            [str(prefix / "bin/lemex"), "--probe"], env=env, text=True
+        )
         self.assertEqual(result.strip(), "runtime:npm")
         provenance = subprocess.check_output(
-            [str(prefix / "bin/lemex"), "--provenance"], env=env, text=True,
+            [str(prefix / "bin/lemex"), "--provenance"],
+            env=env,
+            text=True,
         ).splitlines()
         expected_package_root = str((prefix / "lib/node_modules/lemex").resolve())
         self.assertEqual(provenance, [expected_package_root, expected_package_root])
@@ -166,7 +246,12 @@ esac
         self.assertFalse((package_root / "bin/codex").exists())
         self.assertFalse((package_root / "bin/codex-code-mode-host").exists())
         self.assertTrue((package_root / metadata["pathDir"] / "rg").is_file())
-        self.assertEqual(subprocess.check_output([str(package_root / metadata["entrypoint"]), "--version"], text=True).strip(), "lemex 0.0.0")
+        self.assertEqual(
+            subprocess.check_output(
+                [str(package_root / metadata["entrypoint"]), "--version"], text=True
+            ).strip(),
+            "lemex 0.0.0",
+        )
 
     @unittest.skipUnless(shutil.which("node"), "Node required")
     def test_pnpm_ownership_detected(self):
@@ -174,15 +259,26 @@ esac
         node_modules.mkdir()
         (node_modules / ".modules.yaml").write_text("layoutVersion: 5\n")
         package = self.package(node_modules / "lemex")
-        output = subprocess.check_output(["node", str(package / "bin/lemex.js")], text=True)
+        output = subprocess.check_output(
+            ["node", str(package / "bin/lemex.js")], text=True
+        )
         self.assertEqual(output.strip(), "runtime:1")
 
     def test_v8_paths_parse_on_system_bash(self):
         script = (ROOT / "scripts/install/install_from_source.sh").read_text()
         start = script.index("        local v8_artifacts=()")
-        end = script.index('        export RUSTY_V8_ARCHIVE=', start)
+        end = script.index("        export RUSTY_V8_ARCHIVE=", start)
         snippet = script[start:end]
-        output = subprocess.check_output(["/bin/bash", "-c", 'parse() { local v8_paths; v8_paths=$(printf "/cache/archive\\n/cache/bindings\\n");\n' + snippet + '\nprintf "%s\\n" "${v8_artifacts[@]}"; }; parse'], text=True)
+        output = subprocess.check_output(
+            [
+                "/bin/bash",
+                "-c",
+                'parse() { local v8_paths; v8_paths=$(printf "/cache/archive\\n/cache/bindings\\n");\n'
+                + snippet
+                + '\nprintf "%s\\n" "${v8_artifacts[@]}"; }; parse',
+            ],
+            text=True,
+        )
         self.assertEqual(output.splitlines(), ["/cache/archive", "/cache/bindings"])
 
     def run_build(self, overrides=None, *, fail=False, install=False):
@@ -199,15 +295,27 @@ esac
             stale.write_text("old runtime")
         env = dict(os.environ)
         for name in (
-            "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL",
-            "CARGO_PROFILE_RELEASE_DEBUG", "CARGO_PROFILE_RELEASE_STRIP",
-            "CARGO_PROFILE_RELEASE_LTO", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS",
-            "LEMEX_KEEP_BUILD", "RUSTY_V8_ARCHIVE", "RUSTY_V8_SRC_BINDING_PATH",
+            "CARGO_TARGET_DIR",
+            "CARGO_BUILD_JOBS",
+            "CARGO_INCREMENTAL",
+            "CARGO_PROFILE_RELEASE_DEBUG",
+            "CARGO_PROFILE_RELEASE_STRIP",
+            "CARGO_PROFILE_RELEASE_LTO",
+            "CARGO_PROFILE_RELEASE_CODEGEN_UNITS",
+            "LEMEX_KEEP_BUILD",
+            "RUSTY_V8_ARCHIVE",
+            "RUSTY_V8_SRC_BINDING_PATH",
         ):
             env.pop(name, None)
-        env.update(LEMEX_BUILD="release", XDG_CACHE_HOME=str(fixture / "cache"), TMPDIR=str(fixture), npm_config_offline="true", FIXTURE_HOST_TARGET="x86_64-unknown-linux-gnu")
+        env.update(
+            LEMEX_BUILD="release",
+            XDG_CACHE_HOME=str(fixture / "cache"),
+            TMPDIR=str(fixture),
+            npm_config_offline="true",
+            FIXTURE_HOST_TARGET="x86_64-unknown-linux-gnu",
+        )
         env.update(overrides or {})
-        script = r'''
+        script = r"""
 source "$1"
 fixture="$2"
 CODEX_RS_DIR="$fixture/codex-rs"
@@ -253,27 +361,57 @@ if [ "$4" = 1 ]; then
     LEMEX_INSTALL_PREFIX="$fixture/prefix"
     install_npm_package
 fi
-'''
+"""
         result = subprocess.run(
-            ["/bin/bash", "-c", script, "test",
-             str(ROOT / "scripts/install/install_from_source.sh"), str(fixture),
-             "1" if fail else "0", "1" if install else "0"],
-            env=env, capture_output=True, text=True,
+            [
+                "/bin/bash",
+                "-c",
+                script,
+                "test",
+                str(ROOT / "scripts/install/install_from_source.sh"),
+                str(fixture),
+                "1" if fail else "0",
+                "1" if install else "0",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
         )
         observed = {}
         if (fixture / "build").exists():
-            observed = dict(line.split("=", 1) for line in (fixture / "build").read_text().splitlines())
+            observed = dict(
+                line.split("=", 1)
+                for line in (fixture / "build").read_text().splitlines()
+            )
         return result, fixture, observed
 
-    @unittest.skipUnless(shutil.which("npm") and shutil.which("node"), "Node/npm required")
+    @unittest.skipUnless(
+        shutil.which("npm") and shutil.which("node"), "Node/npm required"
+    )
     def test_staged_build_installs_only_current_host_and_removes_caches(self):
-        node_platform = subprocess.check_output(["node", "-p", 'process.platform + ":" + process.arch'], text=True).strip()
-        target = {"darwin:arm64": "aarch64-apple-darwin", "darwin:x64": "x86_64-apple-darwin", "linux:x64": "x86_64-unknown-linux-gnu", "linux:arm64": "aarch64-unknown-linux-gnu"}[node_platform]
-        result, fixture, observed = self.run_build({"FIXTURE_HOST_TARGET": target}, install=True)
+        node_platform = subprocess.check_output(
+            ["node", "-p", 'process.platform + ":" + process.arch'], text=True
+        ).strip()
+        target = {
+            "darwin:arm64": "aarch64-apple-darwin",
+            "darwin:x64": "x86_64-apple-darwin",
+            "linux:x64": "x86_64-unknown-linux-gnu",
+            "linux:arm64": "aarch64-unknown-linux-gnu",
+        }[node_platform]
+        result, fixture, observed = self.run_build(
+            {"FIXTURE_HOST_TARGET": target}, install=True
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         installed = fixture / "prefix/lib/node_modules/lemex"
-        self.assertEqual([path.name for path in (installed / "vendor").iterdir()], [target])
-        self.assertEqual(subprocess.check_output([str(fixture / "prefix/bin/lemex"), "--version"], text=True).strip(), "lemex 0.0.0")
+        self.assertEqual(
+            [path.name for path in (installed / "vendor").iterdir()], [target]
+        )
+        self.assertEqual(
+            subprocess.check_output(
+                [str(fixture / "prefix/bin/lemex"), "--version"], text=True
+            ).strip(),
+            "lemex 0.0.0",
+        )
         self.assertFalse(Path(observed["target"]).exists())
         self.assertEqual(list(fixture.glob("lemex-runtime.*")), [])
         self.assertEqual(list(fixture.glob("lemex-package.*")), [])
@@ -288,10 +426,14 @@ fi
         self.assertEqual(observed["strip"], "symbols")
         self.assertEqual(observed["incremental"], "0")
         self.assertIn("--locked --release", observed["args"])
-        self.assertIn("--bin lemex --bin lemex-code-mode-host --bin bwrap", observed["args"])
+        self.assertIn(
+            "--bin lemex --bin lemex-code-mode-host --bin bwrap", observed["args"]
+        )
         self.assertFalse(Path(observed["target"]).exists())
         self.assertIn("Removing temporary Cargo build cache:", result.stdout)
-        self.assertEqual((fixture / "runtime-version").read_text().strip(), "lemex 0.0.0")
+        self.assertEqual(
+            (fixture / "runtime-version").read_text().strip(), "lemex 0.0.0"
+        )
         self.assertFalse((fixture / "cli/vendor").exists())
         self.assertFalse(Path((fixture / "package-dir").read_text().strip()).exists())
 
@@ -318,7 +460,9 @@ fi
     def test_keep_build_retains_cache_on_success_and_failure(self):
         for fail in (False, True):
             with self.subTest(fail=fail):
-                result, _, observed = self.run_build({"LEMEX_KEEP_BUILD": "1"}, fail=fail)
+                result, _, observed = self.run_build(
+                    {"LEMEX_KEEP_BUILD": "1"}, fail=fail
+                )
                 self.assertEqual(result.returncode == 0, not fail)
                 self.assertTrue((Path(observed["target"]) / "caller-marker").is_file())
                 self.assertIn("Kept Cargo build cache:", result.stdout)
@@ -326,17 +470,23 @@ fi
     def test_caller_build_settings_and_directory_are_preserved(self):
         for target in ("reusable", str(self.root / "absolute-target")):
             with self.subTest(target=target):
-                result, fixture, observed = self.run_build({
-                    "CARGO_TARGET_DIR": target,
-                    "CARGO_PROFILE_RELEASE_LTO": "thin",
-                    "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "4",
-                    "CARGO_PROFILE_RELEASE_DEBUG": "1",
-                    "CARGO_PROFILE_RELEASE_STRIP": "none",
-                    "CARGO_INCREMENTAL": "1",
-                    "CARGO_BUILD_JOBS": "2",
-                })
+                result, fixture, observed = self.run_build(
+                    {
+                        "CARGO_TARGET_DIR": target,
+                        "CARGO_PROFILE_RELEASE_LTO": "thin",
+                        "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "4",
+                        "CARGO_PROFILE_RELEASE_DEBUG": "1",
+                        "CARGO_PROFILE_RELEASE_STRIP": "none",
+                        "CARGO_INCREMENTAL": "1",
+                        "CARGO_BUILD_JOBS": "2",
+                    }
+                )
                 self.assertEqual(result.returncode, 0, result.stderr)
-                expected = Path(target) if Path(target).is_absolute() else fixture / "codex-rs" / target
+                expected = (
+                    Path(target)
+                    if Path(target).is_absolute()
+                    else fixture / "codex-rs" / target
+                )
                 self.assertEqual(Path(observed["target"]), expected)
                 self.assertTrue((expected / "caller-marker").is_file())
                 self.assertEqual(observed["lto"], "thin")
@@ -358,7 +508,7 @@ fi
         for failure in ("pack", "install", "INT", "TERM", "HUP"):
             with self.subTest(failure=failure):
                 fixture = Path(tempfile.mkdtemp(dir=self.root))
-                script = r'''
+                script = r"""
 source "$1"
 fixture="$2"
 failure="$3"
@@ -380,12 +530,20 @@ npm() {
     esac
 }
 install_npm_package
-'''
+"""
                 result = subprocess.run(
-                    ["/bin/bash", "-c", script, "test",
-                     str(ROOT / "scripts/install/install_from_source.sh"), str(fixture), failure],
+                    [
+                        "/bin/bash",
+                        "-c",
+                        script,
+                        "test",
+                        str(ROOT / "scripts/install/install_from_source.sh"),
+                        str(fixture),
+                        failure,
+                    ],
                     env=dict(os.environ, TMPDIR=str(fixture), LEMEX_KEEP_BUILD="0"),
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                 )
                 expected = {"INT": 130, "TERM": 143, "HUP": 129}.get(failure, 1)
                 self.assertEqual(result.returncode, expected, result.stderr)

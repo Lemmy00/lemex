@@ -34,6 +34,7 @@ pub enum SlashCommand {
     Archive,
     Delete,
     Resume,
+    History,
     Fork,
     Worktree,
     Init,
@@ -88,7 +89,7 @@ impl SlashCommand {
     pub fn description(self) -> &'static str {
         match self {
             SlashCommand::Config => "configure Lemex preferences",
-            SlashCommand::Feedback => "send logs to maintainers",
+            SlashCommand::Feedback => "save a local diagnostic ZIP",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Lemex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
@@ -96,6 +97,7 @@ impl SlashCommand {
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Rename => "rename the current thread",
             SlashCommand::Resume => "resume a saved chat",
+            SlashCommand::History => "browse saved chats across projects and providers",
             SlashCommand::Archive => "archive this session",
             SlashCommand::Delete => "permanently delete this session",
             SlashCommand::Clear => "clear the terminal and start a new chat",
@@ -116,7 +118,7 @@ impl SlashCommand {
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Cd => "change the current working directory",
             SlashCommand::Pwd => "show the current working directory",
-            SlashCommand::Usage => "view account usage or use a usage limit reset",
+            SlashCommand::Usage => "show coding token usage for this chat",
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
             SlashCommand::Title => "configure which items appear in the terminal title",
             SlashCommand::Statusline => "configure which items appear in the status line",
@@ -136,9 +138,7 @@ impl SlashCommand {
             SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Agents => "open the agent command center",
             SlashCommand::MultiAgents => "switch between this session's subagents",
-            SlashCommand::Side | SlashCommand::Btw => {
-                "start a side conversation in an ephemeral fork"
-            }
+            SlashCommand::Side | SlashCommand::Btw => "start a side conversation",
             SlashCommand::Permissions => "choose what Lemex is allowed to do",
             SlashCommand::Keymap => "remap TUI shortcuts",
             SlashCommand::Vim => "toggle Vim mode for the composer",
@@ -186,6 +186,7 @@ impl SlashCommand {
                 | SlashCommand::Side
                 | SlashCommand::Btw
                 | SlashCommand::Resume
+                | SlashCommand::History
         )
     }
 
@@ -205,13 +206,14 @@ impl SlashCommand {
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
                 | SlashCommand::Ide
+                | SlashCommand::Rename
         )
     }
 
     /// Whether dispatch needs thread state to validate this command before consuming its draft.
     /// The composer must defer busy-state rejection and draft clearing for these commands.
     pub(crate) fn requires_dispatch_validation(self) -> bool {
-        matches!(self, SlashCommand::Review)
+        matches!(self, SlashCommand::Fork | SlashCommand::Review)
     }
 
     /// Commands that do not require a writable current thread. The server must still be connected.
@@ -221,6 +223,7 @@ impl SlashCommand {
             SlashCommand::New
                 | SlashCommand::Clear
                 | SlashCommand::Resume
+                | SlashCommand::History
                 | SlashCommand::Agents
                 | SlashCommand::MultiAgents
                 | SlashCommand::Quit
@@ -262,6 +265,7 @@ impl SlashCommand {
             SlashCommand::Diff
             | SlashCommand::Archive
             | SlashCommand::Resume
+            | SlashCommand::History
             | SlashCommand::Model
             | SlashCommand::Presets
             | SlashCommand::Daybreak

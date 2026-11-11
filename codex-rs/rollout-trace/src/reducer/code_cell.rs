@@ -144,7 +144,7 @@ impl TraceReducer {
 
         let Some(codex_turn_id) = codex_turn_id else {
             bail!(
-                "code cell start {} did not include a Codex turn id",
+                "code cell start {} did not include a Lemex turn id",
                 started.code_cell_id
             );
         };
@@ -553,7 +553,7 @@ impl TraceReducer {
         // when a later inference request carries the custom-tool result back to
         // the model. Add the reverse ProducerRef at that later observation
         // point instead of copying runtime bytes into the conversation model.
-        let code_cell_id = self.reduced_code_cell_id_for_model_visible_call(call_id);
+        let code_cell_id = Self::reduced_code_cell_id_for_model_visible_call(call_id);
         if !self.rollout.code_cells.contains_key(&code_cell_id) {
             return Ok(());
         }
@@ -584,14 +584,13 @@ impl TraceReducer {
             .map(|turn| turn.thread_id.clone())
             .with_context(|| {
                 format!(
-                    "{event_name} {runtime_cell_id} referenced unknown Codex turn {codex_turn_id}"
+                    "{event_name} {runtime_cell_id} referenced unknown Lemex turn {codex_turn_id}"
                 )
             })
     }
 
     /// Derives the stable reduced code-cell id from the model-visible exec call id.
     pub(super) fn reduced_code_cell_id_for_model_visible_call(
-        &self,
         model_visible_call_id: &str,
     ) -> CodeCellId {
         // The model-visible `exec` call is the durable source identity. The
@@ -677,11 +676,11 @@ impl TraceReducer {
             bail!("code cell start referenced unknown thread {thread_id}");
         }
         let Some(turn) = self.rollout.codex_turns.get(codex_turn_id) else {
-            bail!("code cell start referenced unknown Codex turn {codex_turn_id}");
+            bail!("code cell start referenced unknown Lemex turn {codex_turn_id}");
         };
         if turn.thread_id != thread_id {
             bail!(
-                "code cell start used thread {thread_id}, but Codex turn {codex_turn_id} belongs \
+                "code cell start used thread {thread_id}, but Lemex turn {codex_turn_id} belongs \
                  to {}",
                 turn.thread_id
             );
@@ -696,13 +695,12 @@ impl TraceReducer {
         kind: ConversationItemKind,
     ) -> Vec<String> {
         self.rollout
-            .conversation_items
-            .values()
-            .filter(|item| {
-                item.thread_id == thread_id
-                    && item.call_id.as_deref() == Some(call_id)
-                    && item.kind == kind
-            })
+            .threads
+            .get(thread_id)
+            .into_iter()
+            .flat_map(|thread| &thread.conversation_item_ids)
+            .map(|item_id| &self.rollout.conversation_items[item_id])
+            .filter(|item| item.call_id.as_deref() == Some(call_id) && item.kind == kind)
             .map(|item| item.item_id.clone())
             .collect()
     }

@@ -4,6 +4,6 @@ assertion_line: 1885
 expression: rendered
 ---
 
-  >_ RCP AI Lemex (vtest)
+  >_ Lemex (vtest)
      /tmp/project
   permissions: YOLO mode

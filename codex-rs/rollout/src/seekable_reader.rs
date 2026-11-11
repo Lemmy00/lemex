@@ -68,7 +68,7 @@ pub fn read_rollout_prefix(path: &Path, max_bytes: usize) -> io::Result<Option<V
 /// Opens the original JSONL bytes for blocking offset reads without changing the rollout on disk.
 ///
 /// Compressed files are decoded into an anonymous temporary file, keeping memory use bounded and
-/// preserving read-only access to the Codex home. Plain files retain their existing seek fast path.
+/// preserving read-only access to the Lemex home. Plain files retain their existing seek fast path.
 /// `is_cancelled` must observe the lifetime of the calling task. Cancellation returns an error,
 /// never EOF, so callers cannot mistake a partial read for a complete history.
 pub fn open_rollout_seekable_reader(

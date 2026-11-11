@@ -7,6 +7,7 @@
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
+use anyhow::ensure;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -103,6 +104,29 @@ impl TraceReducer {
         Ok(())
     }
 
+    /// Reopens a known thread after eviction, preserving its identity and history.
+    pub(super) fn resume_thread(&mut self, thread_id: &str) -> Result<()> {
+        let thread = self.thread_mut(thread_id).with_context(|| {
+            format!(
+                "cannot resume thread {thread_id}: it was not started in this trace; resuming threads from an earlier trace is not supported"
+            )
+        })?;
+        ensure!(
+            thread.execution.ended_seq.is_some(),
+            "resumed thread {thread_id} has not ended"
+        );
+        thread.execution.ended_at_unix_ms = None;
+        thread.execution.ended_seq = None;
+        thread.execution.status = ExecutionStatus::Running;
+        // Reload creates fresh cell and process namespaces. Historical objects
+        // remain, but their runtime handles must not resolve in the new session.
+        self.code_cell_ids_by_runtime
+            .retain(|(owner, _), _| owner != thread_id);
+        self.terminal_ids_by_process
+            .retain(|(owner, _), _| owner != thread_id);
+        Ok(())
+    }
+
     /// Marks a thread terminal without treating child shutdown as rollout completion.
     pub(super) fn end_thread(
         &mut self,
@@ -123,7 +147,7 @@ impl TraceReducer {
         Ok(())
     }
 
-    /// Starts a Codex turn inside an existing thread.
+    /// Starts a Lemex turn inside an existing thread.
     pub(super) fn start_codex_turn(
         &mut self,
         seq: RawEventSeq,
@@ -155,7 +179,7 @@ impl TraceReducer {
         Ok(())
     }
 
-    /// Marks a Codex turn terminal and validates any thread id carried by the raw event.
+    /// Marks a Lemex turn terminal and validates any thread id carried by the raw event.
     pub(super) fn end_codex_turn(
         &mut self,
         seq: RawEventSeq,

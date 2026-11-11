@@ -149,13 +149,21 @@ selection offline. Full compiled-binary checks run in the release workflow.
 locally after changing Node dependencies, along with the SDK tests. Rust release
 checks use `cargo deny`; keep its exceptions aligned with `.cargo/audit.toml`.
 
+The Jest-only `deepmerge 4.3.1` dependency has no upstream release fixing
+[CVE-2026-93753](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).
+The committed pnpm patch rejects prototype-poisoning keys in both target and
+source objects, including nested and array values. CI verifies both bundled package
+entry points with `node scripts/verify_deepmerge_patch.cjs` before accepting the
+single advisory exception in `package.json`. Remove the patch and exception when
+a fixed upstream release is available. This dependency is outside the shipped CLI.
+
 Workspace resolutions do not apply to dependencies installed by consumers of a
 published npm package. Audit a fresh consumer installation separately. Version
 0.1.4 removes the unrelated UltraCode search package added in 0.1.3, including
 its Bun/TypeScript dependencies and vulnerable Java-parser Lodash pins. Codex-style
 Ultra reasoning uses the native runtime and requires no third-party MCP package.
 
-## Temporary security exception for 0.1.3 and 0.1.4
+## Temporary cryptography security exception
 
 The release owner approved a temporary exception on 2026-10-25 for
 [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387.html).
@@ -171,3 +179,10 @@ It is recorded in both `codex-rs/deny.toml` and `codex-rs/.cargo/audit.toml` and
 applies only to this advisory. Review it before the next release or by
 2026-11-24, and remove it when the parent dependencies can use the patched
 series. All other release security checks remain in force.
+
+Reviewed again on 2026-11-11 for 0.1.5: the locked graph still reaches
+`crypto-bigint 0.5.5` through `elliptic-curve 0.13.8`; the affected parent
+constraints still exclude the patched 0.7 series. The existing advisory-specific
+exception remains visible and is due for review by 2026-11-24. The new zstd,
+zstd-safe, zstd-sys and libz-sys advisories are fixed by compatible lockfile
+updates rather than additional vulnerability exceptions.

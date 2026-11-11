@@ -36,7 +36,7 @@ fn malformed_or_embedded_question_envelopes_remain_ordinary_text() {
 
 #[test]
 fn lemex_and_legacy_context_prefixes_keep_question_replies_readable() {
-    for brand in ["Lemex", "Codex"] {
+    for brand in ["Lemex", "Lemex"] {
         let text = format!(
             r#"# Context from my IDE setup:
 

@@ -15,9 +15,17 @@ class StageTests(unittest.TestCase):
             for name in ("lemex", "lemex-code-mode-host", "bwrap"):
                 (source / name).write_bytes(name.encode())
             with patch("stage_npm_binaries.strip_binary") as strip:
-                stage(source, root / "output", TARGET_SPECS["x86_64-unknown-linux-musl"])
-            self.assertEqual([call.args[0].name for call in strip.call_args_list], ["lemex", "lemex-code-mode-host"])
-            self.assertEqual((root / "output/bwrap").read_bytes(), (source / "bwrap").read_bytes())
+                stage(
+                    source, root / "output", TARGET_SPECS["x86_64-unknown-linux-musl"]
+                )
+            self.assertEqual(
+                [call.args[0].name for call in strip.call_args_list],
+                ["lemex", "lemex-code-mode-host"],
+            )
+            self.assertEqual(
+                (root / "output/bwrap").read_bytes(), (source / "bwrap").read_bytes()
+            )
 
 
-if __name__ == "__main__": unittest.main()
+if __name__ == "__main__":
+    unittest.main()

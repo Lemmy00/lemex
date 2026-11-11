@@ -57,7 +57,7 @@ use codex_app_server_protocol::ThreadDecrementElicitationParams;
 use codex_app_server_protocol::ThreadDecrementElicitationResponse;
 use codex_app_server_protocol::ThreadIncrementElicitationParams;
 use codex_app_server_protocol::ThreadIncrementElicitationResponse;
-use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadItemPayload;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadResumeParams;
@@ -106,12 +106,12 @@ const OTEL_SERVICE_NAME: &str = "codex-app-server-test-client";
 const TRACE_DISABLED_MESSAGE: &str =
     "Not enabled - enable tracing in $LEMEX_HOME/config.toml to get a trace URL!";
 
-/// Minimal launcher that initializes the Codex app-server and logs the handshake.
+/// Minimal launcher that initializes the Lemex app-server and logs the handshake.
 #[derive(Parser)]
-#[command(author = "Codex", version, about = "Bootstrap Codex app-server", long_about = None)]
+#[command(author = "Lemex", version, about = "Bootstrap Lemex app-server", long_about = None)]
 struct Cli {
     /// Path to the `codex` CLI binary. When set, requests use stdio by
-    /// spawning `codex app-server` as a child process.
+    /// spawning `lemex app-server` as a child process.
     #[arg(long, env = "CODEX_BIN", global = true)]
     codex_bin: Option<PathBuf>,
 
@@ -150,21 +150,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CliCommand {
-    /// Start `codex app-server` on a websocket endpoint in the background.
+    /// Start `lemex app-server` on a websocket endpoint in the background.
     ///
     /// Logs are written to:
     ///   `/tmp/codex-app-server-test-client/`
     Serve {
-        /// WebSocket listen URL passed to `codex app-server --listen`.
+        /// WebSocket listen URL passed to `lemex app-server --listen`.
         #[arg(long, default_value = "ws://127.0.0.1:4222")]
         listen: String,
         /// Kill any process listening on the same port before starting.
         #[arg(long, default_value_t = false)]
         kill: bool,
     },
-    /// Send a user message through the Codex app-server.
+    /// Send a user message through the Lemex app-server.
     SendMessage {
-        /// User message to send to Codex.
+        /// User message to send to Lemex.
         user_message: String,
     },
     /// Send a user message through the app-server V2 thread/turn APIs.
@@ -172,14 +172,14 @@ enum CliCommand {
         /// Opt into experimental app-server methods and fields.
         #[arg(long)]
         experimental_api: bool,
-        /// User message to send to Codex.
+        /// User message to send to Lemex.
         user_message: String,
     },
     /// Resume a V2 thread by id, then send a user message.
     ResumeMessageV2 {
         /// Existing thread id to resume.
         thread_id: String,
-        /// User message to send to Codex.
+        /// User message to send to Lemex.
         user_message: String,
     },
     /// Resume a V2 thread and continuously stream notifications/events.
@@ -220,7 +220,7 @@ enum CliCommand {
         /// Use the device-code login flow instead of the browser callback flow.
         #[arg(long, default_value_t = false, conflicts_with = "amazon_bedrock")]
         device_code: bool,
-        /// Use a Codex-managed Amazon Bedrock API key.
+        /// Use a Lemex-managed Amazon Bedrock API key.
         #[arg(long, default_value_t = false, conflicts_with = "device_code")]
         amazon_bedrock: bool,
         /// Amazon Bedrock API key.
@@ -232,12 +232,12 @@ enum CliCommand {
     },
     /// Log out of the current account and wait for the account update.
     TestLogout,
-    /// Fetch the current account rate limits from the Codex app-server.
+    /// Fetch the current account rate limits from the Lemex app-server.
     GetAccountRateLimits,
-    /// List the available models from the Codex app-server.
+    /// List the available models from the Lemex app-server.
     #[command(name = "model-list")]
     ModelList,
-    /// List stored threads from the Codex app-server.
+    /// List stored threads from the Lemex app-server.
     #[command(name = "thread-list")]
     ThreadList {
         /// Number of threads to return.
@@ -1078,7 +1078,10 @@ async fn thread_list(endpoint: &Endpoint, config_overrides: &[String], limit: u3
         println!("< initialize response: {initialize:?}");
 
         let response = client.thread_list(ThreadListParams {
+            include_attached_threads: false,
+            current_account_only: false,
             excluded_thread_ids: None,
+            attached_to_thread_id: None,
             originators: None,
             cursor: None,
             limit: Some(limit),
@@ -1181,11 +1184,10 @@ fn live_elicitation_timeout_pause(
         (None, None) => "ws://127.0.0.1:4222".to_string(),
     };
 
-    let script_path = script.unwrap_or_else(|| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("scripts")
-            .join("live_elicitation_hold.sh")
-    });
+    let script_path = match script {
+        Some(script) => script,
+        None => codex_utils_cargo_bin::find_resource!("scripts/live_elicitation_hold.sh")?,
+    };
     if !script_path.is_file() {
         bail!("helper script not found: {}", script_path.display());
     }
@@ -1366,13 +1368,13 @@ struct CodexClient {
     command_item_started: bool,
     helper_done_seen: bool,
     turn_completed_before_helper_done: bool,
-    unexpected_items_before_helper_done: Vec<ThreadItem>,
+    unexpected_items_before_helper_done: Vec<ThreadItemPayload>,
     last_turn_status: Option<TurnStatus>,
     last_turn_error_message: Option<String>,
 }
 
 fn item_started_before_helper_done_is_unexpected(
-    item: &ThreadItem,
+    item: &ThreadItemPayload,
     command_item_started: bool,
     helper_done_seen: bool,
 ) -> bool {
@@ -1380,7 +1382,7 @@ fn item_started_before_helper_done_is_unexpected(
         return false;
     }
 
-    !matches!(item, ThreadItem::UserMessage { .. })
+    !matches!(item, ThreadItemPayload::UserMessage { .. })
 }
 
 impl CodexClient {
@@ -1514,10 +1516,11 @@ impl CodexClient {
             params: InitializeParams {
                 client_info: ClientInfo {
                     name: "codex-toy-app-server".to_string(),
-                    title: Some("Codex Toy App Server".to_string()),
+                    title: Some("Lemex Toy App Server".to_string()),
                     version: env!("CARGO_PKG_VERSION").to_string(),
                 },
                 capabilities: Some(InitializeCapabilities {
+                    required_human_approval: false,
                     explicit_gateway_oauth: false,
                     experimental_api,
                     request_attestation: false,
@@ -1726,28 +1729,31 @@ impl CodexClient {
                     std::io::stdout().flush().ok();
                 }
                 ServerNotification::ItemStarted(payload) => {
-                    if matches!(payload.item, ThreadItem::CommandExecution { .. }) {
+                    if matches!(
+                        payload.item.payload,
+                        ThreadItemPayload::CommandExecution { .. }
+                    ) {
                         if self.command_item_started && !self.helper_done_seen {
                             self.unexpected_items_before_helper_done
-                                .push(payload.item.clone());
+                                .push(payload.item.payload.clone());
                         }
                         self.command_item_started = true;
                     } else if item_started_before_helper_done_is_unexpected(
-                        &payload.item,
+                        &payload.item.payload,
                         self.command_item_started,
                         self.helper_done_seen,
                     ) {
                         self.unexpected_items_before_helper_done
-                            .push(payload.item.clone());
+                            .push(payload.item.payload.clone());
                     }
-                    println!("\n< item started: {:?}", payload.item);
+                    println!("\n< item started: {:?}", payload.item.payload);
                 }
                 ServerNotification::ItemCompleted(payload) => {
-                    if let ThreadItem::CommandExecution {
+                    if let ThreadItemPayload::CommandExecution {
                         status,
                         aggregated_output,
                         ..
-                    } = payload.item.clone()
+                    } = payload.item.payload.clone()
                     {
                         self.command_execution_statuses.push(status);
                         if let Some(aggregated_output) = aggregated_output {
@@ -1755,7 +1761,7 @@ impl CodexClient {
                             self.command_execution_outputs.push(aggregated_output);
                         }
                     }
-                    println!("< item completed: {:?}", payload.item);
+                    println!("< item completed: {:?}", payload.item.payload);
                 }
                 ServerNotification::TurnCompleted(payload) => {
                     if payload.turn.id == turn_id {

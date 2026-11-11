@@ -37,10 +37,11 @@ use crate::outbound_proxy::AuthRouteConfig;
 ///
 /// A space is automatically added between the suffix and the rest of the User-Agent string.
 /// The full user agent string is returned from the mcp initialize response.
-/// Parenthesis will be added by Codex. This should only specify what goes inside of the parenthesis.
+/// Parenthesis will be added by Lemex. This should only specify what goes inside of the parenthesis.
 pub static USER_AGENT_SUFFIX: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 pub const DEFAULT_ORIGINATOR: &str = "codex_cli_rs";
 pub const CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR: &str = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
+pub const LEMEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR: &str = "LEMEX_INTERNAL_ORIGINATOR_OVERRIDE";
 pub use codex_model_provider_info::RESIDENCY_HEADER_NAME;
 pub use codex_model_provider_info::ResidencyRequirement;
 pub use codex_model_provider_info::read_managed_residency_requirement as read_default_client_residency_requirement;
@@ -62,8 +63,9 @@ pub enum SetOriginatorError {
 }
 
 fn get_originator_value(provided: Option<String>) -> Originator {
-    let value = std::env::var(CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR)
+    let value = std::env::var(LEMEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR)
         .ok()
+        .or_else(|| std::env::var(CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR).ok())
         .or(provided)
         .unwrap_or(DEFAULT_ORIGINATOR.to_string());
 
@@ -104,7 +106,9 @@ pub fn originator() -> Originator {
         return originator.clone();
     }
 
-    if std::env::var(CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR).is_ok() {
+    if std::env::var(LEMEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR).is_ok()
+        || std::env::var(CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR).is_ok()
+    {
         let originator = get_originator_value(/*provided*/ None);
         if let Ok(mut guard) = ORIGINATOR.write() {
             match guard.as_ref() {
@@ -213,7 +217,7 @@ fn sanitize_user_agent(candidate: String, fallback: &str) -> String {
 /// Create an HTTP client with default `originator` and `User-Agent` headers set.
 ///
 /// This supported default path preserves the transport's existing proxy behavior and does not opt into
-/// Codex's route-aware system/PAC resolution.
+/// Lemex's route-aware system/PAC resolution.
 pub fn create_client() -> HttpClient {
     build_default_client(default_http_client_builder())
 }
@@ -223,7 +227,9 @@ pub fn create_client_with_chatgpt_cookies(http_client_factory: &HttpClientFactor
     let builder = default_http_client_builder()
         .with_chatgpt_cookies(http_client_factory)
         .without_request_logging();
-    if !http_client_factory.network_policy().is_managed() {
+    if !http_client_factory.network_policy().is_managed()
+        && !http_client_factory.protects_sensitive_headers()
+    {
         return build_default_client(builder);
     }
     let mut pool = RouteAwareClientPool::with_builder(
@@ -250,9 +256,9 @@ pub fn create_client_without_request_logging() -> HttpClient {
     build_default_client(default_http_client_builder().without_request_logging())
 }
 
-/// Builds the default Codex HTTP client for a concrete outbound route.
+/// Builds the default Lemex HTTP client for a concrete outbound route.
 ///
-/// When route-aware proxy handling is disabled, or the client is running inside the Codex
+/// When route-aware proxy handling is disabled, or the client is running inside the Lemex
 /// sandbox, this preserves the default client's existing proxy behavior. Otherwise it resolves
 /// the destination through the shared system/PAC-aware routing policy.
 pub fn create_client_for_route(
@@ -261,11 +267,19 @@ pub fn create_client_for_route(
     route_class: ClientRouteClass,
     redirect_policy: ClientRedirectPolicy,
 ) -> Result<HttpClient, BuildRouteAwareHttpClientError> {
+    let legacy_fallback = redirect_policy == ClientRedirectPolicy::Default
+        || !http_client_factory.protects_sensitive_headers();
     let builder = match redirect_policy {
         ClientRedirectPolicy::Default => default_http_client_builder(),
         ClientRedirectPolicy::Reject => default_http_client_builder().without_redirects(),
     };
-    create_client_for_route_with_builder(http_client_factory, request_url, route_class, builder)
+    create_client_for_route_with_builder(
+        http_client_factory,
+        request_url,
+        route_class,
+        builder,
+        legacy_fallback,
+    )
 }
 
 fn create_client_for_route_with_builder(
@@ -273,19 +287,29 @@ fn create_client_for_route_with_builder(
     request_url: &str,
     route_class: ClientRouteClass,
     builder: HttpClientBuilder,
+    legacy_fallback: bool,
 ) -> Result<HttpClient, BuildRouteAwareHttpClientError> {
-    if http_client_factory.network_policy().is_managed() {
+    if http_client_factory.network_policy().is_managed()
+        || http_client_factory.protects_sensitive_headers()
+        || !legacy_fallback
+    {
         let mut pool = codex_http_client::RouteAwareClientPool::with_builder(
             http_client_factory.clone(),
             route_class,
             builder,
         );
         if is_sandboxed() {
-            pool = pool.with_legacy_direct_proxy_and_custom_ca_fallback();
-        } else if matches!(
-            http_client_factory.outbound_proxy_policy(),
-            OutboundProxyPolicy::ReqwestDefault
-        ) {
+            pool = if legacy_fallback {
+                pool.with_legacy_direct_proxy_and_custom_ca_fallback()
+            } else {
+                pool.with_direct_proxy()
+            };
+        } else if legacy_fallback
+            && matches!(
+                http_client_factory.outbound_proxy_policy(),
+                OutboundProxyPolicy::ReqwestDefault
+            )
+        {
             pool = pool.with_legacy_custom_ca_fallback();
         }
         return Ok(pool.into_client());
@@ -312,7 +336,7 @@ pub enum ClientRedirectPolicy {
     Reject,
 }
 
-/// Builds the default Codex HTTP client for a concrete outbound route without blocking the
+/// Builds the default Lemex HTTP client for a concrete outbound route without blocking the
 /// async runtime worker that initiated the request.
 pub async fn create_client_for_route_async(
     http_client_factory: HttpClientFactory,
@@ -320,6 +344,8 @@ pub async fn create_client_for_route_async(
     route_class: ClientRouteClass,
     redirect_policy: ClientRedirectPolicy,
 ) -> std::io::Result<HttpClient> {
+    let legacy_fallback = redirect_policy == ClientRedirectPolicy::Default
+        || !http_client_factory.protects_sensitive_headers();
     create_client_for_route_async_with_builder(
         http_client_factory,
         request_url,
@@ -328,6 +354,7 @@ pub async fn create_client_for_route_async(
             ClientRedirectPolicy::Default => default_http_client_builder(),
             ClientRedirectPolicy::Reject => default_http_client_builder().without_redirects(),
         },
+        legacy_fallback,
     )
     .await
 }
@@ -343,6 +370,7 @@ pub async fn create_client_for_route_without_request_logging_async(
         request_url,
         route_class,
         || default_http_client_builder().without_request_logging(),
+        /*legacy_fallback*/ true,
     )
     .await
 }
@@ -352,6 +380,7 @@ async fn create_client_for_route_async_with_builder(
     request_url: String,
     route_class: ClientRouteClass,
     builder: impl FnOnce() -> HttpClientBuilder + Send + 'static,
+    legacy_fallback: bool,
 ) -> std::io::Result<HttpClient> {
     let permit = ROUTE_AWARE_CLIENT_BUILD_PERMIT
         .acquire()
@@ -364,6 +393,7 @@ async fn create_client_for_route_async_with_builder(
             &request_url,
             route_class,
             builder(),
+            legacy_fallback,
         )
         .map_err(std::io::Error::from)
     })
@@ -371,14 +401,15 @@ async fn create_client_for_route_async_with_builder(
     .map_err(std::io::Error::other)?
 }
 
-/// Builds the default Codex transport without blocking the async runtime worker.
+/// Builds the default Lemex transport without blocking the async runtime worker.
 ///
 /// Route-aware proxy handling resolves each request and redirect destination. When it is disabled,
-/// or the client is running inside the Codex sandbox, this preserves the default client's proxy
+/// or the client is running inside the Lemex sandbox, this preserves the default client's proxy
 /// behavior while retaining managed application network policy enforcement.
 pub async fn create_transport_for_routes_async(
     http_client_factory: HttpClientFactory,
     route_class: ClientRouteClass,
+    redirect_policy: ClientRedirectPolicy,
 ) -> std::io::Result<ReqwestTransport> {
     let permit = ROUTE_AWARE_CLIENT_BUILD_PERMIT
         .acquire()
@@ -391,7 +422,9 @@ pub async fn create_transport_for_routes_async(
             http_client_factory.outbound_proxy_policy(),
             OutboundProxyPolicy::ReqwestDefault
         );
-        if !http_client_factory.network_policy().is_managed()
+        if redirect_policy == ClientRedirectPolicy::Default
+            && !http_client_factory.network_policy().is_managed()
+            && !http_client_factory.protects_sensitive_headers()
             && (transport_default_proxy || sandboxed)
         {
             return ReqwestTransport::from_http_client(create_client());
@@ -400,11 +433,19 @@ pub async fn create_transport_for_routes_async(
         let mut pool = RouteAwareClientPool::with_builder(
             http_client_factory,
             route_class,
-            default_http_client_builder(),
+            match redirect_policy {
+                ClientRedirectPolicy::Default => default_http_client_builder(),
+                ClientRedirectPolicy::Reject => default_http_client_builder().without_redirects(),
+            },
         );
         if sandboxed {
-            pool = pool.with_legacy_direct_proxy_and_custom_ca_fallback();
-        } else if transport_default_proxy {
+            pool = match redirect_policy {
+                ClientRedirectPolicy::Default => {
+                    pool.with_legacy_direct_proxy_and_custom_ca_fallback()
+                }
+                ClientRedirectPolicy::Reject => pool.with_direct_proxy(),
+            };
+        } else if transport_default_proxy && redirect_policy == ClientRedirectPolicy::Default {
             pool = pool.with_legacy_custom_ca_fallback();
         }
         ReqwestTransport::from_route_aware_client_pool(pool)
@@ -430,7 +471,7 @@ fn build_default_client(builder: HttpClientBuilder) -> HttpClient {
     }
 }
 
-/// Builds an HTTP client for an auth endpoint without Codex default headers.
+/// Builds an HTTP client for an auth endpoint without Lemex default headers.
 #[cfg(test)]
 pub(crate) fn create_raw_auth_client(
     endpoint: &str,
@@ -441,7 +482,7 @@ pub(crate) fn create_raw_auth_client(
         .build_client_without_request_logging(endpoint, ClientRouteClass::Auth)
 }
 
-/// Builds the default Codex HTTP client wrapper for an auth endpoint.
+/// Builds the default Lemex HTTP client wrapper for an auth endpoint.
 pub(crate) fn create_default_auth_client(
     endpoint: &str,
     auth_route_config: &AuthRouteConfig,
