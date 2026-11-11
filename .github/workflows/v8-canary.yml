@@ -15,6 +15,9 @@ concurrency:
 
 jobs:
   metadata:
+    # Lemex uses verified prebuilt V8 artifacts; the upstream source-build
+    # canary requires the upstream Bazel environment.
+    if: github.repository == 'openai/codex'
     runs-on: ubuntu-latest
     outputs:
       # Older revisions can contain a detector that does not emit this output.
