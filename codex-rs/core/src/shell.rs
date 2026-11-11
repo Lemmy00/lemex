@@ -78,7 +78,7 @@ impl Shell {
     }
 }
 
-/// The shell and startup mode Codex chose for an exec command.
+/// The shell and startup mode Lemex chose for an exec command.
 #[derive(Debug, Clone)]
 pub(crate) struct ShellInvocation {
     pub(crate) shell: Shell,
@@ -97,7 +97,7 @@ impl ShellInvocation {
     /// Builds launch arguments that try to restore the executor's directories to `PATH`
     /// after login startup, so `command` and its children can find them.
     ///
-    /// Call this for the POSIX login shell started by Codex when the executor reports
+    /// Call this for the POSIX login shell started by Lemex when the executor reports
     /// directories and the user has not explicitly configured `PATH`. The request's login
     /// mode is unchanged, even if startup makes `PATH` read-only. Returns `None` if no
     /// directories are reported or the shell or any path cannot use this setup; keep the

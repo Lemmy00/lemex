@@ -13,10 +13,11 @@ class VoiceSmokeTests(unittest.TestCase):
     def fixture(self, root, *, fail=False):
         voice = root / "codex-resources/voice"
         (voice / "bin").mkdir(parents=True)
-        (voice / "manifest.json").write_text(json.dumps({
-            "buildCommit": "a" * 40, "voiceTarget": "fixture"}))
+        (voice / "manifest.json").write_text(
+            json.dumps({"buildCommit": "a" * 40, "voiceTarget": "fixture"})
+        )
         helper = voice / "bin/codex-voice-host"
-        helper.write_text(f'''#!{sys.executable}
+        helper.write_text(f"""#!{sys.executable}
 import json, os, struct, sys
 if sys.argv[1:]:
     print("a" * 40)
@@ -35,7 +36,7 @@ while True:
     sys.stdout.buffer.write(struct.pack(">I", len(payload)) + payload)
     sys.stdout.buffer.flush()
     if kind == "close": break
-''')
+""")
         helper.chmod(0o755)
 
     def test_relocated_installed_helper(self):

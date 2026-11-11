@@ -28,7 +28,9 @@ UTILITY_NAME_EXCEPTIONS = {
 }
 MANIFEST_FEATURE_EXCEPTIONS = {
     # Source installation without system OpenSSL uses these explicit features.
-    "codex-rs/cli/Cargo.toml": {"vendored-openssl": ("codex-http-client/vendored-openssl",)},
+    "codex-rs/cli/Cargo.toml": {
+        "vendored-openssl": ("codex-http-client/vendored-openssl",)
+    },
     "codex-rs/http-client/Cargo.toml": {"vendored-openssl": ("native-tls/vendored",)},
     "codex-rs/v8-poc/Cargo.toml": {"sandbox": ("v8/v8_enable_sandbox",)},
 }

@@ -12,7 +12,7 @@ pub(crate) static QUEUE_MIGRATOR: Migrator = sqlx_macros::migrate!("./queue_migr
 pub(crate) static THREAD_HISTORY_MIGRATOR: Migrator =
     sqlx_macros::migrate!("./thread_history_migrations");
 
-/// Allow an older Codex binary to open a database that has already been
+/// Allow an older Lemex binary to open a database that has already been
 /// migrated by a newer binary running in parallel.
 ///
 /// We intentionally ignore applied migration versions that are newer than the

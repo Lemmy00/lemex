@@ -43,7 +43,7 @@ pub fn set_tool_call_id_env_var(env: &mut HashMap<String, String>, tool_call_id:
 /// Configures a child command to omit non-inheritable variables from the
 /// process environment and explicit command overrides.
 ///
-/// This prevents accidental propagation of Codex launch context; it is not a
+/// This prevents accidental propagation of Lemex launch context; it is not a
 /// filesystem security boundary for the referenced identity-token file.
 pub fn scrub_non_inheritable_env_vars(command: &mut std::process::Command) {
     let configured_names = command

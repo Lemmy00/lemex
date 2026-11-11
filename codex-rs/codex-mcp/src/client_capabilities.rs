@@ -50,9 +50,9 @@ pub(crate) fn server_mcp_extensions(
     )
 }
 
-/// Selects the MCP extensions Codex supports from those declared by the app-server host.
+/// Selects the MCP extensions Lemex supports from those declared by the app-server host.
 ///
-/// App-server clients may declare unrelated extensions. Codex retains only the
+/// App-server clients may declare unrelated extensions. Lemex retains only the
 /// trusted extension namespaces it knows how to project downstream. The
 /// legacy form capability is normalized into the same extension map.
 pub fn client_mcp_extensions(

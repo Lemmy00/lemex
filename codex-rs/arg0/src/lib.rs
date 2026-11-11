@@ -24,11 +24,11 @@ const LOCK_FILENAME: &str = ".lock";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Arg0DispatchPaths {
-    /// Stable path to the current Codex executable for child re-execs.
+    /// Stable path to the current Lemex executable for child re-execs.
     ///
     /// Prefer this over [`std::env::current_exe()`] in code that may run under
     /// a test harness, where `current_exe()` can point at the harness binary
-    /// instead of the real Codex CLI.
+    /// instead of the real Lemex CLI.
     pub codex_self_exe: Option<PathBuf>,
     pub codex_linux_sandbox_exe: Option<PathBuf>,
     /// Always absent; retained for clients that still pass the retired wrapper path.
@@ -167,7 +167,7 @@ fn prepare_path_env_var_with_aliases(
     }
 }
 
-/// While we want to deploy the Codex CLI as a single executable for simplicity,
+/// While we want to deploy the Lemex CLI as a single executable for simplicity,
 /// we also want to expose some of its functionality as distinct CLIs, so we use
 /// the "arg0 trick" to determine which CLI to dispatch. This effectively allows
 /// us to simulate deploying multiple executables as a single binary on Mac and
@@ -275,7 +275,9 @@ const ILLEGAL_ENV_VAR_PREFIX: &str = "CODEX_";
 /// with names starting with `CODEX_`.
 fn load_dotenv() {
     if let Ok(codex_home) = find_codex_home()
-        && let Ok(iter) = dotenvy::from_path_iter(codex_home.join(".env"))
+        && let dotenv_path = codex_home.join(".env")
+        && dotenv_path.is_file()
+        && let Ok(iter) = dotenvy::from_path_iter(dotenv_path)
     {
         set_filtered(iter);
     }
@@ -286,7 +288,13 @@ fn set_filtered<I>(iter: I)
 where
     I: IntoIterator<Item = Result<(String, String), dotenvy::Error>>,
 {
-    for (key, value) in iter.into_iter().flatten() {
+    for result in iter {
+        let (key, value) = match result {
+            Ok(entry) => entry,
+            // read_line consumes invalid UTF-8 lines. Other read errors may repeat.
+            Err(dotenvy::Error::Io(err)) if err.kind() != std::io::ErrorKind::InvalidData => break,
+            Err(_) => continue,
+        };
         if !key.to_ascii_uppercase().starts_with(ILLEGAL_ENV_VAR_PREFIX) {
             // It is safe to call set_var() because our process is
             // single-threaded at this point in its execution.
@@ -303,7 +311,7 @@ where
 ///
 /// Returns the temporary directory guard and the PATH value that prepends the
 /// temporary directory so `apply_patch` can be on the PATH without requiring the
-/// user to install a separate executable, simplifying the deployment of Codex
+/// user to install a separate executable, simplifying the deployment of Lemex
 /// CLI.
 /// Note: In debug builds the temp-dir guard is disabled to ease local testing.
 ///

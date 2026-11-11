@@ -23,18 +23,15 @@ const PERSONALITY_SECTION_HEADER: &str = "# Personality";
 /// Enrich both cached and static catalogs so an existing installation can use it
 /// without rewriting the user's model catalog or requiring a backend change.
 pub fn with_local_ultra(mut model: ModelInfo) -> ModelInfo {
-    if model.used_fallback_model_metadata
-        || matches!(
-            model.multi_agent_version,
-            Some(MultiAgentVersion::Disabled | MultiAgentVersion::V1)
+    if matches!(
+        model.multi_agent_version,
+        Some(MultiAgentVersion::Disabled | MultiAgentVersion::V1)
+    ) || !model.supported_reasoning_levels.iter().any(|preset| {
+        !matches!(
+            preset.effort,
+            ReasoningEffort::None | ReasoningEffort::Ultra
         )
-        || !model.supported_reasoning_levels.iter().any(|preset| {
-            !matches!(
-                preset.effort,
-                ReasoningEffort::None | ReasoningEffort::Ultra
-            )
-        })
-    {
+    }) {
         return model;
     }
 
@@ -162,6 +159,7 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         default_verbosity: None,
         apply_patch_tool_type: None,
         web_search_tool_type: WebSearchToolType::Text,
+        web_search_provider: None,
         truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
         supports_image_detail_original: false,
         context_window: Some(272_000),
@@ -171,7 +169,6 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
         input_modalities: default_input_modalities(),
-        used_fallback_model_metadata: true, // this is the fallback model metadata
         supports_search_tool: false,
         supports_experimental_context: false,
         use_responses_lite: false,

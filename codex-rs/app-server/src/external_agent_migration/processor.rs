@@ -1,3 +1,4 @@
+use codex_protocol::MemoryVersion;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -118,9 +119,11 @@ impl ExternalAgentConfigRequestProcessor {
         &self,
         params: ExternalAgentConfigDetectParams,
     ) -> Result<ExternalAgentConfigDetectResponse, JSONRPCErrorError> {
+        let (include_memory, memory_version) = self.memory_import_settings().await;
         let migration_service = self
             .migration_service
-            .with_migration_source(params.migration_source.as_deref());
+            .with_migration_source(params.migration_source.as_deref())
+            .with_memory_version(memory_version);
         let default_session_import_limits = ExternalAgentSessionImportLimits::default();
         let migration_service =
             migration_service.with_session_import_limits(ExternalAgentSessionImportLimits {
@@ -135,7 +138,7 @@ impl ExternalAgentConfigRequestProcessor {
             });
         let options = ExternalAgentConfigDetectOptions {
             include_home: params.include_home,
-            include_memory: self.external_agent_memory_import_enabled().await,
+            include_memory,
             cwds: params.cwds,
         };
         let items = migration_service
@@ -167,11 +170,12 @@ impl ExternalAgentConfigRequestProcessor {
         request_id: ConnectionRequestId,
         params: ExternalAgentConfigImportParams,
     ) -> Result<(), JSONRPCErrorError> {
+        let (include_memory, memory_version) = self.memory_import_settings().await;
         if params
             .migration_items
             .iter()
             .any(|item| item.item_type == ExternalAgentConfigMigrationItemType::Memory)
-            && !self.external_agent_memory_import_enabled().await
+            && !include_memory
         {
             return Err(invalid_request("external agent memory import is disabled"));
         }
@@ -190,7 +194,8 @@ impl ExternalAgentConfigRequestProcessor {
         let provider_id = params.provider_id.clone();
         let migration_service = self
             .migration_service
-            .with_migration_source(params.migration_source.as_deref());
+            .with_migration_source(params.migration_source.as_deref())
+            .with_memory_version(memory_version);
         let needs_runtime_refresh = migration_items_need_runtime_refresh(&params.migration_items);
         let has_migration_items = !params.migration_items.is_empty();
         let has_plugin_imports = params.migration_items.iter().any(|item| {
@@ -341,7 +346,7 @@ impl ExternalAgentConfigRequestProcessor {
         Ok(())
     }
 
-    async fn external_agent_memory_import_enabled(&self) -> bool {
+    async fn memory_import_settings(&self) -> (bool, MemoryVersion) {
         let config = match self
             .config_manager
             .load_latest_config(/*fallback_cwd*/ None)
@@ -353,10 +358,13 @@ impl ExternalAgentConfigRequestProcessor {
                     error = %err,
                     "failed to reload config for external agent memory import detection"
                 );
-                return false;
+                return (false, MemoryVersion::V1);
             }
         };
-        config.features.enabled(Feature::ExternalAgentMemoryImport)
+        (
+            config.features.enabled(Feature::ExternalAgentMemoryImport),
+            config.memories.version,
+        )
     }
 
     pub(crate) async fn read_import_histories(

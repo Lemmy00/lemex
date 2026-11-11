@@ -112,6 +112,10 @@ pub struct ListMcpServerStatusResponse {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct McpResourceReadParams {
+    /// Additional MCP request metadata. Account and turn routing keys are reserved.
+    #[serde(rename = "_meta")]
+    #[ts(rename = "_meta", optional = nullable)]
+    pub meta: Option<serde_json::Map<String, JsonValue>>,
     #[ts(optional = nullable)]
     pub thread_id: Option<String>,
     /// Originating MCP tool call used to select the resource's app.
@@ -421,7 +425,7 @@ impl From<rmcp::model::ElicitationAction> for McpServerElicitationAction {
 #[ts(export_to = "v2/")]
 pub struct McpServerElicitationRequestParams {
     pub thread_id: String,
-    /// Active Codex turn when this elicitation was observed, if app-server could correlate one.
+    /// Active Lemex turn when this elicitation was observed, if app-server could correlate one.
     ///
     /// This is nullable because MCP models elicitation as a standalone server-to-client request
     /// identified by the MCP server request id. It may be triggered during a turn, but turn

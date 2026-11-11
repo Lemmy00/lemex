@@ -6,7 +6,7 @@ use crate::events::shared::timestamp;
 use crate::targets::OTEL_LOG_ONLY_TARGET;
 use codex_protocol::protocol::SkillScope;
 
-/// How Codex detected the skill's use.
+/// How Lemex detected the skill's use.
 pub enum SkillInvocationType {
     Explicit,
     Implicit,

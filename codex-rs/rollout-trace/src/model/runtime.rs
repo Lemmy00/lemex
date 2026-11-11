@@ -109,7 +109,7 @@ pub struct CompactionRequest {
     pub raw_response_payload_id: Option<RawPayloadId>,
 }
 
-/// Runtime operation requested by the model, a JS code cell, or Codex itself.
+/// Runtime operation requested by the model, a JS code cell, or Lemex itself.
 ///
 /// A `ToolCall` is not a chat transcript row. Model-visible call/output items
 /// link to it through `model_visible_*_item_ids`; runtime-only tools can have
@@ -123,6 +123,9 @@ pub struct ToolCall {
     pub model_visible_call_id: Option<ModelVisibleCallId>,
     /// Code-mode runtime's internal tool invocation ID, if this call came from JS.
     pub code_mode_runtime_tool_id: Option<CodeModeRuntimeToolId>,
+    /// Cell started by this outer exec dispatch, if a matching cell was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_code_cell_id: Option<CodeCellId>,
     pub thread_id: AgentThreadId,
     /// Runtime activation that started the tool. Background work may outlive this turn.
     pub started_by_codex_turn_id: Option<CodexTurnId>,
@@ -134,12 +137,12 @@ pub struct ToolCall {
     /// Terminal operation started by this tool, when the tool touched a terminal.
     pub terminal_operation_id: Option<TerminalOperationId>,
     pub summary: ToolCallSummary,
-    /// Original invocation at the Codex tool boundary.
+    /// Original invocation at the Lemex tool boundary.
     ///
     /// Direct model tools store the model's function/custom call payload here.
     /// Code-mode nested tools store the JSON call made by model-authored JS.
     /// Runtime protocol events are deliberately kept separate below because
-    /// they describe how Codex executed the request, not what the caller sent.
+    /// they describe how Lemex executed the request, not what the caller sent.
     pub raw_invocation_payload_id: Option<RawPayloadId>,
     /// Result returned to the immediate requester.
     ///

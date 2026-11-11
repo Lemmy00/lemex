@@ -2,6 +2,11 @@ packages:
   - codex-cli
   - codex-rs/responses-api-proxy/npm
   - sdk/typescript
+allowBuilds:
+  # Build only the official MCP conformance CLI pinned by the TypeScript SDK.
+  "@modelcontextprotocol/conformance@https://codeload.github.com/modelcontextprotocol/conformance/tar.gz/49103de6ed70804e940637bf3e9e29e4a3f54e64": true
+
+blockExoticSubdeps: true
 
 ignoredBuiltDependencies:
   - esbuild
@@ -11,12 +16,9 @@ minimumReleaseAgeExclude:
   # Targeted security fixes: GHSA-w74x-v6f9-j3xg and GHSA-27r3-jxmh-p828.
   - fast-uri@3.1.9
   - body-parser@2.4.0
-
-blockExoticSubdeps: true
+patchedDependencies:
+  deepmerge@4.3.1: patches/deepmerge@4.3.1.patch
 strictDepBuilds: true
 trustPolicy: no-downgrade
-trustPolicyIgnoreAfter: 10080
 trustPolicyExclude: []
-allowBuilds:
-  # Build only the official MCP conformance CLI pinned by the TypeScript SDK.
-  "@modelcontextprotocol/conformance@https://codeload.github.com/modelcontextprotocol/conformance/tar.gz/49103de6ed70804e940637bf3e9e29e4a3f54e64": true
+trustPolicyIgnoreAfter: 10080

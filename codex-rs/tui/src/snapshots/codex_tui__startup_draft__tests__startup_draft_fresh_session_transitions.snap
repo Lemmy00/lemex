@@ -5,41 +5,37 @@ expression: "snapshots.join(\"\\n---\\n\")"
 resume lookup fallback:
 before:
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
   Resuming session…
 
 › draft while loading
 
-
 after:
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
 
 
 › draft while loading
-
 
 ---
 fork lookup fallback:
 before:
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
   Forking session…
 
 › draft while loading
 
-
 after:
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
 
 
 › draft while loading
-
 
 ---
 resume picker cancellation:
@@ -47,7 +43,7 @@ before:
 hidden while picker owns input
 after:
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
 
 
@@ -60,7 +56,7 @@ before:
 hidden while picker owns input
 after:
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
 
 

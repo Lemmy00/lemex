@@ -27,10 +27,20 @@ use std::sync::Weak;
 /// Filesystem operations authorized by the environment that supplied this borrowed accessor.
 ///
 /// Callers cannot extract the underlying filesystem or choose another sandbox. They may retain
-/// returned data, cache keys, and already-opened read streams after the accessor is gone.
+/// returned data, cache keys, opened read streams, and fixed-path watches after the accessor is gone.
 pub trait EnvironmentAccess: Send + Sync {
     /// Identifies the filesystem and captured permissions without granting access to either.
     fn cache_key(&self) -> EnvironmentAccessKey;
+
+    /// Registers an owned watch for these fixed paths, or returns `None` when unsupported.
+    /// Implementations must preserve captured read permissions when checking the observation.
+    fn watch_missing(
+        &self,
+        _missing: Vec<PathUri>,
+        _present: Option<PathUri>,
+    ) -> ExecutorFileSystemFuture<'static, Option<tokio::sync::oneshot::Receiver<()>>> {
+        Box::pin(async { Ok(None) })
+    }
 
     fn canonicalize<'a>(&'a self, path: &'a PathUri) -> ExecutorFileSystemFuture<'a, PathUri>;
 
@@ -130,6 +140,13 @@ pub struct EnvironmentAccessKey {
     sandbox: Option<Arc<FileSystemSandboxContext>>,
 }
 
+impl EnvironmentAccessKey {
+    /// Compares filesystem identity without comparing captured permissions.
+    pub fn same_file_system(&self, other: &Self) -> bool {
+        self.file_system.ptr_eq(&other.file_system)
+    }
+}
+
 impl fmt::Debug for EnvironmentAccessKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("EnvironmentAccessKey(..)")
@@ -179,7 +196,7 @@ impl<'environment> FileSystemEnvironmentAccessor<'environment> {
     ///
     /// 1. Tests.
     /// 2. Callers pending migration to sandboxed access.
-    /// 3. Codex-internal operations that should never be sandboxed and that the model cannot trigger.
+    /// 3. Lemex-internal operations that should never be sandboxed and that the model cannot trigger.
     ///
     /// Model-turn discovery must use the accessor supplied by its selected environment.
     pub fn unrestricted(file_system: &'environment Arc<dyn ExecutorFileSystem>) -> Self {
@@ -194,6 +211,26 @@ impl<'environment> FileSystemEnvironmentAccessor<'environment> {
 }
 
 impl EnvironmentAccess for FileSystemEnvironmentAccessor<'_> {
+    fn watch_missing(
+        &self,
+        missing: Vec<PathUri>,
+        present: Option<PathUri>,
+    ) -> ExecutorFileSystemFuture<'static, Option<tokio::sync::oneshot::Receiver<()>>> {
+        // Executor watches make unsandboxed observations, so restricted reads use live discovery.
+        if self
+            .key
+            .sandbox
+            .as_ref()
+            .is_some_and(|sandbox| sandbox.should_read_from_sandbox())
+        {
+            return Box::pin(async { Ok(None) });
+        }
+        let Some(file_system) = self.key.file_system.upgrade() else {
+            return Box::pin(async { Ok(None) });
+        };
+        Box::pin(async move { file_system.watch_missing(missing, present).await })
+    }
+
     fn cache_key(&self) -> EnvironmentAccessKey {
         self.key.clone()
     }

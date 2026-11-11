@@ -37,8 +37,12 @@ def load_module(name: str, path: Path):
 
 
 npm = load_module("build_npm_package", ROOT / "codex-cli/scripts/build_npm_package.py")
-voice = load_module("assemble_voice_package", ROOT / "third_party/voice/assemble_package.py")
-runtime = load_module("prepare_source_package", ROOT / "scripts/install/prepare_source_package.py")
+voice = load_module(
+    "assemble_voice_package", ROOT / "third_party/voice/assemble_package.py"
+)
+runtime = load_module(
+    "prepare_source_package", ROOT / "scripts/install/prepare_source_package.py"
+)
 PLATFORMS = {
     name: npm.LEMEX_PLATFORM_PACKAGES[name]
     for name in npm.PACKAGE_EXPANSIONS["lemex"]
@@ -80,8 +84,16 @@ def set_version(version: str) -> None:
     lockfile.write_text("[[package]]".join(sections))
 
 
-def pack_runtime(package: str, version: str, binaries: Path, output: Path, *,
-                 voice_helper: Path, voice_runtime: Path, build_commit: str) -> Path:
+def pack_runtime(
+    package: str,
+    version: str,
+    binaries: Path,
+    output: Path,
+    *,
+    voice_helper: Path,
+    voice_runtime: Path,
+    build_commit: str,
+) -> Path:
     spec = TARGET_SPECS[PLATFORMS[package]["target_triple"]]
     with tempfile.TemporaryDirectory(prefix="lemex-release-") as temporary:
         staging = Path(temporary)
@@ -102,15 +114,25 @@ def pack_runtime(package: str, version: str, binaries: Path, output: Path, *,
                 f"Native version {metadata['version']} does not match npm version {version}"
             )
         voiced = staging / "voiced"
-        voice.assemble(vendor, voice_helper, spec.target.replace("-musl", "-gnu"),
-                       build_commit, voiced, runtime=voice_runtime, release_version=version)
+        voice.assemble(
+            vendor,
+            voice_helper,
+            spec.target.replace("-musl", "-gnu"),
+            build_commit,
+            voiced,
+            runtime=voice_runtime,
+            release_version=version,
+        )
         shutil.rmtree(vendor)
         voiced.rename(vendor)
         package_dir = staging / "package"
         package_dir.mkdir()
         npm.stage_sources(package_dir, version, package)
         npm.copy_native_binaries(
-            staging / "vendor", package_dir, [npm.LEMEX_PACKAGE_COMPONENT], {spec.target}
+            staging / "vendor",
+            package_dir,
+            [npm.LEMEX_PACKAGE_COMPONENT],
+            {spec.target},
         )
         return npm.run_npm_pack(package_dir, output / f"{package}.tgz")
 
@@ -130,30 +152,52 @@ def repackage_release(source: Path, output: Path, version: str) -> None:
             vendor = staging / "vendor" / spec["target_triple"]
             with tarfile.open(source / f"{name}.tgz", "r:gz") as archive:
                 manifest = json.load(archive.extractfile("package/package.json"))
-                if manifest.get("name") not in {"lemex", NPM_NAME} or manifest.get("version") != f"{version}-{spec['npm_tag']}":
+                if (
+                    manifest.get("name") not in {"lemex", NPM_NAME}
+                    or manifest.get("version") != f"{version}-{spec['npm_tag']}"
+                ):
                     raise RuntimeError(f"Unexpected source package: {name}")
                 prefix = f"package/vendor/{spec['target_triple']}/"
                 for member in archive.getmembers():
                     if not member.name.startswith(prefix) or member.isdir():
                         continue
-                    entry = member.name[len(prefix):]
+                    entry = member.name[len(prefix) :]
                     if not member.isfile():
-                        raise RuntimeError(f"Runtime member must be a regular file: {entry}")
-                    if not entry or PurePosixPath(entry).is_absolute() or ".." in PurePosixPath(entry).parts:
+                        raise RuntimeError(
+                            f"Runtime member must be a regular file: {entry}"
+                        )
+                    if (
+                        not entry
+                        or PurePosixPath(entry).is_absolute()
+                        or ".." in PurePosixPath(entry).parts
+                    ):
                         raise RuntimeError("Unsafe runtime member")
                     destination = vendor / entry
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    with archive.extractfile(member) as original, destination.open("wb") as copied:
+                    with (
+                        archive.extractfile(member) as original,
+                        destination.open("wb") as copied,
+                    ):
                         shutil.copyfileobj(original, copied)
                     destination.chmod(member.mode & 0o777)
-                validate_voice_archive(archive, prefix.rstrip("/"), version, spec["target_triple"])
+                validate_voice_archive(
+                    archive, prefix.rstrip("/"), version, spec["target_triple"]
+                )
             metadata = json.loads((vendor / "codex-package.json").read_text())
-            if metadata.get("version") != version or metadata.get("target") != spec["target_triple"]:
+            if (
+                metadata.get("version") != version
+                or metadata.get("target") != spec["target_triple"]
+            ):
                 raise RuntimeError(f"Unexpected native runtime metadata: {name}")
             package_dir = staging / "package"
             package_dir.mkdir()
             npm.stage_sources(package_dir, version, name)
-            npm.copy_native_binaries(staging / "vendor", package_dir, [npm.LEMEX_PACKAGE_COMPONENT], {spec["target_triple"]})
+            npm.copy_native_binaries(
+                staging / "vendor",
+                package_dir,
+                [npm.LEMEX_PACKAGE_COMPONENT],
+                {spec["target_triple"]},
+            )
             npm.run_npm_pack(package_dir, output / f"{name}.tgz")
     with tempfile.TemporaryDirectory(prefix="lemex-launcher-") as temporary:
         package_dir = Path(temporary)
@@ -162,7 +206,9 @@ def repackage_release(source: Path, output: Path, version: str) -> None:
     release_tarballs(output, version)
 
 
-def validate_voice_archive(archive: tarfile.TarFile, prefix: str, version: str, target: str) -> None:
+def validate_voice_archive(
+    archive: tarfile.TarFile, prefix: str, version: str, target: str
+) -> None:
     """Reject missing, mixed-build, tampered or unlisted native voice payloads."""
     voice_prefix = f"{prefix}/codex-resources/voice"
     try:
@@ -171,26 +217,38 @@ def validate_voice_archive(archive: tarfile.TarFile, prefix: str, version: str, 
     except (KeyError, TypeError, ValueError) as error:
         raise RuntimeError("Missing or invalid voice runtime manifest") from error
     commit = manifest.get("buildCommit", "")
-    if (not re.fullmatch(r"[0-9a-f]{40}", commit)
-            or manifest.get("schemaVersion") != 1
-            or manifest.get("appTarget") != target
-            or manifest.get("voiceTarget") != target.replace("-musl", "-gnu")
-            or manifest.get("appVersion") != version
-            or receipt.get("sourceCommit") != commit
-            or receipt.get("target") != manifest["voiceTarget"]
-            or receipt.get("developmentOnly") is not False
-            or receipt.get("distribution") != "publicRelease"):
+    if (
+        not re.fullmatch(r"[0-9a-f]{40}", commit)
+        or manifest.get("schemaVersion") != 1
+        or manifest.get("appTarget") != target
+        or manifest.get("voiceTarget") != target.replace("-musl", "-gnu")
+        or manifest.get("appVersion") != version
+        or receipt.get("sourceCommit") != commit
+        or receipt.get("target") != manifest["voiceTarget"]
+        or receipt.get("developmentOnly") is not False
+        or receipt.get("distribution") != "publicRelease"
+    ):
         raise RuntimeError("Voice runtime provenance does not match the release")
     digests = manifest.get("sha256", {})
-    required = {"bin/lemex", "codex-resources/voice/bin/codex-voice-host",
-                "codex-resources/voice/runtime.json", "codex-resources/voice/NOTICE.md",
-                "codex-resources/voice/sources.json", "codex-resources/voice/licenses/LGPL-2.1.txt"}
+    required = {
+        "bin/lemex",
+        "codex-resources/voice/bin/codex-voice-host",
+        "codex-resources/voice/runtime.json",
+        "codex-resources/voice/NOTICE.md",
+        "codex-resources/voice/sources.json",
+        "codex-resources/voice/licenses/LGPL-2.1.txt",
+    }
     if not required.issubset(digests):
         raise RuntimeError("Incomplete voice runtime manifest")
     listed = {f"{prefix}/{name}" for name in digests}
-    actual = {member.name for member in archive.getmembers()
-              if member.name.startswith(voice_prefix + "/") and not member.isdir()}
-    if actual != {name for name in listed if name.startswith(voice_prefix + "/")} | {voice_prefix + "/manifest.json"}:
+    actual = {
+        member.name
+        for member in archive.getmembers()
+        if member.name.startswith(voice_prefix + "/") and not member.isdir()
+    }
+    if actual != {name for name in listed if name.startswith(voice_prefix + "/")} | {
+        voice_prefix + "/manifest.json"
+    }:
         raise RuntimeError("Unlisted or missing voice runtime files")
     for name, expected in digests.items():
         if PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts:
@@ -208,7 +266,9 @@ def validate_voice_archive(archive: tarfile.TarFile, prefix: str, version: str, 
 
 def release_tarballs(directory: Path, version: str) -> list[tuple[Path, str]]:
     """Require every platform before allowing any registry mutation."""
-    packages = [(name, f"{version}-{spec['npm_tag']}") for name, spec in PLATFORMS.items()]
+    packages = [
+        (name, f"{version}-{spec['npm_tag']}") for name, spec in PLATFORMS.items()
+    ]
     packages.append(("lemex", version))
     result = []
     for name, expected_version in packages:
@@ -226,38 +286,59 @@ def release_tarballs(directory: Path, version: str) -> list[tuple[Path, str]]:
                     for key, spec in PLATFORMS.items()
                 }
                 if manifest.get("optionalDependencies") != expected_dependencies:
-                    raise RuntimeError("Launcher dependencies do not match this release")
+                    raise RuntimeError(
+                        "Launcher dependencies do not match this release"
+                    )
                 if "package/bin/lemex.js" not in files:
                     raise RuntimeError("Missing npm launcher")
             else:
                 spec = PLATFORMS[name]
                 prefix = f"package/vendor/{spec['target_triple']}"
-                required = {f"{prefix}/{entry}" for entry in (
-                    "bin/lemex", "bin/lemex-code-mode-host", "codex-package.json", "codex-path/rg"
-                )}
+                required = {
+                    f"{prefix}/{entry}"
+                    for entry in (
+                        "bin/lemex",
+                        "bin/lemex-code-mode-host",
+                        "codex-package.json",
+                        "codex-path/rg",
+                    )
+                }
                 if spec["os"] == "linux":
                     required.add(f"{prefix}/codex-resources/bwrap")
                 if not required.issubset(files):
-                    raise RuntimeError(f"Incomplete runtime in {tarball}: {required - files}")
+                    raise RuntimeError(
+                        f"Incomplete runtime in {tarball}: {required - files}"
+                    )
                 validate_voice_archive(archive, prefix, version, spec["target_triple"])
         result.append((tarball, expected_version))
     return result
 
 
-def wait_for_publication(packages: list[tuple[Path, str]], *, timeout: float = 1800,
-                         interval: float = 30) -> None:
+def wait_for_publication(
+    packages: list[tuple[Path, str]], *, timeout: float = 1800, interval: float = 30
+) -> None:
     """Wait for npm's asynchronous scans without republishing accepted versions."""
     pending = {}
     for path, version in packages:
         with path.open("rb") as source:
-            pending[version] = "sha512-" + base64.b64encode(hashlib.file_digest(source, "sha512").digest()).decode()
+            pending[version] = (
+                "sha512-"
+                + base64.b64encode(
+                    hashlib.file_digest(source, "sha512").digest()
+                ).decode()
+            )
     deadline = time.monotonic() + timeout
     while pending:
         for version, integrity in list(pending.items()):
-            url = (f"{REGISTRY}{quote(NPM_NAME, safe='@')}/{quote(version, safe='')}"
-                   f"?lemex-release-check={time.time_ns()}")
+            url = (
+                f"{REGISTRY}{quote(NPM_NAME, safe='@')}/{quote(version, safe='')}"
+                f"?lemex-release-check={time.time_ns()}"
+            )
             try:
-                request = Request(url, headers={"Accept": "application/json", "Cache-Control": "no-cache"})
+                request = Request(
+                    url,
+                    headers={"Accept": "application/json", "Cache-Control": "no-cache"},
+                )
                 with urlopen(request, timeout=30) as response:
                     metadata = json.load(response)
             except HTTPError as error:
@@ -266,11 +347,19 @@ def wait_for_publication(packages: list[tuple[Path, str]], *, timeout: float = 1
                 raise
             except (URLError, TimeoutError):
                 continue
-            if (metadata.get("name") != NPM_NAME or metadata.get("version") != version
-                    or metadata.get("dist", {}).get("integrity") != integrity):
-                raise RuntimeError(f"Registry package differs from validated artifact: {NPM_NAME}@{version}")
+            if (
+                metadata.get("name") != NPM_NAME
+                or metadata.get("version") != version
+                or metadata.get("dist", {}).get("integrity") != integrity
+            ):
+                raise RuntimeError(
+                    f"Registry package differs from validated artifact: {NPM_NAME}@{version}"
+                )
             del pending[version]
-            print(f"Verified public registry availability and integrity: {NPM_NAME}@{version}", flush=True)
+            print(
+                f"Verified public registry availability and integrity: {NPM_NAME}@{version}",
+                flush=True,
+            )
         if pending:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -278,7 +367,10 @@ def wait_for_publication(packages: list[tuple[Path, str]], *, timeout: float = 1
                     f"Registry availability timed out for {', '.join(pending)}. "
                     "npm scanning or manual review may still be pending; retain this version and its artifacts."
                 )
-            print(f"Waiting for npm registry availability: {', '.join(pending)}", flush=True)
+            print(
+                f"Waiting for npm registry availability: {', '.join(pending)}",
+                flush=True,
+            )
             time.sleep(min(interval, remaining))
 
 
@@ -295,19 +387,44 @@ def publish(directory: Path, version: str, dry_run: bool) -> None:
         package_tag = tag if package_version == version else f"release-{version}"
         if not dry_run:
             existing = subprocess.run(
-                ["npm", "view", f"{NPM_NAME}@{package_version}", "dist.integrity", "--json", f"--registry={REGISTRY}"],
-                capture_output=True, text=True,
+                [
+                    "npm",
+                    "view",
+                    f"{NPM_NAME}@{package_version}",
+                    "dist.integrity",
+                    "--json",
+                    f"--registry={REGISTRY}",
+                ],
+                capture_output=True,
+                text=True,
             )
             if existing.returncode == 0:
-                integrity = "sha512-" + base64.b64encode(hashlib.sha512(tarball.read_bytes()).digest()).decode()
+                integrity = (
+                    "sha512-"
+                    + base64.b64encode(
+                        hashlib.sha512(tarball.read_bytes()).digest()
+                    ).decode()
+                )
                 if json.loads(existing.stdout) != integrity:
-                    raise RuntimeError(f"{NPM_NAME}@{package_version} already exists with different bytes")
-                print(f"Already published {NPM_NAME}@{package_version}; verified integrity", flush=True)
+                    raise RuntimeError(
+                        f"{NPM_NAME}@{package_version} already exists with different bytes"
+                    )
+                print(
+                    f"Already published {NPM_NAME}@{package_version}; verified integrity",
+                    flush=True,
+                )
                 continue
             error = json.loads(existing.stdout or "{}")
             if error.get("error", {}).get("code") != "E404":
                 raise RuntimeError(f"Could not check registry state: {existing.stderr}")
-        command = ["npm", "publish", str(tarball.resolve()), "--access=public", f"--tag={package_tag}", f"--registry={REGISTRY}"]
+        command = [
+            "npm",
+            "publish",
+            str(tarball.resolve()),
+            "--access=public",
+            f"--tag={package_tag}",
+            f"--registry={REGISTRY}",
+        ]
         if dry_run:
             command.append("--dry-run")
         subprocess.run(command, check=True)
@@ -338,9 +455,17 @@ def main() -> None:
     if args.command == "set-version":
         set_version(args.version)
     elif args.command == "pack-runtime":
-        print(pack_runtime(args.package, args.version, args.binaries_dir, args.output_dir,
-                           voice_helper=args.voice_helper, voice_runtime=args.voice_runtime,
-                           build_commit=args.build_commit))
+        print(
+            pack_runtime(
+                args.package,
+                args.version,
+                args.binaries_dir,
+                args.output_dir,
+                voice_helper=args.voice_helper,
+                voice_runtime=args.voice_runtime,
+                build_commit=args.build_commit,
+            )
+        )
     elif args.command == "repackage":
         repackage_release(args.source_dir, args.output_dir, args.version)
     else:

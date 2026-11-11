@@ -4,7 +4,7 @@ use codex_api::is_azure_responses_provider;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::RemoteCompactionSupport;
 
-/// Optional provider-backed features that Codex may expose at runtime.
+/// Optional provider-backed features that Lemex may expose at runtime.
 ///
 /// These capabilities are a provider-owned upper bound. Model and turn settings
 /// can further restrict the functionality exposed to the model.

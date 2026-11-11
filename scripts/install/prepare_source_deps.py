@@ -24,11 +24,42 @@ LIBCAP_URL = (
 # These are build tools, not runtime dependencies of the installed CLI.
 LINUX_PACKAGES = {
     "apt-get": ["build-essential", "pkg-config", "perl", "libcap-dev", "libssl-dev"],
-    "dnf": ["gcc", "gcc-c++", "make", "pkgconf-pkg-config", "perl", "libcap-devel", "openssl-devel"],
-    "yum": ["gcc", "gcc-c++", "make", "pkgconfig", "perl", "libcap-devel", "openssl-devel"],
-    "zypper": ["gcc", "gcc-c++", "make", "pkg-config", "perl", "libcap-devel", "libopenssl-devel"],
+    "dnf": [
+        "gcc",
+        "gcc-c++",
+        "make",
+        "pkgconf-pkg-config",
+        "perl",
+        "libcap-devel",
+        "openssl-devel",
+    ],
+    "yum": [
+        "gcc",
+        "gcc-c++",
+        "make",
+        "pkgconfig",
+        "perl",
+        "libcap-devel",
+        "openssl-devel",
+    ],
+    "zypper": [
+        "gcc",
+        "gcc-c++",
+        "make",
+        "pkg-config",
+        "perl",
+        "libcap-devel",
+        "libopenssl-devel",
+    ],
     "pacman": ["base-devel", "pkgconf", "perl", "libcap", "openssl"],
-    "apk": ["build-base", "linux-headers", "pkgconf", "perl", "libcap-dev", "openssl-dev"],
+    "apk": [
+        "build-base",
+        "linux-headers",
+        "pkgconf",
+        "perl",
+        "libcap-dev",
+        "openssl-dev",
+    ],
 }
 
 
@@ -63,9 +94,14 @@ def system_packages(platform: str) -> bool:
         return False
     privilege = []
     if os.geteuid() != 0:
-        if not shutil.which("sudo") or subprocess.run(
-            ["sudo", "-n", "true"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).returncode:
+        if (
+            not shutil.which("sudo")
+            or subprocess.run(
+                ["sudo", "-n", "true"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).returncode
+        ):
             return False
         privilege = ["sudo", "-n"]
     try:
@@ -95,18 +131,29 @@ def compiler_check(env: dict[str, str]) -> None:
             command = shlex.split(env.get(variable) or compiler)
             result = subprocess.run(
                 [*command, "-x", language, "-", "-o", str(Path(temporary) / "check")],
-                input="int main(void) { return 0; }\n", text=True,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                input="int main(void) { return 0; }\n",
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
             )
             if result.returncode:
-                raise RuntimeError(f"The {language} compiler cannot link a program:\n{result.stderr}")
+                raise RuntimeError(
+                    f"The {language} compiler cannot link a program:\n{result.stderr}"
+                )
 
 
 def library_available(name: str, env: dict[str, str]) -> bool:
-    return bool(shutil.which("pkg-config")) and subprocess.run(
-        ["pkg-config", "--exists", name], env=env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ).returncode == 0
+    return (
+        bool(shutil.which("pkg-config"))
+        and subprocess.run(
+            ["pkg-config", "--exists", name],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        == 0
+    )
 
 
 def libcap_check(env: dict[str, str]) -> bool:
@@ -117,10 +164,20 @@ def libcap_check(env: dict[str, str]) -> bool:
     )
     with tempfile.TemporaryDirectory(prefix="lemex-libcap-check-") as temporary:
         result = subprocess.run(
-            [*shlex.split(env.get("CC") or "cc"), "-x", "c", "-",
-             "-o", str(Path(temporary) / "check"), *shlex.split(flags)],
+            [
+                *shlex.split(env.get("CC") or "cc"),
+                "-x",
+                "c",
+                "-",
+                "-o",
+                str(Path(temporary) / "check"),
+                *shlex.split(flags),
+            ],
             input="#include <sys/capability.h>\nint main(void) { cap_t c = cap_get_proc(); return cap_free(c); }\n",
-            text=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         return result.returncode == 0
 
@@ -142,12 +199,24 @@ def prepare_libcap(prefix: Path, env: dict[str, str]) -> None:
             with tarfile.open(archive_path) as archive:
                 archive.extractall(workspace, filter="data")
             source = workspace / f"libcap-{LIBCAP_VERSION}"
-            run([
-                "make", "-s", "-C", str(source / "libcap"), "libcap.a",
-                "lib=lib", "SHARED=no", "PTHREADS=no", "GOLANG=no", "PAM_CAP=no",
-                "USE_GPERF=no", f"CC={env.get('CC') or 'cc'}",
-                f"BUILD_CC={env.get('CC') or 'cc'}",
-            ], env=env)
+            run(
+                [
+                    "make",
+                    "-s",
+                    "-C",
+                    str(source / "libcap"),
+                    "libcap.a",
+                    "lib=lib",
+                    "SHARED=no",
+                    "PTHREADS=no",
+                    "GOLANG=no",
+                    "PAM_CAP=no",
+                    "USE_GPERF=no",
+                    f"CC={env.get('CC') or 'cc'}",
+                    f"BUILD_CC={env.get('CC') or 'cc'}",
+                ],
+                env=env,
+            )
             library.parent.mkdir(parents=True, exist_ok=True)
             header.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source / "libcap/libcap.a", library)
@@ -164,7 +233,9 @@ def prepare_libcap(prefix: Path, env: dict[str, str]) -> None:
 
 def prepare(target: str, *, install: bool = True) -> dict[str, str]:
     if "windows" in target:
-        raise RuntimeError("Source installation on Windows requires WSL2. Run this installer inside WSL2.")
+        raise RuntimeError(
+            "Source installation on Windows requires WSL2. Run this installer inside WSL2."
+        )
     if "apple-darwin" in target:
         platform = "macos"
     elif "linux" in target:
@@ -176,11 +247,14 @@ def prepare(target: str, *, install: bool = True) -> dict[str, str]:
     from codex_package.targets import TARGET_SPECS
 
     if target not in TARGET_SPECS:
-        raise RuntimeError(f"Unsupported source-build target: {target}. Use an x86-64 or ARM64 host.")
+        raise RuntimeError(
+            f"Unsupported source-build target: {target}. Use an x86-64 or ARM64 host."
+        )
     env = dict(os.environ)
     missing = build_tools(platform)
     needs_libraries = platform == "linux" and (
-        not libcap_check(env) or ("musl" not in target and not library_available("openssl", env))
+        not libcap_check(env)
+        or ("musl" not in target and not library_available("openssl", env))
     )
     if install and (missing or needs_libraries):
         system_packages(platform)
@@ -189,39 +263,59 @@ def prepare(target: str, *, install: bool = True) -> dict[str, str]:
         if platform == "macos":
             hint = "Install the Xcode Command Line Tools with 'xcode-select --install', then rerun."
         else:
-            manager = next((name for name in LINUX_PACKAGES if shutil.which(name)), None)
+            manager = next(
+                (name for name in LINUX_PACKAGES if shutil.which(name)), None
+            )
             hint = (
-                "Install build prerequisites with: sudo " + shlex.join(package_command(manager, LINUX_PACKAGES[manager]))
-                if manager else "Install a C/C++ toolchain, make, pkg-config, Perl, and binutils for your distribution."
+                "Install build prerequisites with: sudo "
+                + shlex.join(package_command(manager, LINUX_PACKAGES[manager]))
+                if manager
+                else "Install a C/C++ toolchain, make, pkg-config, Perl, and binutils for your distribution."
             )
         raise RuntimeError(f"Missing build tools: {', '.join(missing)}. {hint}")
     try:
         compiler_check(env)
     except RuntimeError as exc:
         if platform == "macos":
-            raise RuntimeError(f"{exc}\nInstall the Xcode Command Line Tools with 'xcode-select --install'.") from exc
+            raise RuntimeError(
+                f"{exc}\nInstall the Xcode Command Line Tools with 'xcode-select --install'."
+            ) from exc
         raise
 
     exports = {"LEMEX_VENDORED_OPENSSL": "0"}
     if platform == "linux":
         if not libcap_check(env):
             if not install:
-                raise RuntimeError("libcap headers and library are missing (libcap-dev / libcap-devel).")
-            cache = Path(env.get("LEMEX_DEPS_DIR") or Path(env.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "lemex/deps")
+                raise RuntimeError(
+                    "libcap headers and library are missing (libcap-dev / libcap-devel)."
+                )
+            cache = Path(
+                env.get("LEMEX_DEPS_DIR")
+                or Path(env.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+                / "lemex/deps"
+            )
             prefix = cache.expanduser().resolve() / target / f"libcap-{LIBCAP_VERSION}"
             prepare_libcap(prefix, env)
             env["PKG_CONFIG_PATH"] = str(prefix / "lib/pkgconfig") + (
-                os.pathsep + env["PKG_CONFIG_PATH"] if env.get("PKG_CONFIG_PATH") else ""
+                os.pathsep + env["PKG_CONFIG_PATH"]
+                if env.get("PKG_CONFIG_PATH")
+                else ""
             )
             # The installed sandbox must not need a library from the build cache.
             env["LIBCAP_STATIC"] = "1"
             exports.update(PKG_CONFIG_PATH=env["PKG_CONFIG_PATH"], LIBCAP_STATIC="1")
             if not libcap_check(env):
-                raise RuntimeError("The locally built libcap cannot be linked by the C compiler.")
+                raise RuntimeError(
+                    "The locally built libcap cannot be linked by the C compiler."
+                )
         if "musl" not in target and not library_available("openssl", env):
             if not install:
-                raise RuntimeError("OpenSSL development files are missing (libssl-dev / openssl-devel).")
-            log("OpenSSL development files are missing; Cargo will build its bundled OpenSSL.")
+                raise RuntimeError(
+                    "OpenSSL development files are missing (libssl-dev / openssl-devel)."
+                )
+            log(
+                "OpenSSL development files are missing; Cargo will build its bundled OpenSSL."
+            )
             exports["LEMEX_VENDORED_OPENSSL"] = "1"
 
     rg = shutil.which("rg")
@@ -247,8 +341,17 @@ def main() -> None:
         parser.error("LEMEX_INSTALL_DEPS must be 0 or 1")
     try:
         exports = prepare(args.target, install=mode == "1")
-        args.env_file.write_text("".join(f"export {key}={shlex.quote(value)}\n" for key, value in exports.items()))
-    except (RuntimeError, OSError, subprocess.CalledProcessError, tarfile.TarError) as exc:
+        args.env_file.write_text(
+            "".join(
+                f"export {key}={shlex.quote(value)}\n" for key, value in exports.items()
+            )
+        )
+    except (
+        RuntimeError,
+        OSError,
+        subprocess.CalledProcessError,
+        tarfile.TarError,
+    ) as exc:
         parser.exit(1, f"ERROR: {exc}\n")
 
 

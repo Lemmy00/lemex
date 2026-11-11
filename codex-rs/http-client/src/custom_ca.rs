@@ -163,7 +163,7 @@ impl From<BuildCustomCaTransportError> for io::Error {
     }
 }
 
-/// Builds a reqwest client that honors Codex custom CA environment variables.
+/// Builds a reqwest client that honors Lemex custom CA environment variables.
 ///
 /// Callers supply the baseline builder configuration they need, and this helper layers in custom
 /// CA handling before finally constructing the client. `CODEX_CA_CERTIFICATE` takes precedence
@@ -171,7 +171,7 @@ impl From<BuildCustomCaTransportError> for io::Error {
 /// accidentally turn `VAR=""` into a bogus path lookup.
 ///
 /// Callers that build a raw `reqwest::Client` directly bypass this policy entirely. That is an
-/// easy mistake to make when adding a new outbound Codex HTTP path, and the resulting bug only
+/// easy mistake to make when adding a new outbound Lemex HTTP path, and the resulting bug only
 /// shows up in environments where a proxy or gateway requires a custom root CA.
 ///
 /// # Errors
@@ -184,7 +184,7 @@ pub fn build_reqwest_client_with_custom_ca(
     build_reqwest_client_with_env(&ProcessEnv, builder)
 }
 
-/// Builds a rustls client config when a Codex custom CA bundle is configured.
+/// Builds a rustls client config when a Lemex custom CA bundle is configured.
 ///
 /// This is the websocket-facing sibling of [`build_reqwest_client_with_custom_ca`]. When
 /// `CODEX_CA_CERTIFICATE` or `SSL_CERT_FILE` selects a CA bundle, the returned config starts from
@@ -200,7 +200,7 @@ pub fn maybe_build_rustls_client_config_with_custom_ca()
     maybe_build_rustls_client_config_with_env(&ProcessEnv)
 }
 
-/// Builds a rustls client config using native roots and any configured Codex custom CA bundle.
+/// Builds a rustls client config using native roots and any configured Lemex custom CA bundle.
 ///
 /// Unlike [`maybe_build_rustls_client_config_with_custom_ca`], this always returns a config. Use
 /// this when the caller must perform TLS itself instead of delegating default configuration to a
@@ -396,7 +396,7 @@ trait EnvSource {
 
     /// Returns the configured CA bundle and which environment variable selected it.
     ///
-    /// `CODEX_CA_CERTIFICATE` wins over `SSL_CERT_FILE` because it is the Codex-specific override.
+    /// `CODEX_CA_CERTIFICATE` wins over `SSL_CERT_FILE` because it is the Lemex-specific override.
     /// Keeping the winning variable name with the path lets later logging explain not only which
     /// file was used but also why that file was chosen.
     fn configured_ca_bundle(&self) -> Option<ConfiguredCaBundle> {
@@ -471,9 +471,9 @@ impl ConfiguredCaBundle {
         }
     }
 
-    /// Loads every certificate block from a PEM file intended for Codex CA overrides.
+    /// Loads every certificate block from a PEM file intended for Lemex CA overrides.
     ///
-    /// This accepts a few common real-world variants so Codex behaves like other CA-aware tooling:
+    /// This accepts a few common real-world variants so Lemex behaves like other CA-aware tooling:
     /// leading comments are preserved, `TRUSTED CERTIFICATE` labels are normalized to standard
     /// certificate labels, and embedded CRLs are ignored when they are well-formed enough for the
     /// section iterator to classify them.
@@ -581,7 +581,7 @@ enum NormalizedPem {
 impl NormalizedPem {
     /// Normalizes PEM text from a CA bundle into the label shape this module expects.
     ///
-    /// Codex only needs certificate DER bytes to seed `reqwest`'s root store, but operators may
+    /// Lemex only needs certificate DER bytes to seed `reqwest`'s root store, but operators may
     /// point it at CA files that came from OpenSSL tooling rather than from a minimal certificate
     /// bundle. OpenSSL's `TRUSTED CERTIFICATE` form is one such variant: it is still certificate
     /// material, but it uses a different PEM label and may carry auxiliary trust metadata that

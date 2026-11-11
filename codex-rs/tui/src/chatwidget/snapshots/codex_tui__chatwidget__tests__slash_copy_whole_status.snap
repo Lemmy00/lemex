@@ -3,7 +3,7 @@ source: tui/src/chatwidget/tests/slash_commands.rs
 assertion_line: 1866
 expression: "whole_status.replace(&directory,\n\"[[workspace]]\").replace(crate::version::CODEX_CLI_VERSION, \"VERSION\")"
 ---
->_ RCP AI Lemex (vVERSION)
+>_ Lemex (vVERSION)
 
   Model:               GPT-5.5 (reasoning medium, summaries auto)
   Model provider:      rcp

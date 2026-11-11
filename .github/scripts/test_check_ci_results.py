@@ -10,13 +10,19 @@ import unittest
 
 class CheckCiResultsTests(unittest.TestCase):
     def check_results(self, needs, required=None):
-        env = {key: value for key, value in os.environ.items() if key != "REQUIRED_JOBS"}
-        env["NEEDS"] = json.dumps({name: {"result": result} for name, result in needs.items()})
+        env = {
+            key: value for key, value in os.environ.items() if key != "REQUIRED_JOBS"
+        }
+        env["NEEDS"] = json.dumps(
+            {name: {"result": result} for name, result in needs.items()}
+        )
         if required is not None:
             env["REQUIRED_JOBS"] = required
         return subprocess.run(
             [sys.executable, str(Path(__file__).with_name("check_ci_results.py"))],
-            env=env, text=True, capture_output=True,
+            env=env,
+            text=True,
+            capture_output=True,
         )
 
     def test_selected_suite_can_skip_inapplicable_upstream_jobs(self):
@@ -40,8 +46,12 @@ class CheckCiResultsTests(unittest.TestCase):
         self.assertNotEqual(self.check_results({}).returncode, 0)
 
     def test_default_policy_still_requires_every_dependency(self):
-        self.assertNotEqual(self.check_results({"a": "success", "b": "skipped"}).returncode, 0)
-        self.assertEqual(self.check_results({"a": "success", "b": "success"}).returncode, 0)
+        self.assertNotEqual(
+            self.check_results({"a": "success", "b": "skipped"}).returncode, 0
+        )
+        self.assertEqual(
+            self.check_results({"a": "success", "b": "success"}).returncode, 0
+        )
 
 
 if __name__ == "__main__":

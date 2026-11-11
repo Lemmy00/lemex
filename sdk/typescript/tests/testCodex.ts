@@ -4,8 +4,9 @@ import { Codex } from "../src/codex";
 import type { CodexConfigObject } from "../src/codexOptions";
 
 export const codexExecPath =
+  process.env.LEMEX_EXEC_PATH ??
   process.env.CODEX_EXEC_PATH ??
-  path.join(process.cwd(), "..", "..", "codex-rs", "target", "debug", "codex");
+  path.join(process.cwd(), "..", "..", "codex-rs", "target", "debug", "lemex");
 
 type CreateTestClientOptions = {
   apiKey?: string;
@@ -96,7 +97,10 @@ function getCurrentEnv(): Record<string, string> {
   const env: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(process.env)) {
-    if (key === "CODEX_INTERNAL_ORIGINATOR_OVERRIDE") {
+    if (
+      key === "CODEX_INTERNAL_ORIGINATOR_OVERRIDE" ||
+      key === "LEMEX_INTERNAL_ORIGINATOR_OVERRIDE"
+    ) {
       continue;
     }
     if (value !== undefined) {

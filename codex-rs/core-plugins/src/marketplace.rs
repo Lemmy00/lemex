@@ -158,7 +158,7 @@ impl MarketplacePluginSource {
 pub struct MarketplacePluginPolicy {
     pub installation: MarketplacePluginInstallPolicy,
     pub authentication: MarketplacePluginAuthPolicy,
-    // TODO: Surface or enforce product gating at the Codex/plugin consumer boundary instead of
+    // TODO: Surface or enforce product gating at the Lemex/plugin consumer boundary instead of
     // only carrying it through core marketplace metadata.
     pub products: Option<Vec<Product>>,
 }
@@ -335,6 +335,15 @@ pub fn find_marketplace_manifest_path(root: &Path) -> Option<AbsolutePathBuf> {
             }
             AbsolutePathBuf::try_from(path).ok()
         })
+}
+
+/// A symlinked manifest (or one of its parent directories) may change without a new Git commit.
+pub(crate) fn has_symlinked_marketplace_manifest(root: &Path) -> bool {
+    MARKETPLACE_MANIFEST_RELATIVE_PATHS.iter().any(|relative| {
+        Path::new(relative)
+            .ancestors()
+            .any(|component| root.join(component).is_symlink())
+    })
 }
 
 fn supported_marketplace_manifest_path(path: &Path) -> Option<AbsolutePathBuf> {

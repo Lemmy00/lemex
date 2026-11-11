@@ -25,7 +25,7 @@ use crate::onboarding::trust_directory::TrustDirectorySelection;
 use crate::onboarding::trust_directory::TrustDirectoryWidget;
 use crate::startup_draft::StartupCancelled;
 use crate::tui::FrameRequester;
-use crate::tui::OverlayInput;
+use crate::tui::MouseCapture;
 use crate::tui::Tui;
 use crate::tui::TuiEvent;
 use color_eyre::eyre::Result;
@@ -39,6 +39,7 @@ pub(crate) use directory_trust::check_directory_trust;
 
 #[allow(clippy::large_enum_variant)]
 enum Step {
+    GatewayDevice(codex_app_server_protocol::GatewayOAuthPrompt),
     TrustDirectory(TrustDirectoryWidget),
     GovCloudGuidance {
         state: BedrockState,
@@ -131,13 +132,15 @@ impl KeyboardHandler for OnboardingScreen {
         if !matches!(key_event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return;
         }
-        let should_quit = key_event.kind == KeyEventKind::Press && keys::QUIT.is_pressed(key_event);
+        let should_quit = key_event.kind == KeyEventKind::Press
+            && (keys::QUIT.is_pressed(key_event)
+                || matches!(self.steps.as_slice(), [Step::GatewayDevice(_)])
+                    && keys::CANCEL.is_pressed(key_event));
         if should_quit {
             if self.is_trust_step_active()
-                || self
-                    .steps
-                    .iter()
-                    .any(|step| matches!(step, Step::GovCloudGuidance { .. }))
+                || self.steps.iter().any(|step| {
+                    matches!(step, Step::GovCloudGuidance { .. } | Step::GatewayDevice(_))
+                })
             {
                 self.should_exit = true;
             }
@@ -238,6 +241,7 @@ impl WidgetRef for &OnboardingScreen {
 impl KeyboardHandler for Step {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match self {
+            Step::GatewayDevice(_) => {}
             Step::TrustDirectory(widget) => widget.handle_key_event(key_event),
             Step::GovCloudGuidance {
                 state,
@@ -250,7 +254,7 @@ impl KeyboardHandler for Step {
 
     fn handle_paste(&mut self, pasted: String) {
         match self {
-            Step::GovCloudGuidance { .. } => {}
+            Step::GovCloudGuidance { .. } | Step::GatewayDevice(_) => {}
             Step::TrustDirectory(widget) => widget.handle_paste(pasted),
         }
     }
@@ -259,6 +263,7 @@ impl KeyboardHandler for Step {
 impl StepStateProvider for Step {
     fn get_step_state(&self) -> StepState {
         match self {
+            Step::GatewayDevice(_) => StepState::InProgress,
             Step::TrustDirectory(w) => w.get_step_state(),
             Step::GovCloudGuidance { acknowledged, .. } => {
                 if *acknowledged {
@@ -274,12 +279,64 @@ impl StepStateProvider for Step {
 impl WidgetRef for Step {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         match self {
+            Step::GatewayDevice(prompt) => render_gateway_device_prompt(prompt, area, buf),
             Step::TrustDirectory(widget) => {
                 widget.render_ref(area, buf);
             }
             Step::GovCloudGuidance { state, .. } => state.render(area, buf, /*error*/ None),
         }
     }
+}
+
+pub(crate) fn render_gateway_device_prompt(
+    prompt: &codex_app_server_protocol::GatewayOAuthPrompt,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    use ratatui::style::Stylize;
+    use ratatui::text::Line;
+    use ratatui::widgets::Paragraph;
+    use ratatui::widgets::Wrap;
+    let lines = vec![
+        Line::from("Sign in to your configured gateway"),
+        Line::from("Open this link in your browser:"),
+        Line::from(prompt.verification_url.clone())
+            .cyan()
+            .underlined(),
+        Line::from(format!("Enter this one-time code: {}", prompt.user_code)),
+        Line::from("Esc to cancel"),
+    ];
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(area, buf);
+    crate::terminal_hyperlinks::mark_url_hyperlink(buf, area, &prompt.verification_url);
+}
+
+pub(crate) async fn run_gateway_device_login(
+    tui: &mut Tui,
+    server: &mut AppServerSession,
+    prompt: codex_app_server_protocol::GatewayOAuthPrompt,
+) -> Result<()> {
+    let screen = OnboardingScreen {
+        request_frame: tui.frame_requester(),
+        steps: vec![Step::GatewayDevice(prompt)],
+        remote_trust_key: None,
+        is_done: false,
+        should_exit: false,
+    };
+    let result = run_onboarding_screen(screen, None, Some(server), tui)
+        .await
+        .and_then(|result| {
+            if result.should_exit {
+                Err(std::io::Error::new(std::io::ErrorKind::Interrupted, StartupCancelled).into())
+            } else {
+                Ok(())
+            }
+        });
+    if result.is_err() {
+        crate::device_login::cancel(server).await;
+    }
+    result
 }
 
 pub(crate) async fn run_gov_cloud_guidance(tui: &mut Tui) -> Result<()> {
@@ -310,8 +367,8 @@ async fn run_onboarding_screen(
     tui: &mut Tui,
 ) -> Result<OnboardingResult> {
     // Use the onboarding input policy for folder consent and provider guidance.
-    let previous_input = tui.overlay_input;
-    let result = match tui.set_overlay_input(OverlayInput::Onboarding) {
+    let previous_input = tui.mouse_capture;
+    let result = match tui.set_mouse_capture(MouseCapture::Disabled) {
         Ok(()) => {
             run_onboarding_screen_inner(
                 onboarding_screen,
@@ -323,7 +380,7 @@ async fn run_onboarding_screen(
         }
         Err(error) => Err(error.into()),
     };
-    let restore = tui.set_overlay_input(previous_input);
+    let restore = tui.set_mouse_capture(previous_input);
     result.and_then(|result| restore.map(|()| result).map_err(Into::into))
 }
 
@@ -385,14 +442,18 @@ async fn run_onboarding_screen_inner(
                     None => None,
                 }
             }, if app_server.is_some() => {
-                if let Some(event) = event {
+                let Some(event) = event else {
+                    return Err(color_eyre::eyre::eyre!(super::SETUP_CONNECTION_LOST));
+                };
+                if let (Some(server), [Step::GatewayDevice(prompt)]) = (app_server.as_deref(), onboarding_screen.steps.as_slice()) {
+                    onboarding_screen.is_done = crate::device_login::handle_event_during_device_login(
+                        prompt, event.event, &server.request_handle(),
+                    ).await?;
+                } else {
                     match event.event {
-                        AppServerEvent::ServerNotification(_) => {}
-                        AppServerEvent::Disconnected { message } => {
-                            return Err(color_eyre::eyre::eyre!(message));
-                        }
-                        AppServerEvent::Lagged { .. }
-                        | AppServerEvent::ServerRequest(_) => {}
+                        AppServerEvent::ServerNotification(_) => {},
+                        AppServerEvent::Disconnected { message } => return Err(color_eyre::eyre::eyre!(message)),
+                        AppServerEvent::ThreadStreamDisconnected(_) | AppServerEvent::Lagged { .. } | AppServerEvent::ServerRequest(_) => {},
                     }
                 }
             }

@@ -3,6 +3,8 @@ use crate::harness::build_metrics_with_defaults;
 use crate::harness::find_metric;
 use crate::harness::histogram_data;
 use crate::harness::latest_metrics;
+use codex_otel::ADDITIONAL_CONTEXT_VALUE_BYTES_BUCKETS;
+use codex_otel::ADDITIONAL_CONTEXT_VALUE_BYTES_METRIC;
 use codex_otel::Result;
 use codex_otel::THREAD_SKILLS_COUNT_METRIC_BUCKETS;
 use codex_otel::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_BUCKETS;
@@ -23,7 +25,7 @@ fn send_builds_payload_with_tags_and_histograms() -> Result<()> {
 
     metrics.counter_with_description(
         "codex.turns",
-        "Total number of Codex turns.",
+        "Total number of Lemex turns.",
         /*inc*/ 1,
         &[("model", "gpt-5.1"), ("env", "dev")],
     )?;
@@ -34,7 +36,7 @@ fn send_builds_payload_with_tags_and_histograms() -> Result<()> {
     )?;
     metrics.gauge_with_description(
         "codex.active",
-        "Number of active Codex operations.",
+        "Number of active Lemex operations.",
         /*value*/ 2,
         &[("component", "test")],
     )?;
@@ -43,7 +45,7 @@ fn send_builds_payload_with_tags_and_histograms() -> Result<()> {
     let resource_metrics = latest_metrics(&exporter);
 
     let counter = find_metric(&resource_metrics, "codex.turns").expect("counter metric missing");
-    assert_eq!(counter.description(), "Total number of Codex turns.");
+    assert_eq!(counter.description(), "Total number of Lemex turns.");
     let counter_attributes = match counter.data() {
         opentelemetry_sdk::metrics::data::AggregatedMetrics::U64(data) => match data {
             opentelemetry_sdk::metrics::data::MetricData::Sum(sum) => {
@@ -92,7 +94,7 @@ fn send_builds_payload_with_tags_and_histograms() -> Result<()> {
     assert_eq!(histogram_attrs, expected_histogram_attributes);
 
     let gauge = find_metric(&resource_metrics, "codex.active").expect("gauge metric missing");
-    assert_eq!(gauge.description(), "Number of active Codex operations.");
+    assert_eq!(gauge.description(), "Number of active Lemex operations.");
     let gauge_point = match gauge.data() {
         opentelemetry_sdk::metrics::data::AggregatedMetrics::I64(data) => match data {
             opentelemetry_sdk::metrics::data::MetricData::Gauge(gauge) => {
@@ -131,6 +133,37 @@ fn histogram_uses_explicit_bucket_boundaries() -> Result<()> {
         histogram_data(&latest_metrics(&exporter), "codex.payload_bytes"),
         (vec![256.0, 1024.0, 4096.0], vec![0, 1, 0, 0], 1024.0, 1)
     );
+
+    Ok(())
+}
+
+#[test]
+fn additional_context_histogram_bounds_truncated_observations() -> Result<()> {
+    let (metrics, exporter) = build_metrics_with_defaults(&[])?;
+    let samples = [4_024, 4_027, 4_043];
+    for value in samples {
+        metrics.histogram_with_boundaries(
+            ADDITIONAL_CONTEXT_VALUE_BYTES_METRIC,
+            value,
+            ADDITIONAL_CONTEXT_VALUE_BYTES_BUCKETS.as_slice(),
+            &[("stage", "after"), ("truncated", "true")],
+        )?;
+    }
+    metrics.shutdown()?;
+
+    let (bounds, counts, sum, count) = histogram_data(
+        &latest_metrics(&exporter),
+        ADDITIONAL_CONTEXT_VALUE_BYTES_METRIC,
+    );
+    assert_eq!((sum, count), (12_094.0, 3));
+    assert_eq!(counts.iter().sum::<u64>(), count);
+    assert_eq!(counts.last(), Some(&0));
+    for (upper_bound, bucket_count) in bounds.iter().zip(&counts) {
+        assert!(
+            *bucket_count == 0 || *upper_bound <= 4_096.0,
+            "post-truncation observations landed in a bucket ending at {upper_bound} bytes"
+        );
+    }
 
     Ok(())
 }

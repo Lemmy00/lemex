@@ -3,9 +3,11 @@ use crate::ModelsManagerConfig;
 use codex_prompts::render_model_instructions;
 use codex_protocol::config_types::Personality;
 use codex_protocol::openai_models::ApprovalMessages;
+use codex_protocol::openai_models::AppsMessages;
 use codex_protocol::openai_models::AutoReviewMessages;
 use codex_protocol::openai_models::CollaborationModeMessages;
 use codex_protocol::openai_models::ConfirmationPolicies;
+use codex_protocol::openai_models::GranularApprovalMessages;
 use codex_protocol::openai_models::GuardianV2ModelConfig;
 use codex_protocol::openai_models::ModelTokenBudgetConfig;
 use codex_protocol::openai_models::MultiAgentMessages;
@@ -34,7 +36,6 @@ fn local_ultra_uses_native_orchestration_and_supported_request_effort() {
         ),
     ] {
         let mut model = model_info_from_slug("provider/reasoner");
-        model.used_fallback_model_metadata = false;
         model.default_reasoning_level = Some(ReasoningEffort::Low);
         model.supported_reasoning_levels = efforts
             .into_iter()
@@ -63,8 +64,6 @@ fn local_ultra_preserves_explicit_orchestration_policy_and_unknown_capabilities(
             effort: ReasoningEffort::High,
             description: "high".to_string(),
         });
-    assert_eq!(with_local_ultra(model.clone()), model);
-    model.used_fallback_model_metadata = false;
     for version in [MultiAgentVersion::Disabled, MultiAgentVersion::V1] {
         model.multi_agent_version = Some(version);
         assert_eq!(with_local_ultra(model.clone()), model);
@@ -92,6 +91,12 @@ fn base_instruction_override_is_literal_and_preserves_catalog_messages() {
         on_request_auto_review: Some("auto approvals".to_string()),
         never: Some("never approvals".to_string()),
         unless_trusted: Some("unless-trusted approvals".to_string()),
+        granular: Some(GranularApprovalMessages {
+            intro: Some("Catalog: {{ policy }}".to_string()),
+            prompted_categories: Some("Allowed: {{ categories }}".to_string()),
+            rejected_categories: Some("Denied: {{ categories }}".to_string()),
+        }),
+        ..Default::default()
     };
     let collaboration_modes = CollaborationModeMessages {
         default: Some("default instructions".to_string()),
@@ -140,6 +145,10 @@ fn base_instruction_override_is_literal_and_preserves_catalog_messages() {
         computer_use: Some("  # Native policy\r\n\n${native_markdown}\n".to_string()),
     };
     let mut messages = ModelMessages {
+        apps: Some(AppsMessages {
+            usage_instructions: Some("Catalog Apps instructions.".to_string()),
+        }),
+        plugins: None,
         content_filter_guidance: None,
         persistent_instructions: Some(persistent_instructions.to_string()),
         tools: Some(ToolMessages {
@@ -224,6 +233,8 @@ fn personality_none_strips_catalog_instruction_sources_through_the_next_h1() {
                 on_request_auto_review: None,
                 never: None,
                 unless_trusted: None,
+                granular: None,
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -292,7 +303,6 @@ fn unknown_model_uses_builtin_instruction_template() {
     let model = model_info_from_slug("unknown-model");
 
     assert_eq!(render_model_instructions(&model), BASE_INSTRUCTIONS);
-    assert!(model.used_fallback_model_metadata);
 }
 
 #[test]

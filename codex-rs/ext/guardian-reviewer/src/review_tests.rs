@@ -49,7 +49,7 @@ impl ReviewHost for GatedHost {
         &self,
         approval_id: &str,
         reason: GuardianReviewReason,
-        _: Instant,
+        _: ReviewDeadline,
         _: &CancellationToken,
     ) -> Result<((), ReviewReport), ReviewDecision> {
         Ok((
@@ -63,11 +63,12 @@ impl ReviewHost for GatedHost {
                 script_path: None,
                 approval_request_source: GuardianApprovalRequestSource::MainTurn,
                 reviewed_action: GuardianReviewedAction::RequestPermissions {},
-                action: GuardianAssessmentAction::RequestPermissions {
+                action: Some(GuardianAssessmentAction::RequestPermissions {
                     reason: None,
                     permissions: Default::default(),
-                },
+                }),
                 review_reason: reason,
+                timeout: Some(crate::REVIEW_TIMEOUT),
                 model_context: ModelInvocationContext {
                     model_slug: "test".into(),
                     reasoning_effort: None,
@@ -78,7 +79,7 @@ impl ReviewHost for GatedHost {
     async fn attempt(
         &self,
         _: &(),
-        _: Instant,
+        _: ReviewDeadline,
         cancellation: &CancellationToken,
     ) -> (GuardianReviewOutcome, GuardianReviewDiagnostics, Option<()>) {
         self.started.notify_one();
@@ -153,12 +154,14 @@ async fn async_approval_revalidates_without_waiting_for_tracked_cleanup(state: A
     );
     let action = json!({});
     let request = ReviewRequest {
+        serving_assessment: None,
         host: host.clone(),
         approval_id: "approval",
         tool_call_id: Some("call"),
         action: Some(&action),
         thread_id,
         thread_store: &store,
+        turn_store: &store,
         category: GuardianScope::Permissions,
         approval_policy: AskForApproval::OnRequest,
         approvals_reviewer: ApprovalsReviewer::AutoReview,
@@ -170,6 +173,7 @@ async fn async_approval_revalidates_without_waiting_for_tracked_cleanup(state: A
         escalated_exec: false,
         full_access: false,
         cancellation: CancellationToken::new(),
+        timeout: Some(crate::REVIEW_TIMEOUT),
         model: &model,
         telemetry: &telemetry,
         log_assessments: false,

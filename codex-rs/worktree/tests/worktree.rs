@@ -27,7 +27,7 @@ impl RepositoryFixture {
         let temp_root = dunce::canonicalize(temp_dir.path()).expect("canonicalize temporary root");
         let codex_home = temp_root.join("codex-home");
         let repository = temp_root.join("project");
-        fs::create_dir_all(&codex_home).expect("create Codex home");
+        fs::create_dir_all(&codex_home).expect("create Lemex home");
         initialize_repository(&repository);
 
         Self {
@@ -140,7 +140,7 @@ fn git_output(repository: &Path, args: &[&str]) -> std::process::Output {
         .current_dir(repository)
         .args([
             "-c",
-            "user.name=Codex Worktree Test",
+            "user.name=Lemex Worktree Test",
             "-c",
             "user.email=codex-worktree-test@example.invalid",
             "-c",

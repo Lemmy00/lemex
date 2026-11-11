@@ -31,7 +31,7 @@ fn repository() -> Result<(TempDir, std::path::PathBuf)> {
     let root = directory.path().join("repository");
     fs::create_dir(&root)?;
     setup_git(&root, &["init", "-b", "main"])?;
-    setup_git(&root, &["config", "user.name", "Codex Test"])?;
+    setup_git(&root, &["config", "user.name", "Lemex Test"])?;
     setup_git(&root, &["config", "user.email", "codex@example.invalid"])?;
     fs::write(root.join("tracked.txt"), "tracked\n")?;
     setup_git(&root, &["add", "tracked.txt"])?;

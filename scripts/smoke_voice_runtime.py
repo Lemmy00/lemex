@@ -17,31 +17,53 @@ def verify(package: Path) -> None:
     manifest = json.loads((voice / "manifest.json").read_text())
     helper = voice / "bin/codex-voice-host"
     commit = manifest["buildCommit"]
-    actual = subprocess.check_output([str(helper), "--build-commit"], text=True, timeout=30).strip()
+    actual = subprocess.check_output(
+        [str(helper), "--build-commit"], text=True, timeout=30
+    ).strip()
     if actual != commit:
         raise RuntimeError("Installed voice helper has the wrong build commit")
     # Match the application's fixed runtime environment. No system GStreamer
     # installation, plugin search path, registry cache, or loader override is used.
-    env = {key: value for key, value in os.environ.items()
-           if key in {"HOME", "TMPDIR", "TEMP", "TMP", "XDG_RUNTIME_DIR"}}
-    env.update({"GST_PLUGIN_PATH": "", "GST_PLUGIN_PATH_1_0": "",
-                "GST_PLUGIN_SYSTEM_PATH": "", "GST_PLUGIN_SYSTEM_PATH_1_0": "",
-                "GST_REGISTRY": "/dev/null", "GST_REGISTRY_UPDATE": "no",
-                "GST_REGISTRY_FORK": "no"})
-    process = subprocess.Popen([str(helper)], cwd=package, env=env,
-                               stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL)
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"HOME", "TMPDIR", "TEMP", "TMP", "XDG_RUNTIME_DIR"}
+    }
+    env.update(
+        {
+            "GST_PLUGIN_PATH": "",
+            "GST_PLUGIN_PATH_1_0": "",
+            "GST_PLUGIN_SYSTEM_PATH": "",
+            "GST_PLUGIN_SYSTEM_PATH_1_0": "",
+            "GST_REGISTRY": "/dev/null",
+            "GST_REGISTRY_UPDATE": "no",
+            "GST_REGISTRY_FORK": "no",
+        }
+    )
+    process = subprocess.Popen(
+        [str(helper)],
+        cwd=package,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
 
     def read_exact(size: int) -> bytes:
         result = bytearray()
         deadline = time.monotonic() + 35
         while len(result) < size:
             remaining = deadline - time.monotonic()
-            if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+            if (
+                remaining <= 0
+                or not select.select([process.stdout], [], [], remaining)[0]
+            ):
                 raise RuntimeError("Voice helper response timed out")
             chunk = os.read(process.stdout.fileno(), size - len(result))
             if not chunk:
-                raise RuntimeError(f"Voice helper exited during initialization: {process.poll()}")
+                raise RuntimeError(
+                    f"Voice helper exited during initialization: {process.poll()}"
+                )
             result.extend(chunk)
         return bytes(result)
 
@@ -49,7 +71,7 @@ def verify(package: Path) -> None:
         payload = json.dumps(request).encode()
         process.stdin.write(struct.pack(">I", len(payload)) + payload)
         process.stdin.flush()
-        size, = struct.unpack(">I", read_exact(4))
+        (size,) = struct.unpack(">I", read_exact(4))
         if size > 128 * 1024:
             raise RuntimeError("Oversized voice helper response")
         response = json.loads(read_exact(size))
@@ -74,7 +96,10 @@ def verify(package: Path) -> None:
             process.wait(timeout=10)
         process.stdin.close()
         process.stdout.close()
-    print(f"Verified installed voice runtime and audio offer ({manifest['voiceTarget']}, {commit})", flush=True)
+    print(
+        f"Verified installed voice runtime and audio offer ({manifest['voiceTarget']}, {commit})",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

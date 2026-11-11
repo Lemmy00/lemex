@@ -59,7 +59,7 @@ pub struct McpServerIdpOAuthConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpEnterpriseManagedAuthConfig {
-    /// Shared enterprise authorization, independent of Codex account credentials.
+    /// Shared enterprise authorization, independent of Lemex account credentials.
     pub idp: McpServerIdpOAuthConfig,
 }
 

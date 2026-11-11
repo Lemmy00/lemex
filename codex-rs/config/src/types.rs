@@ -21,6 +21,7 @@ pub use codex_protocol::config_types::AltScreenMode;
 pub use codex_protocol::config_types::ApprovalsReviewer;
 pub use codex_protocol::config_types::ModeKind;
 pub use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 pub use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::ToolExposureSurface;
 pub use codex_protocol::config_types::WebSearchMode;
@@ -29,6 +30,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fmt;
 
+use codex_utils_redacted_string::RedactedString;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -115,7 +117,7 @@ impl fmt::Display for SessionPickerViewMode {
 #[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ResumeCwdMode {
-    /// Use the directory where Codex was launched.
+    /// Use the directory where Lemex was launched.
     Current,
     /// Use the latest working directory recorded in the selected session.
     Session,
@@ -130,7 +132,7 @@ impl ResumeCwdMode {
     }
 }
 
-/// Determine where Codex should store CLI auth credentials.
+/// Determine where Lemex should store CLI auth credentials.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthCredentialsStoreMode {
@@ -145,18 +147,18 @@ pub enum AuthCredentialsStoreMode {
     Ephemeral,
 }
 
-/// Determine where Codex should store and read MCP credentials.
+/// Determine where Lemex should store and read MCP credentials.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum OAuthCredentialsStoreMode {
     /// Prefer `Keyring` and use `File` when keyring storage is unavailable.
     /// Once an MCP client loads credentials from one store, that client keeps the resolved store
     /// for its lifetime so refreshes cannot switch to a possibly stale credential source.
-    /// Credentials stored in the keyring will only be readable by Codex unless the user explicitly grants access via OS-level keyring access.
+    /// Credentials stored in the keyring will only be readable by Lemex unless the user explicitly grants access via OS-level keyring access.
     #[default]
     Auto,
     /// LEMEX_HOME/.credentials.json
-    /// This file will be readable to Codex and other applications running as the same user.
+    /// This file will be readable to Lemex and other applications running as the same user.
     File,
     /// Keyring when available, otherwise fail.
     Keyring,
@@ -346,13 +348,15 @@ pub struct MemoriesToml {
     pub max_rollouts_per_startup: Option<usize>,
     /// Minimum idle time between last thread activity and memory creation (hours). > 12h recommended.
     pub min_rollout_idle_hours: Option<i64>,
-    /// Minimum remaining percentage required in Codex rate-limit windows before memory startup runs.
+    /// Minimum remaining percentage required in Lemex rate-limit windows before memory startup runs.
     #[schemars(range(min = 0, max = 100))]
     pub min_rate_limit_remaining_percent: Option<i64>,
     /// Model used for thread summarisation.
     pub extract_model: Option<String>,
     /// Model used for memory consolidation.
     pub consolidation_model: Option<String>,
+    /// Service tier for memory consolidation. Defaults to Standard (`"default"`).
+    pub consolidation_service_tier: Option<String>,
 }
 
 /// Effective memories settings after defaults are applied.
@@ -372,6 +376,7 @@ pub struct MemoriesConfig {
     pub min_rate_limit_remaining_percent: i64,
     pub extract_model: Option<String>,
     pub consolidation_model: Option<String>,
+    pub consolidation_service_tier: String,
 }
 
 impl Default for MemoriesConfig {
@@ -391,6 +396,7 @@ impl Default for MemoriesConfig {
             min_rate_limit_remaining_percent: DEFAULT_MEMORIES_MIN_RATE_LIMIT_REMAINING_PERCENT,
             extract_model: None,
             consolidation_model: None,
+            consolidation_service_tier: SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string(),
         }
     }
 }
@@ -439,6 +445,13 @@ impl From<MemoriesToml> for MemoriesConfig {
                 .clamp(0, 100),
             extract_model: toml.extract_model,
             consolidation_model: toml.consolidation_model,
+            consolidation_service_tier: toml
+                .consolidation_service_tier
+                .map(|tier| {
+                    ServiceTier::from_request_value(&tier)
+                        .map_or(tier, |tier| tier.request_value().to_string())
+                })
+                .unwrap_or(defaults.consolidation_service_tier),
         }
     }
 }
@@ -497,7 +510,7 @@ pub struct AppToolsConfig {
 }
 
 /// Approval settings for a connected account within an app.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct AppLinkConfig {
     /// Reviewer for approval prompts from this account, overriding the app default.
@@ -510,7 +523,7 @@ pub struct AppLinkConfig {
 }
 
 /// Account settings for a single app.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct AppLinksConfig {
     /// Per-account approval settings keyed by link ID.
@@ -519,10 +532,10 @@ pub struct AppLinksConfig {
 }
 
 /// Config values for a single app/connector.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct AppConfig {
-    /// When `false`, Codex does not surface this app.
+    /// When `false`, Lemex does not surface this app.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 
@@ -605,7 +618,8 @@ pub enum OtelExporterKind {
     OtlpHttp {
         endpoint: String,
         #[serde(default)]
-        headers: HashMap<String, String>,
+        #[schemars(with = "HashMap<String, String>")]
+        headers: HashMap<String, RedactedString>,
         protocol: OtelHttpProtocol,
         #[serde(default)]
         tls: Option<OtelTlsConfig>,
@@ -613,7 +627,8 @@ pub enum OtelExporterKind {
     OtlpGrpc {
         endpoint: String,
         #[serde(default)]
-        headers: HashMap<String, String>,
+        #[schemars(with = "HashMap<String, String>")]
+        headers: HashMap<String, RedactedString>,
         #[serde(default)]
         tls: Option<OtelTlsConfig>,
     },
@@ -624,8 +639,10 @@ pub enum OtelExporterKind {
 #[schemars(deny_unknown_fields)]
 pub struct OtelConfigToml {
     /// Byte limit for tool-result log output; independent of model-visible output.
-    #[serde(default)]
-    pub tool_result: codex_protocol::config_types::ToolResultLogConfig,
+    pub tool_result: Option<codex_protocol::config_types::ToolResultLogConfig>,
+    /// Log successful SSE events whose kind ends in `.delta`. Defaults to true.
+    /// Disabling this preserves errors, completion events, and metrics.
+    pub log_sse_deltas: Option<bool>,
     /// Log user prompt in traces
     pub log_user_prompt: Option<bool>,
     /// Opt in to logging final main-agent and spawned-subagent responses to an OTLP log exporter.
@@ -649,7 +666,7 @@ pub struct OtelConfigToml {
     pub metrics_exporter: Option<OtelExporterKind>,
 
     /// Attributes to add to every exported trace span.
-    pub span_attributes: Option<BTreeMap<String, String>>,
+    pub span_attributes: Option<HashMap<String, String>>,
 
     /// Semicolon-separated `key:value` fields to upsert into W3C tracestate members.
     pub tracestate: Option<BTreeMap<String, BTreeMap<String, String>>>,
@@ -659,6 +676,7 @@ pub struct OtelConfigToml {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OtelConfig {
     pub tool_result: codex_protocol::config_types::ToolResultLogConfig,
+    pub log_sse_deltas: bool,
     pub log_user_prompt: bool,
     pub log_agent_responses: bool,
     pub log_guardian_assessments: bool,
@@ -666,7 +684,7 @@ pub struct OtelConfig {
     pub exporter: OtelExporterKind,
     pub trace_exporter: OtelExporterKind,
     pub metrics_exporter: OtelExporterKind,
-    pub span_attributes: BTreeMap<String, String>,
+    pub span_attributes: HashMap<String, String>,
     pub tracestate: BTreeMap<String, BTreeMap<String, String>>,
 }
 
@@ -674,6 +692,7 @@ impl Default for OtelConfig {
     fn default() -> Self {
         OtelConfig {
             tool_result: Default::default(),
+            log_sse_deltas: true,
             log_user_prompt: false,
             log_agent_responses: false,
             log_guardian_assessments: false,
@@ -681,7 +700,7 @@ impl Default for OtelConfig {
             exporter: OtelExporterKind::None,
             trace_exporter: OtelExporterKind::None,
             metrics_exporter: OtelExporterKind::None,
-            span_attributes: BTreeMap::new(),
+            span_attributes: HashMap::new(),
             tracestate: BTreeMap::new(),
         }
     }
@@ -726,6 +745,7 @@ pub enum NotificationMethod {
     #[default]
     Auto,
     Osc9,
+    Osc777,
     Bel,
 }
 
@@ -734,6 +754,7 @@ impl fmt::Display for NotificationMethod {
         match self {
             NotificationMethod::Auto => write!(f, "auto"),
             NotificationMethod::Osc9 => write!(f, "osc9"),
+            NotificationMethod::Osc777 => write!(f, "osc777"),
             NotificationMethod::Bel => write!(f, "bel"),
         }
     }
@@ -821,7 +842,7 @@ pub struct ModelAvailabilityNuxConfig {
     pub shown_count: HashMap<String, u32>,
 }
 
-/// Fallback resize-reflow row cap when Codex cannot identify a terminal-specific scrollback size.
+/// Fallback resize-reflow row cap when Lemex cannot identify a terminal-specific scrollback size.
 pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
 
 /// One reusable prompt or slash command submitted through the TUI composer.
@@ -854,6 +875,11 @@ impl QuickDial {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct Tui {
+    /// Preferred hosts for new conversations, indexed by project and local user identity.
+    /// Read from the user configuration only; values are never endpoints or credentials.
+    #[serde(default)]
+    pub default_hosts: BTreeMap<String, BTreeMap<String, String>>,
+
     #[serde(default, flatten)]
     pub notification_settings: TuiNotificationSettings,
 
@@ -912,6 +938,15 @@ pub struct Tui {
     /// Defaults to `true`; alternate-screen restrictions take precedence.
     #[serde(default = "default_true")]
     pub fullscreen_transcript: bool,
+
+    /// Summarize tool calls and collapse completed turns in the full-screen transcript. Defaults to `false`.
+    #[serde(default)]
+    pub collapse_turn_details: bool,
+
+    /// Preferred docked sidebar width as a percentage of the terminal. Defaults to one third.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 99))]
+    pub sidebar_width_percent: Option<u8>,
 
     /// Mouse wheel speed multiplier for transcript scrolling, based on one row per event.
     /// Defaults to `1.0`. Positive fractional values slow scrolling; values above `1.0` speed it up.
@@ -1015,7 +1050,7 @@ pub struct Tui {
     pub model_availability_nux: ModelAvailabilityNuxConfig,
 
     /// Trim terminal resize-reflow replay to the most recent rendered terminal rows when the
-    /// transcript exceeds this cap. Omit to use Codex's terminal-specific default. Set to `0` to
+    /// transcript exceeds this cap. Omit to use Lemex's terminal-specific default. Set to `0` to
     /// keep all rendered rows.
     #[serde(default)]
     #[schemars(range(min = 0))]
@@ -1027,7 +1062,7 @@ const fn default_true() -> bool {
 }
 
 /// Settings for notices we display to users via the tui and app-server clients
-/// (primarily the Codex IDE extension). NOTE: these are different from
+/// (primarily the Lemex IDE extension). NOTE: these are different from
 /// notifications - notices are warnings, NUX screens, acknowledgements, etc.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -1053,7 +1088,7 @@ pub struct Notice {
     pub hide_full_access_warning: Option<bool>,
     /// Tracks whether the user has acknowledged the Windows world-writable directories warning.
     pub hide_world_writable_warning: Option<bool>,
-    /// Tracks whether the user opted out of Codex-managed fast defaults.
+    /// Tracks whether the user opted out of Lemex-managed fast defaults.
     pub fast_default_opt_out: Option<bool>,
     /// Tracks whether the user opted out of the rate limit model switch reminder.
     pub hide_rate_limit_model_nudge: Option<bool>,
@@ -1141,6 +1176,11 @@ pub struct PluginConfig {
     /// Per-MCP-server policy overlays for MCP servers contributed by this plugin.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub mcp_servers: HashMap<String, PluginMcpServerConfig>,
+
+    /// Connector-wide app settings keyed by connector ID. Ignored when this
+    /// plugin is disabled by configuration. Explicit top-level app fields win.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub apps: HashMap<String, AppConfig>,
 }
 
 /// Policy settings for a plugin-provided MCP server.
@@ -1150,7 +1190,7 @@ pub struct PluginConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct PluginMcpServerConfig {
-    /// When `false`, Codex skips initializing this plugin MCP server.
+    /// When `false`, Lemex skips initializing this plugin MCP server.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 
@@ -1204,10 +1244,10 @@ where
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct MarketplaceConfig {
-    /// Last time Codex successfully added or refreshed this marketplace.
+    /// Last time Lemex successfully added or refreshed this marketplace.
     #[serde(default)]
     pub last_updated: Option<String>,
-    /// Git revision Codex last successfully activated for this marketplace.
+    /// Git revision Lemex last successfully activated for this marketplace.
     #[serde(default)]
     pub last_revision: Option<String>,
     /// Source kind used to install this marketplace.

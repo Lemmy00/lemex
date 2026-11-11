@@ -35,7 +35,7 @@ pub(crate) async fn supports_sandbox_state(executable: &AbsolutePathBuf) -> bool
 ///
 /// Plain `sandbox --help` can also succeed for unrelated binaries, including Rust test
 /// harnesses. Put `--sandbox-state-json` before `--help` so those parsers reject the
-/// unknown option. Codex handles help before interpreting the placeholder `{}` policy
+/// unknown option. Lemex handles help before interpreting the placeholder `{}` policy
 /// or loading configuration; only its exit status matters, not the help text.
 async fn probe_sandbox_state(executable: &AbsolutePathBuf) -> std::io::Result<bool> {
     let status = tokio::process::Command::from(background_command(executable.as_os_str()))

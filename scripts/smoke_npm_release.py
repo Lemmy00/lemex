@@ -12,6 +12,7 @@ import subprocess
 import shutil
 
 from smoke_voice_runtime import verify as verify_voice
+from smoke_history import verify as verify_history
 import tempfile
 import threading
 
@@ -35,16 +36,25 @@ def smoke(launcher: Path, native: Path) -> None:
             else:
                 versions = {}
                 for spec in PLATFORMS.values():
-                    platform_version = npm.compute_platform_package_version(version, spec["npm_tag"])
+                    platform_version = npm.compute_platform_package_version(
+                        version, spec["npm_tag"]
+                    )
                     versions[platform_version] = {
-                        "name": launcher_manifest["name"], "version": platform_version,
-                        "os": [spec["os"]], "cpu": [spec["cpu"]],
+                        "name": launcher_manifest["name"],
+                        "version": platform_version,
+                        "os": [spec["os"]],
+                        "cpu": [spec["cpu"]],
                         "dist": {
                             "tarball": f"http://127.0.0.1:{self.server.server_port}/lemex/-/{platform_version}.tgz",
-                            "integrity": "sha512-" + base64.b64encode(hashlib.sha512(payload).digest()).decode(),
+                            "integrity": "sha512-"
+                            + base64.b64encode(
+                                hashlib.sha512(payload).digest()
+                            ).decode(),
                         },
                     }
-                body = json.dumps({"name": launcher_manifest["name"], "versions": versions}).encode()
+                body = json.dumps(
+                    {"name": launcher_manifest["name"], "versions": versions}
+                ).encode()
                 content_type = "application/json"
             self.send_response(200)
             self.send_header("Content-Type", content_type)
@@ -63,31 +73,63 @@ def smoke(launcher: Path, native: Path) -> None:
         try:
             # This must resolve optional aliases and OS/CPU filters exactly as a
             # registry install would, without touching the user's global install.
-            subprocess.run([
-                "npm", "install", "-g", "--prefix", str(root / "prefix"),
-                "--cache", str(root / "cache"), "--no-audit", "--no-fund",
-                f"--registry=http://127.0.0.1:{server.server_port}", str(launcher.resolve()),
-            ], cwd=root, check=True, timeout=180)
+            subprocess.run(
+                [
+                    "npm",
+                    "install",
+                    "-g",
+                    "--prefix",
+                    str(root / "prefix"),
+                    "--cache",
+                    str(root / "cache"),
+                    "--no-audit",
+                    "--no-fund",
+                    f"--registry=http://127.0.0.1:{server.server_port}",
+                    str(launcher.resolve()),
+                ],
+                cwd=root,
+                check=True,
+                timeout=180,
+            )
         finally:
             server.shutdown()
             server.server_close()
             worker.join()
         if requested_payloads != [f"/lemex/-/{native_version}.tgz"]:
-            raise RuntimeError(f"npm selected unexpected native payloads: {requested_payloads}")
+            raise RuntimeError(
+                f"npm selected unexpected native payloads: {requested_payloads}"
+            )
         executable = root / "prefix/bin/lemex"
         home = root / "home"
         home.mkdir()
         env = {**os.environ, "LEMEX_HOME": str(home)}
-        output = subprocess.check_output([str(executable), "--version"], env=env, text=True, timeout=30)
+        output = subprocess.check_output(
+            [str(executable), "--version"], env=env, text=True, timeout=30
+        )
         if output.strip() != f"lemex {version}":
             raise RuntimeError(f"Unexpected CLI version: {output!r}")
-        for args in (["--help"], ["setup", "--help"], ["exec", "--help"]):
-            subprocess.run([str(executable), *args], env=env, check=True, stdout=subprocess.DEVNULL, timeout=30)
+        for args in (
+            ["--help"],
+            ["setup", "--help"],
+            ["exec", "--help"],
+            ["history", "--help"],
+            ["resume", "--help"],
+        ):
+            subprocess.run(
+                [str(executable), *args],
+                env=env,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                timeout=30,
+            )
         packages = list((root / "prefix").rglob("codex-package.json"))
         if len(packages) != 1:
-            raise RuntimeError(f"Expected one installed native package, found {len(packages)}")
+            raise RuntimeError(
+                f"Expected one installed native package, found {len(packages)}"
+            )
         # Exercise the npm-installed payload again after moving it out of the
         # build and npm trees, including spaces in its new physical path.
+        verify_history(executable)
         relocated = root / "relocated voice package"
         shutil.copytree(packages[0].parent, relocated)
         verify_voice(relocated)

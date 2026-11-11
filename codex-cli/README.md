@@ -1,6 +1,6 @@
 # Lemex CLI
 
-Lemex is a local coding agent based on OpenAI Codex. It runs as `lemex` and stores its configuration in `~/.lemex`.
+Lemex is a local coding agent for the terminal. It runs as `lemex` and stores its configuration in `~/.lemex`.
 
 ## Install
 

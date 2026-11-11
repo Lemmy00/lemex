@@ -13,7 +13,7 @@ use thiserror::Error;
 use ts_rs::TS;
 
 /// A UTF-8 path for preserving raw path compatibility at the app-server API
-/// boundary while Codex migrates to [`PathUri`].
+/// boundary while Lemex migrates to [`PathUri`].
 ///
 /// Supports storing arbitrary strings read from the API and converting to and
 /// from [`PathUri`] using an explicitly selected native path convention.
@@ -263,9 +263,7 @@ fn render_windows_opaque_fallback(path_bytes: &[u8]) -> Option<String> {
         return None;
     }
     let path_wide = path_bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
+        .chunks_exact(2)
         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
         .collect::<Vec<_>>();
 

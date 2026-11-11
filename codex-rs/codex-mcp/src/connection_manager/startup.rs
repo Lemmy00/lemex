@@ -42,14 +42,13 @@ pub(super) async fn emit_update(
     submit_id: &str,
     tx_event: &Sender<Event>,
     update: McpStartupUpdateEvent,
-) -> Result<(), Box<async_channel::SendError<Event>>> {
+) -> Result<(), async_channel::SendError<Event>> {
     tx_event
         .send(Event {
             id: submit_id.to_string(),
             msg: EventMsg::McpStartupUpdate(update),
         })
         .await
-        .map_err(Box::new)
 }
 
 pub(super) fn mcp_startup_failure_reason(
@@ -115,7 +114,7 @@ pub(super) fn mcp_init_error_display(
             } else if config.is_some_and(|config| !config.is_local_environment()) {
                 "Use your client's MCP OAuth sign-in flow.".to_string()
             } else {
-                format!("Run `codex mcp login {server_name}`.")
+                format!("Run `lemex mcp login {server_name}`.")
             };
         let auth_status = match reason {
             Some(McpStartupFailureReason::ReauthenticationRequired) => {

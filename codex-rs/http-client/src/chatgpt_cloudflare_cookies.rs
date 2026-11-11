@@ -126,7 +126,7 @@ impl HttpClientFactory {
     }
 }
 
-fn chatgpt_cookie_url(uri: &Uri) -> Option<reqwest::Url> {
+pub(crate) fn chatgpt_cookie_url(uri: &Uri) -> Option<reqwest::Url> {
     let mut url = reqwest::Url::parse(&uri.to_string()).ok()?;
     // A secure WebSocket handshake has the same cookie scope as HTTPS.
     if url.scheme() == "wss" {
@@ -135,7 +135,7 @@ fn chatgpt_cookie_url(uri: &Uri) -> Option<reqwest::Url> {
     is_chatgpt_cookie_url(&url).then_some(url)
 }
 
-/// Adds the process-local ChatGPT infrastructure cookie jar used by Codex HTTP clients.
+/// Adds the process-local ChatGPT infrastructure cookie jar used by Lemex HTTP clients.
 ///
 /// WARNING: this jar is global within the process. It is only acceptable because it hardcodes a
 /// small allowlist of Cloudflare cookie names plus `__oailb` for routing, and refuses all other

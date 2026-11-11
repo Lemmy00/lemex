@@ -5,7 +5,7 @@ expression: "snapshots.join(\"\\n---\\n\")"
 ---
 empty (48 columns):
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
 
 
@@ -15,7 +15,7 @@ empty (48 columns):
 ---
 configured (48 columns):
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      workspace
 
 
@@ -25,7 +25,7 @@ configured (48 columns):
 ---
 resuming (48 columns):
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
   Resuming session…
 
@@ -35,28 +35,26 @@ resuming (48 columns):
 ---
 forking (48 columns):
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
   Forking session…
 
 › draft while loading
 
-
 ---
 multiline (48 columns):
 
-  >_ RCP AI Lemex (v<VERSION>)
+  >_ Lemex (v<VERSION>)
      loading
 
 
 › first startup line
   second startup line
 
-
 ---
 narrow (18 columns):
 
-  >_ RCP AI Lemex…
+  >_ Lemex…
      loading
 
 

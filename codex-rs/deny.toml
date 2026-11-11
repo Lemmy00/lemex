@@ -82,8 +82,7 @@ ignore = [
     { id = "RUSTSEC-2025-0057", reason = "fxhash is unmaintained; pulled in via starlark_map under starlark v0.14.2 used by execpolicy/cli/core and bm25 used by core; remove when upstream dependencies drop fxhash" },
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled in via starlark/v8 used by execpolicy/code-mode; no fixed release yet" },
     { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill is unmaintained; pulled in via postcard/heapless/pagable under starlark v0.14.2 used by execpolicy/cli/core; no fixed starlark release yet" },
-    # TODO(fcoury): remove this exception when syntect drops yaml-rust and bincode, or updates to versions that have fixed the vulnerabilities.
-    { id = "RUSTSEC-2024-0320", reason = "yaml-rust is unmaintained; pulled in via syntect v5.3.0 used by codex-tui for syntax highlighting; no fixed release yet" },
+    # TODO(fcoury): remove this exception when syntect drops bincode, or updates to a version that has fixed the vulnerability.
     { id = "RUSTSEC-2025-0141", reason = "bincode is unmaintained; pulled in via syntect v5.3.0 used by codex-tui for syntax highlighting; no fixed release yet" },
     { id = "RUSTSEC-2026-0118", reason = "hickory-proto 0.25.2 remains via pinned rama 0.3.0-alpha.4 in codex-network-proxy; DNSSEC features are not enabled; remove after migrating the proxy to rama 0.4 / hickory 0.26.1+" },
     { id = "RUSTSEC-2026-0119", reason = "hickory-proto 0.25.2 remains via pinned rama 0.3.0-alpha.4 in codex-network-proxy; rama 0.4 uses patched hickory 0.26.1+, but requires migrating the proxy's pinned dependency family; remove after that migration" },
@@ -92,9 +91,10 @@ ignore = [
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 4.2.0 is unmaintained; pulled in via zbus 4.4.0 by Linux TUI accessibility integration and keyring/secret-service; remove when those paths migrate off the retired standalone crates" },
     # Reviewed 2026-10-20.
     { id = "RUSTSEC-2026-0374", reason = "basic-toml 0.1.10 is unmaintained; pulled in via i18n-config/i18n-embed-fl under age 0.12.1 used by codex-secrets; no patched release; remove when age's localization dependencies migrate off basic-toml" },
-    # Temporary release-owner exception approved 2026-10-25; reviewed again for 0.1.4.
-    # Review before the next release or by 2026-11-24. See docs/npm-release.md.
-    { id = "RUSTSEC-2026-0387", reason = "Accepted timing side-channel risk in crypto-bigint 0.5.5 via elliptic-curve 0.13 (age/hpke, aws-config login, rtc, user-verification); no patched 0.5 release exists. Fixed >=0.7.6 is incompatible with these dependency constraints. Remove when parent crates can use the patched series; review before the next release or by 2026-11-24" },
+    # Temporary release-owner exception approved 2026-10-25; reviewed again 2026-11-11 for 0.1.5.
+    # Review by 2026-11-24. See docs/npm-release.md.
+    { id = "RUSTSEC-2026-0387", reason = "Accepted timing side-channel risk in crypto-bigint 0.5.5 via elliptic-curve 0.13 (age/hpke, aws-config login, rtc, user-verification); no patched 0.5 release exists. Fixed >=0.7.6 is incompatible with these dependency constraints. Remove when parent crates can use the patched series; review by 2026-11-24" },
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.0 is unmaintained; pulled in via aws-smithy-http/aws-smithy-runtime/aws-smithy-types and loom under tokio-graceful; no patched release; remove when these dependency paths drop pin-utils" },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
@@ -329,8 +329,11 @@ allow-git = [
     "https://github.com/microsoft/mxc",
     "https://github.com/modelcontextprotocol/rust-sdk",
     "https://github.com/openai-oss-forks/crossterm",
+    "https://github.com/openai-oss-forks/rusty_v8.git",
     "https://github.com/openai-oss-forks/tokio-tungstenite",
     "https://github.com/openai-oss-forks/tungstenite-rs",
+    # The immutable SQLx driver/Core pin carries the SQLite 3.54 compatibility fix.
+    "https://github.com/transact-rs/sqlx",
 ]
 
 [sources.allow-org]

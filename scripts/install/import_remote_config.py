@@ -17,7 +17,10 @@ def import_config(staged: Path, remote: str, destination: Path, home: Path) -> N
     models = catalog.get("models")
     if not isinstance(models, list) or not models:
         raise ValueError("Remote models.json must contain a nonempty models list")
-    if any(not isinstance(m, dict) or not isinstance(m.get("slug"), str) or not m["slug"] for m in models):
+    if any(
+        not isinstance(m, dict) or not isinstance(m.get("slug"), str) or not m["slug"]
+        for m in models
+    ):
         raise ValueError("Each remote model must have a nonempty slug")
     config_path = staged / "config.toml"
     config = config_path.read_text(encoding="utf-8")
@@ -29,7 +32,9 @@ def import_config(staged: Path, remote: str, destination: Path, home: Path) -> N
     remote_dir = PurePosixPath(remote)
     if remote_dir.name == ".lemex" and str(remote_dir.parent) != "/":
         replacements.append((str(remote_dir.parent), str(home.resolve())))
-    pattern = "(?:" + "|".join(re.escape(old) for old, _ in replacements) + r")(?=[/\"'\s]|$)"
+    pattern = (
+        "(?:" + "|".join(re.escape(old) for old, _ in replacements) + r")(?=[/\"'\s]|$)"
+    )
     mapping = dict(replacements)
     config = re.sub(pattern, lambda match: mapping[match.group()], config)
     config_path.write_text(config, encoding="utf-8")
