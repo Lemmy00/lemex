@@ -1204,7 +1204,7 @@ fn discovered_credential_aliases_rebind_when_the_destination_changes() {
         ("ghp_abcdefghijklmnopqrstuvwxyz1234567890", "GH_HOST"),
         (
             "sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-            "OPENAI_BASE_URL",
+            "LEMEX_BASE_URL",
         ),
     ] {
         let broker = broker_for(CredentialProviderConfig {
@@ -1215,7 +1215,7 @@ fn discovered_credential_aliases_rebind_when_the_destination_changes() {
         });
         let authorization_header = format!("Bearer {token}");
         for host in ["first.example", "second.example"] {
-            let host_value = if host_key == "OPENAI_BASE_URL" {
+            let host_value = if host_key == "LEMEX_BASE_URL" {
                 format!("https://{host}/v1")
             } else {
                 host.to_string()
@@ -1245,7 +1245,7 @@ fn discovered_credential_aliases_rebind_when_the_destination_changes() {
         let mut unbound =
             HashMap::from([("AUTH_HEADER".to_string(), authorization_header.clone())]);
         broker.virtualize_child_env(&mut unbound);
-        if host_key == "OPENAI_BASE_URL" {
+        if host_key == "LEMEX_BASE_URL" {
             assert_ne!(unbound["AUTH_HEADER"], authorization_header);
         } else {
             assert_eq!(unbound["AUTH_HEADER"], authorization_header);
@@ -1295,7 +1295,7 @@ fn credential_rotation_preserves_alias_destination_ownership() {
         (
             "LEMEX_API_KEY",
             "LEMEX_API_KEY",
-            "OPENAI_BASE_URL",
+            "LEMEX_BASE_URL",
             "sk-proj-",
             Some("api.openai.com"),
         ),
@@ -2841,7 +2841,7 @@ fn explicit_invalid_destinations_clear_previous_dynamic_bindings() {
         ),
         (
             "LEMEX_API_KEY",
-            "OPENAI_BASE_URL",
+            "LEMEX_BASE_URL",
             "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789",
             Some("api.openai.com"),
         ),

@@ -50,7 +50,7 @@ fn unmasked_credentials_follow_the_selected_failure_mode() {
         (true, "GH_ENTERPRISE_TOKEN", None, false),
         (
             true,
-            "OPENAI_API_KEY",
+            "LEMEX_API_KEY",
             Some("https://localhost:1234/v1"),
             false,
         ),
@@ -67,7 +67,7 @@ fn unmasked_credentials_follow_the_selected_failure_mode() {
             ("AUTH_HEADER", "Bearer opaque-executor-credential"),
         ]);
         if let Some(base_url) = base_url {
-            env.insert("OPENAI_BASE_URL".to_string(), base_url.to_string());
+            env.insert("LEMEX_BASE_URL".to_string(), base_url.to_string());
         }
         broker.virtualize_child_env(&mut env);
         for alias_only in [false, true] {
@@ -864,7 +864,7 @@ fn brokered_credential_value_env_keys_include_dummy_aliases() {
                 env["LEMEX_API_KEY"].clone()
             ),
             (
-                "@alias:OPENAI_API_KEY".to_string(),
+                "@alias:LEMEX_API_KEY".to_string(),
                 env["LEMEX_API_KEY"].clone()
             ),
             ("LEMEX_API_KEY".to_string(), env["LEMEX_API_KEY"].clone()),
@@ -1126,7 +1126,7 @@ fn concurrent_commands_preserve_discovered_credential_destinations() {
         ),
         (
             "LEMEX_API_KEY",
-            "OPENAI_BASE_URL",
+            "LEMEX_BASE_URL",
             "sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
         ),
         (
@@ -1236,7 +1236,7 @@ fn builtin_credentials_use_private_destination_context() {
     config.set_credential_broker_enabled(/*enabled*/ true);
     config.configure_credential_broker_environment(&env_map([
         ("GH_HOST", "github.enterprise.example"),
-        ("OPENAI_BASE_URL", "https://gateway.example/v1"),
+        ("LEMEX_BASE_URL", "https://gateway.example/v1"),
     ]));
     broker.configure(&config);
     for (key, context_key, token, host) in [
@@ -1248,7 +1248,7 @@ fn builtin_credentials_use_private_destination_context() {
         ),
         (
             "LEMEX_API_KEY",
-            "OPENAI_BASE_URL",
+            "LEMEX_BASE_URL",
             "sk-real",
             "gateway.example",
         ),
@@ -1257,7 +1257,7 @@ fn builtin_credentials_use_private_destination_context() {
         broker.virtualize_child_env(&mut env);
         assert_ne!(env[key], token);
         assert!(!env.contains_key("GH_HOST"));
-        assert!(!env.contains_key("OPENAI_BASE_URL"));
+        assert!(!env.contains_key("LEMEX_BASE_URL"));
         let mut headers = headers_with_bearer(&env[key]);
         broker.inject_request_headers(host, &mut headers);
         assert_eq!(
@@ -1310,7 +1310,7 @@ fn builtin_credentials_use_private_destination_context() {
 fn private_destination_updates_reconcile_registered_fallbacks() {
     for ((key, context_key, token), previously_used_fallback) in [
         ("GH_ENTERPRISE_TOKEN", "GH_HOST", "ghp-real"),
-        ("LEMEX_API_KEY", "OPENAI_BASE_URL", "sk-real"),
+        ("LEMEX_API_KEY", "LEMEX_BASE_URL", "sk-real"),
         (
             "VENDOR_TOKEN",
             "VENDOR_HOST",
@@ -1391,7 +1391,7 @@ fn private_destination_updates_reconcile_registered_fallbacks() {
             }
         };
         let unrelated_key = if context_key == "GH_HOST" {
-            "OPENAI_BASE_URL"
+            "LEMEX_BASE_URL"
         } else {
             "GH_HOST"
         };
@@ -1560,14 +1560,14 @@ fn openai_credentials_bind_only_to_default_and_configured_trusted_hosts() {
 fn selected_openai_credential_matches_ipv6_alias_with_plaintext_fallback() {
     let broker = CredentialBroker::new(/*enabled*/ true);
     let mut env = env_map([
-        ("OPENAI_API_KEY", "sk-real"),
-        ("OPENAI_BASE_URL", "https://[fd00::1]/v1"),
+        ("LEMEX_API_KEY", "sk-real"),
+        ("LEMEX_BASE_URL", "https://[fd00::1]/v1"),
     ]);
     broker.virtualize_child_env(&mut env);
     for destination in ["https://[fd00::1]/v1/models", "fd00::1"] {
         assert!(broker.request_matches_hooked_host_alias(
             destination,
-            &headers_with_bearer(&env["OPENAI_API_KEY"]),
+            &headers_with_bearer(&env["LEMEX_API_KEY"]),
             &["api.openai.com".to_string()],
             /*environment_id*/ None,
         ));

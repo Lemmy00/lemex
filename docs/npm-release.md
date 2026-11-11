@@ -186,3 +186,15 @@ constraints still exclude the patched 0.7 series. The existing advisory-specific
 exception remains visible and is due for review by 2026-11-24. The new zstd,
 zstd-safe, zstd-sys and libz-sys advisories are fixed by compatible lockfile
 updates rather than additional vulnerability exceptions.
+
+The November 11 release audit also identified DNS parser advisories
+RUSTSEC-2026-0487/0489/0490/0491 and XML parser advisories
+RUSTSEC-2026-0194/0195. The pinned Rama DNS interface now uses Hickory 0.26.3
+through the minimal adapter in `third_party/rama-dns`; its provenance, changes
+and upstream licenses are included there. This also removes the older
+RUSTSEC-2026-0118/0119 exceptions. Plist 1.10.3 and Wayland scanner 0.31.11
+use fixed quick-xml versions. No new vulnerability exception is added.
+
+Rustix is updated to 1.1.6 for RUSTSEC-2026-0486. The async-trait dependency
+allowance follows Hickory's move from hickory-proto to hickory-net; first-party
+traits remain subject to the existing native-async rule.

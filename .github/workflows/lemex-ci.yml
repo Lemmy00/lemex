@@ -117,3 +117,8 @@ jobs:
       - name: Type-check Lemex and its code-mode host
         working-directory: codex-rs
         run: cargo check --locked --bin lemex --bin lemex-code-mode-host
+      - name: Test network proxy credential isolation
+        working-directory: codex-rs
+        env:
+          RUST_MIN_STACK: "8388608"
+        run: cargo test --locked -p codex-network-proxy --lib
