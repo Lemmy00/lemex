@@ -25,3 +25,23 @@ Search public interface strings, help, onboarding, diagnostics and package descr
 for upstream product branding on every sync; use Lemex. Keep model IDs, existing
 history/config compatibility readers and required third-party attribution intact.
 Remove confirmed unused product integrations and dependencies as part of the sync.
+
+## Local Rust cache cleanup
+
+Use temporary, task-owned Cargo build and download directories for sync validation
+where possible. Cleanup is required before finishing each sync, including runs
+that find no upstream changes. Once local builds and tests have stopped, remove
+Cargo `target` directories from all Lemex checkouts and worktrees, shared Cargo
+registry/git/advisory caches, sccache data, Rustup download/temp caches, downloaded
+V8 build archives, and completed temporary build/release packages.
+
+Check active build processes and executable paths first; preserve any cache still
+used by another running build. Keep installed Rust tools/toolchains, the installed
+Lemex package, source code, settings, and saved chats. Retain the minimal validated
+release packages and records needed for recovery until they are safely stored in
+GitHub Actions or publication is verified.
+
+Measure disk space before and after cleanup with `df`, verify removed cache paths
+are absent, and smoke-check the installed `lemex` executable. Do not run Cargo
+again after cleanup and recreate the caches. Report reclaimed space and any paths
+that could not safely be cleared.
