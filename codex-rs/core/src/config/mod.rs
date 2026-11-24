@@ -3826,10 +3826,7 @@ impl Config {
                     let default_permissions = effective_permission_selection
                         .selected_profile_id
                         .unwrap_or_else(|| {
-                            default_builtin_permission_profile_name(
-                                &active_project,
-                                legacy_windows_sandbox_level,
-                            )
+                            default_builtin_permission_profile_name(legacy_windows_sandbox_level)
                         });
                     network_proxy_config_for_profile_selection(
                         effective_permission_selection.profiles.as_ref(),
@@ -3849,10 +3846,7 @@ impl Config {
             let default_permissions = effective_permission_selection
                 .selected_profile_id
                 .unwrap_or_else(|| {
-                    default_builtin_permission_profile_name(
-                        &active_project,
-                        legacy_windows_sandbox_level,
-                    )
+                    default_builtin_permission_profile_name(legacy_windows_sandbox_level)
                 });
             let builtin_workspace_write_settings = if using_implicit_builtin_profile {
                 cfg.sandbox_workspace_write.as_ref().map(|settings| WorkspaceWriteSettings {
@@ -3925,7 +3919,6 @@ impl Config {
                 cfg.derive_permission_profile(
                     sandbox_mode,
                     legacy_windows_sandbox_level,
-                    Some(&active_project),
                     Some(&constrained_permission_profile),
                 )
                 .await

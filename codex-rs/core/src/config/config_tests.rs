@@ -195,14 +195,12 @@ async fn derive_legacy_sandbox_policy_for_test(
     cfg: &ConfigToml,
     sandbox_mode_override: Option<SandboxMode>,
     windows_sandbox_level: WindowsSandboxLevel,
-    active_project: Option<&ProjectConfig>,
     permission_profile_constraint: Option<&Constrained<PermissionProfile>>,
 ) -> SandboxPolicy {
     let permission_profile = cfg
         .derive_permission_profile(
             sandbox_mode_override,
             windows_sandbox_level,
-            active_project,
             permission_profile_constraint,
         )
         .await;
@@ -4162,13 +4160,18 @@ async fn implicit_builtin_workspace_profile_preserves_add_dir_metadata_carveouts
 }
 
 #[tokio::test]
-async fn empty_config_defaults_to_builtin_read_only_without_trust_decision() -> std::io::Result<()>
-{
+async fn config_defaults_to_auto_without_a_trust_decision() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
 
     let config = Config::load_from_base_config_with_overrides(
-        ConfigToml::default(),
+        ConfigToml {
+            windows: Some(WindowsToml {
+                sandbox: Some(WindowsSandboxModeToml::Elevated),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
         ConfigOverrides {
             cwd: Some(cwd.path().to_path_buf()),
             ..Default::default()
@@ -4179,12 +4182,16 @@ async fn empty_config_defaults_to_builtin_read_only_without_trust_decision() -> 
 
     let policy = config.permissions.file_system_sandbox_policy();
     assert!(
-        policy.can_read_local_path_with_cwd(cwd.path(), cwd.path()),
-        "expected :read-only to allow reads, policy: {policy:?}"
+        policy.can_write_local_path_with_cwd(cwd.path(), cwd.path()),
+        "expected :workspace to allow workspace writes, policy: {policy:?}"
     );
-    assert!(
-        !policy.can_write_local_path_with_cwd(cwd.path(), cwd.path()),
-        "expected :read-only to deny writes, policy: {policy:?}"
+    assert_eq!(
+        config.permissions.approval_policy.value(),
+        AskForApproval::OnRequest
+    );
+    assert_eq!(
+        config.permissions.network_sandbox_policy(),
+        NetworkSandboxPolicy::Restricted
     );
     Ok(())
 }
@@ -5107,7 +5114,6 @@ network_access = false  # This should be ignored.
         &sandbox_full_access_cfg,
         sandbox_mode_override,
         WindowsSandboxLevel::Disabled,
-        /*active_project*/ None,
         /*permission_profile_constraint*/ None,
     )
     .await;
@@ -5127,7 +5133,6 @@ network_access = true  # This should be ignored.
         &sandbox_read_only_cfg,
         sandbox_mode_override,
         WindowsSandboxLevel::Disabled,
-        /*active_project*/ None,
         /*permission_profile_constraint*/ None,
     )
     .await;
@@ -5158,7 +5163,6 @@ trust_level = "trusted"
         &sandbox_workspace_write_cfg,
         sandbox_mode_override,
         WindowsSandboxLevel::Disabled,
-        /*active_project*/ None,
         /*permission_profile_constraint*/ None,
     )
     .await;
@@ -5197,7 +5201,6 @@ exclude_slash_tmp = true
         &sandbox_workspace_write_cfg,
         sandbox_mode_override,
         WindowsSandboxLevel::Disabled,
-        /*active_project*/ None,
         /*permission_profile_constraint*/ None,
     )
     .await;
@@ -11167,39 +11170,21 @@ async fn test_load_config_rejects_legacy_ollama_chat_provider_with_helpful_error
 }
 
 #[tokio::test]
-async fn test_untrusted_project_gets_workspace_write_sandbox() -> anyhow::Result<()> {
-    let config_with_untrusted = r#"
-[projects."/tmp/test"]
-trust_level = "untrusted"
-"#;
-
-    let cfg = toml::from_str::<ConfigToml>(config_with_untrusted)
-        .expect("TOML deserialization should succeed");
-    let active_project = ProjectConfig {
-        trust_level: Some(TrustLevel::Untrusted),
-    };
-
+async fn legacy_default_uses_workspace_write_where_available() -> anyhow::Result<()> {
     let resolution = derive_legacy_sandbox_policy_for_test(
-        &cfg,
+        &ConfigToml::default(),
         /*sandbox_mode_override*/ None,
         WindowsSandboxLevel::Disabled,
-        Some(&active_project),
         /*permission_profile_constraint*/ None,
     )
     .await;
 
-    // Verify that untrusted projects get WorkspaceWrite (or ReadOnly on Windows due to downgrade)
-    if cfg!(target_os = "windows") {
-        assert!(
-            matches!(resolution, SandboxPolicy::ReadOnly { .. }),
-            "Expected ReadOnly on Windows, got {resolution:?}"
-        );
+    let expected = if cfg!(target_os = "windows") {
+        SandboxPolicy::new_read_only_policy()
     } else {
-        assert!(
-            matches!(resolution, SandboxPolicy::WorkspaceWrite { .. }),
-            "Expected WorkspaceWrite for untrusted project, got {resolution:?}"
-        );
-    }
+        SandboxPolicy::new_workspace_write_policy()
+    };
+    assert_eq!(resolution, expected);
 
     Ok(())
 }
@@ -11207,21 +11192,6 @@ trust_level = "untrusted"
 #[tokio::test]
 async fn derive_sandbox_policy_falls_back_to_read_only_for_implicit_defaults() -> anyhow::Result<()>
 {
-    let project_dir = TempDir::new()?;
-    let project_path = project_dir.path().to_path_buf();
-    let project_key = project_path.to_string_lossy().to_string();
-    let cfg = ConfigToml {
-        projects: Some(HashMap::from([(
-            project_key,
-            ProjectConfig {
-                trust_level: Some(TrustLevel::Trusted),
-            },
-        )])),
-        ..Default::default()
-    };
-    let active_project = ProjectConfig {
-        trust_level: Some(TrustLevel::Trusted),
-    };
     let constrained = Constrained::new(PermissionProfile::read_only(), |candidate| {
         if candidate == &PermissionProfile::read_only() {
             Ok(())
@@ -11236,10 +11206,9 @@ async fn derive_sandbox_policy_falls_back_to_read_only_for_implicit_defaults() -
     })?;
 
     let resolution = derive_legacy_sandbox_policy_for_test(
-        &cfg,
+        &ConfigToml::default(),
         /*sandbox_mode_override*/ None,
         WindowsSandboxLevel::Disabled,
-        Some(&active_project),
         Some(&constrained),
     )
     .await;
@@ -11251,21 +11220,6 @@ async fn derive_sandbox_policy_falls_back_to_read_only_for_implicit_defaults() -
 #[tokio::test]
 async fn derive_sandbox_policy_preserves_windows_downgrade_for_unsupported_fallback()
 -> anyhow::Result<()> {
-    let project_dir = TempDir::new()?;
-    let project_path = project_dir.path().to_path_buf();
-    let project_key = project_path.to_string_lossy().to_string();
-    let cfg = ConfigToml {
-        projects: Some(HashMap::from([(
-            project_key,
-            ProjectConfig {
-                trust_level: Some(TrustLevel::Trusted),
-            },
-        )])),
-        ..Default::default()
-    };
-    let active_project = ProjectConfig {
-        trust_level: Some(TrustLevel::Trusted),
-    };
     let constrained = Constrained::new(PermissionProfile::workspace_write(), |candidate| {
         if matches!(
             candidate,
@@ -11288,10 +11242,9 @@ async fn derive_sandbox_policy_preserves_windows_downgrade_for_unsupported_fallb
     })?;
 
     let resolution = derive_legacy_sandbox_policy_for_test(
-        &cfg,
+        &ConfigToml::default(),
         /*sandbox_mode_override*/ None,
         WindowsSandboxLevel::Disabled,
-        Some(&active_project),
         Some(&constrained),
     )
     .await;
