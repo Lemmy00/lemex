@@ -93,6 +93,8 @@ ignore = [
     # Review by 2026-11-24. See docs/npm-release.md.
     { id = "RUSTSEC-2026-0387", reason = "Accepted timing side-channel risk in crypto-bigint 0.5.5 via elliptic-curve 0.13 (age/hpke, aws-config login, rtc, user-verification); no patched 0.5 release exists. Fixed >=0.7.6 is incompatible with these dependency constraints. Remove when parent crates can use the patched series; review by 2026-11-24" },
     { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.0 is unmaintained; pulled in via aws-smithy-http/aws-smithy-runtime/aws-smithy-types and loom under tokio-graceful; no patched release; remove when these dependency paths drop pin-utils" },
+    # Maintenance notice reviewed 2026-11-24. Matches the upstream Codex exception.
+    { id = "RUSTSEC-2026-0543", reason = "chrono 0.4.43 is unmaintained. Protocol, state, and UI use it directly for timestamps, and sqlx also depends on it. Remove when these paths migrate to a maintained date and time crate or drop chrono." },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
