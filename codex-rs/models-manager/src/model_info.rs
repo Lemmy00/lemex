@@ -26,12 +26,11 @@ pub fn with_local_ultra(mut model: ModelInfo) -> ModelInfo {
     if matches!(
         model.multi_agent_version,
         Some(MultiAgentVersion::Disabled | MultiAgentVersion::V1)
-    ) || !model.supported_reasoning_levels.iter().any(|preset| {
-        !matches!(
-            preset.effort,
-            ReasoningEffort::None | ReasoningEffort::Ultra
-        )
-    }) {
+    ) || !model
+        .supported_reasoning_levels
+        .iter()
+        .any(|preset| preset.effort.enables_reasoning() && preset.effort != ReasoningEffort::Ultra)
+    {
         return model;
     }
 

@@ -26,7 +26,7 @@ The bundled configuration selects the RCP provider, loads `models.json`, uses a 
 | `model_picker_models`            | Saved model IDs in `/model`; RCP defaults to the six bundled curated models. |
 | `model_context_window`           | Context window to use, within the model's supported limit.                   |
 | `model_auto_compact_token_limit` | Token threshold for automatic context compaction.                            |
-| `model_reasoning_effort`         | Optional reasoning effort; leave unset to use each model's catalog default.  |
+| `model_reasoning_effort`         | Optional reasoning effort. Leave unset to follow the model's default.       |
 | `show_raw_agent_reasoning`       | Show provider reasoning; defaults to `true` even when omitted.               |
 | `mcp_servers`                    | MCP servers that provide additional tools.                                   |
 
@@ -38,8 +38,7 @@ lemex -c show_raw_agent_reasoning=false
 ```
 
 The default is `deepseek-ai/DeepSeek-V4.1-Flash-1017` with `max` reasoning.
-When overriding the model on the command line, also select an effort that the
-new model supports, since `-m` alone retains the configured reasoning effort:
+You can also choose a specific supported effort for one launch.
 
 ```sh
 lemex -m "mistralai/Leanstral-2603" -c model_reasoning_effort="high"
@@ -117,17 +116,21 @@ then choose **More reasoning… → Ultra**. You can also save it with
 `lemex model MODEL_ID --reasoning ultra`. Ultra uses Lemex's native agent
 orchestration for automatic delegation and maps each inference request to an
 effort the provider supports, such as `max` for DeepSeek or `xhigh` for Qwen.
-Existing model catalogs and caches gain this option automatically. Normal
-reasoning defaults are preserved. Models with unknown reasoning capabilities or
-an explicit legacy/disabled orchestration policy keep their advertised options.
+Existing model catalogs and caches gain this option automatically. Models with
+unknown reasoning capabilities or an explicit legacy/disabled orchestration
+policy keep their advertised options.
 Ultra is part of Lemex; it requires no additional npm package or MCP server.
 
-Live, explicitly advertised reasoning values take priority. The verified bundled
-profiles below are used for the RCP provider only. Other providers do not inherit
-RCP effort values just because a model ID matches. A generic reasoning capability
-flag does not establish which effort strings work: unknown settings use the
-deployment default and omit an explicit effort. Lemex also omits an unadvertised
-effort left in configuration when sending a request to a third-party provider.
+Lemex enables reasoning by default whenever the model has a known enabled level.
+It keeps an enabled catalog default and otherwise chooses `medium` if listed,
+or the first listed enabled level. An explicit supported choice, including
+`none` where available, takes precedence. For an unsupported configured effort,
+Lemex falls back to a supported level on third-party deployments.
+
+Live effort lists take priority over the bundled profiles for RCP deployments.
+For deployments without known effort levels, Lemex leaves the effort to the
+provider. A generic reasoning capability flag only indicates that the model can
+reason.
 
 The bundled RCP catalog was checked on 2026-10-18:
 
@@ -157,6 +160,12 @@ attempt, so live Leanstral availability was not confirmed. Qwen 3.8 27B also
 initially timed out, then responded after about three minutes and passed the
 effort checks. The configured DeepSeek 1017 / `max` default passed an ephemeral
 Lemex CLI request.
+
+On RCP, `moonshotai/Kimi-K3.1-Pro` and `moonshotai/Kimi-K3.1-Pro-mxfp4` are
+available through **Add model…**. Both accept `low`, `high`, and `max` via the
+Responses API. Lemex uses `max` as the default, as documented in
+[Moonshot's model card](https://huggingface.co/moonshotai/Kimi-K3.1-Pro#5-model-usage).
+Lemex sends its instructions using Kimi's system message format.
 
 The bundled RCP provider disables standalone hosted web search. Add MCP servers for web search or other tools with `lemex mcp` and inspect connected tools with `/mcp`. Enable hosted search only if your provider supports it.
 

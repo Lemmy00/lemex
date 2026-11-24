@@ -255,7 +255,7 @@ pub(crate) async fn list(command: ModelsCommand) -> anyhow::Result<()> {
             "id":row.model.slug, "name":row.model.display_name, "description":row.model.description,
             "available":row.available, "added":row.added,
             "reasoning_efforts":row.model.supported_reasoning_levels,
-            "default_reasoning_effort":row.model.default_reasoning_level,
+            "default_reasoning_effort":row.model.preferred_reasoning_effort(),
         })).collect::<Vec<_>>();
         println!(
             "{}",

@@ -865,19 +865,10 @@ impl ConfigToml {
         &self,
         sandbox_mode_override: Option<SandboxMode>,
         windows_sandbox_level: WindowsSandboxLevel,
-        active_project: Option<&ProjectConfig>,
         permission_profile_constraint: Option<&crate::Constrained<PermissionProfile>>,
     ) -> PermissionProfile {
         let configured_sandbox_mode = sandbox_mode_override.or(self.sandbox_mode);
-        let resolved_sandbox_mode = configured_sandbox_mode
-            .or_else(|| {
-                // If no sandbox_mode is set but this directory has a trust decision,
-                // default to workspace-write before applying the platform fallback.
-                active_project
-                    .filter(|project| project.is_trusted() || project.is_untrusted())
-                    .map(|_| SandboxMode::WorkspaceWrite)
-            })
-            .unwrap_or_default();
+        let resolved_sandbox_mode = configured_sandbox_mode.unwrap_or(SandboxMode::WorkspaceWrite);
         let permission_profile = crate::translate_legacy_permissions(
             resolved_sandbox_mode,
             self.sandbox_workspace_write.as_ref(),

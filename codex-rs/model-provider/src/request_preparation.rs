@@ -1,13 +1,31 @@
-//! Keeps request preparation bound to the credential revision it started with.
+//! Provider-specific request preparation and credential checks.
 
 use std::future::Future;
 use std::io;
 
 use codex_login::AuthChangeState;
 use codex_login::RequestAuthChange;
+use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::error::Result;
+use codex_protocol::models::ResponseItem;
 
 use crate::ModelProvider;
+use crate::rcp_models::is_rcp_kimi_k3_1_pro;
+
+/// Adapt the request's copy of the conversation to the provider's message format.
+pub fn adapt_responses_input(provider: &ModelProviderInfo, slug: &str, input: &mut [ResponseItem]) {
+    if !provider.is_rcp() || !is_rcp_kimi_k3_1_pro(slug) {
+        return;
+    }
+    // Kimi's RCP deployment accepts instructions in system messages.
+    for item in input {
+        if let ResponseItem::Message { role, .. } = item
+            && role == "developer"
+        {
+            "system".clone_into(role);
+        }
+    }
+}
 
 /// Prepare a request without dispatching it. When the request uses managed auth,
 /// repeat preparation after a credential refresh and fail if the owner changes.

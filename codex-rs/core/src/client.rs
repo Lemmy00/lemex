@@ -148,6 +148,7 @@ use codex_model_provider::ResolvedProviderRequest as CurrentClientSetup;
 use codex_model_provider::ResponsesConnectionKey;
 use codex_model_provider::SharedModelProvider;
 use codex_model_provider::WorkspaceRoutingContext;
+use codex_model_provider::adapt_responses_input;
 #[cfg(test)]
 use codex_model_provider_info::DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
 use codex_model_provider_info::ModelProviderInfo;
@@ -1162,23 +1163,30 @@ impl ModelClient {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
     ) -> Reasoning {
-        let effort = effort
-            .or_else(|| model_info.default_reasoning_level.clone())
-            .map(|effort| model_info.resolve_reasoning_effort(effort));
-        let effort = if self.state.provider.info().is_openai() {
-            effort
-        } else {
-            effort.filter(|effort| {
-                let supported = model_info.supported_reasoning_levels
+        let is_openai = self.state.provider.info().is_openai();
+        let supports = |effort: &ReasoningEffortConfig| {
+            is_openai
+                || model_info
+                    .supported_reasoning_levels
                     .iter()
-                    .any(|option| &option.effort == effort);
-                if !supported {
-                    warn!(model = %model_info.slug, effort = %effort,
-                        "Reasoning effort is not advertised for this deployment; using its default");
-                }
-                supported
-            })
+                    .any(|option| &option.effort == effort)
         };
+        let resolve = |effort| model_info.resolve_reasoning_effort(effort);
+        let effort = effort.map(resolve).filter(|effort| {
+            let supported = supports(effort);
+            if !supported {
+                warn!(model = %model_info.slug, effort = %effort,
+                    "Reasoning effort is not advertised for this deployment; using its default");
+            }
+            supported
+        });
+        let effort = effort.or_else(|| {
+            model_info
+                .preferred_reasoning_effort()
+                .cloned()
+                .map(resolve)
+                .filter(supports)
+        });
         Reasoning {
             effort,
             summary: (self.state.provider.capabilities().reasoning_summaries
@@ -1222,7 +1230,8 @@ impl ModelClient {
                 }
             });
         }
-        let is_openai = self.state.provider.info().is_openai();
+        let provider_info = self.state.provider.info();
+        let is_openai = provider_info.is_openai();
         // These prompt-only items are rebuilt on every request. Hash their visible payloads
         // within the thread so retries and resumed sessions preserve their identity.
         let prefix_namespace = Uuid::new_v5(
@@ -1268,6 +1277,7 @@ impl ModelClient {
             prefix.push(instructions);
         }
         input.splice(0..0, prefix);
+        adapt_responses_input(provider_info, &model_info.slug, &mut input);
         if !custom_tool_grammar {
             // Saved and dynamically loaded tool definitions use the same provider format.
             // Only rewrite the request copy, preserving the prompt and persisted history.

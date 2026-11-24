@@ -36,10 +36,13 @@ pub(super) fn normalize(settings: &mut Arc<StepSettings>, catalog: &[ModelInfo])
         && !allowed.is_empty()
         && !allowed.iter().any(|preset| preset.effort == effort)
     {
+        let default = model.preferred_reasoning_effort();
+        let prefer_enabled = default.is_some_and(ReasoningEffort::enables_reasoning);
         let replacement = effort_rank(&effort)
             .and_then(|previous| {
                 allowed
                     .iter()
+                    .filter(|preset| !prefer_enabled || preset.effort.enables_reasoning())
                     .filter_map(|preset| {
                         effort_rank(&preset.effort)
                             .filter(|rank| *rank <= previous)
@@ -50,7 +53,7 @@ pub(super) fn normalize(settings: &mut Arc<StepSettings>, catalog: &[ModelInfo])
             })
             .or_else(|| {
                 matches!(effort, ReasoningEffort::Ultra | ReasoningEffort::Persistent)
-                    .then(|| model.default_reasoning_level.as_ref())
+                    .then_some(default)
                     .flatten()
                     .filter(|default| allowed.iter().any(|preset| &preset.effort == *default))
             });

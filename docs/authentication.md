@@ -67,13 +67,10 @@ reasoning to use as your default.
 
 The search uses the full live catalog available to your key, excluding embedding, reranking, and transcription deployments. A provider refresh preserves the search text. `lemex model` offers the same saved-list and search flow in the terminal. Selecting an available model directly with `lemex model MODEL_ID` also adds it to your list.
 
-Reasoning settings are deployment-specific. Advertised effort settings take
-precedence; the RCP provider additionally uses the [verified bundled
-profiles](config.md#model-catalog-and-tools). Other providers do not inherit
-those profiles. HTTP acceptance alone does not establish a distinct reasoning
-level: GLM 5.3 Flash silently treats other strings as `max`. RCP aliases follow
-the model they currently deploy. When explicit reasoning settings are unknown,
-Lemex uses the deployment default and omits an explicit effort.
+Lemex enables reasoning by default when the model has a known enabled level. A
+supported effort you select takes precedence. When the effort levels are
+unknown, the deployment chooses the default. See [reasoning defaults and
+verified RCP profiles](config.md#model-catalog-and-tools).
 
 Live model listings identify candidates, not verified inference access. Discovery
 does not run paid inference probes. For custom provider configuration and

@@ -38,7 +38,6 @@ use codex_protocol::permissions::project_roots_glob_pattern;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
 
-use super::ProjectConfig;
 use super::permission_path;
 #[cfg(test)]
 use super::permission_path::contains_glob_chars_for_platform;
@@ -70,15 +69,12 @@ pub(super) fn active_arg0_helper_dir(
 }
 
 pub(crate) fn default_builtin_permission_profile_name(
-    active_project: &ProjectConfig,
     windows_sandbox_level: WindowsSandboxLevel,
 ) -> &'static str {
-    if (active_project.is_trusted() || active_project.is_untrusted())
-        && !(cfg!(target_os = "windows") && windows_sandbox_level == WindowsSandboxLevel::Disabled)
-    {
-        BUILT_IN_WORKSPACE_PROFILE
-    } else {
+    if cfg!(target_os = "windows") && windows_sandbox_level == WindowsSandboxLevel::Disabled {
         BUILT_IN_READ_ONLY_PROFILE
+    } else {
+        BUILT_IN_WORKSPACE_PROFILE
     }
 }
 

@@ -4,6 +4,41 @@ use super::ReasoningEffort;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn model_defaults_prefer_supported_reasoning() {
+    use ReasoningEffort::High;
+    use ReasoningEffort::Low;
+    use ReasoningEffort::Max;
+    use ReasoningEffort::Medium;
+    use ReasoningEffort::None as Off;
+    use ReasoningEffort::Ultra;
+
+    let disabled = ReasoningEffort::Custom("disabled".to_string());
+    for (declared, supported, expected) in [
+        (Some(Max), vec![Off, Medium, Max], Some(Max)),
+        (None, vec![Off, Low, Medium, High], Some(Medium)),
+        (Some(Off), vec![Off, High], Some(High)),
+        (Some(disabled.clone()), vec![disabled, Low], Some(Low)),
+        (Some(Max), vec![Low, High], Some(Low)),
+        (Some(Off), vec![Off, Ultra], Some(Off)),
+        (None, vec![], None),
+        (Some(High), vec![], Some(High)),
+    ] {
+        let mut model = test_model(/*spec*/ None);
+        model.default_reasoning_level = declared;
+        model.supported_reasoning_levels = supported
+            .into_iter()
+            .map(|effort| ReasoningEffortPreset {
+                effort,
+                description: String::new(),
+            })
+            .collect();
+        assert_eq!(model.preferred_reasoning_effort(), expected.as_ref());
+        let preset = super::super::ModelPreset::from(model);
+        assert_eq!(preset.default_reasoning_effort, expected.unwrap_or(Off));
+    }
+}
+
+#[test]
 fn resolves_ultra_using_model_override_and_supported_fallbacks() {
     use ReasoningEffort::High;
     use ReasoningEffort::Low;
