@@ -1288,6 +1288,7 @@ fn construct_model_info(
     });
     let mut metadata = Arc::unwrap_or_clone(resolved.model);
     metadata.slug = model.to_owned();
+    metadata.default_reasoning_level = metadata.preferred_reasoning_effort().cloned();
     resolved.model = model_info::with_config_overrides(metadata, config).into();
     resolved
 }

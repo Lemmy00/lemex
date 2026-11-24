@@ -1085,15 +1085,17 @@ where
 // convert ModelInfo to ModelPreset
 impl From<ModelInfo> for ModelPreset {
     fn from(info: ModelInfo) -> Self {
+        let default_reasoning_effort = info
+            .preferred_reasoning_effort()
+            .cloned()
+            .unwrap_or(ReasoningEffort::None);
         ModelPreset {
             id: info.slug.clone(),
             model: info.slug.clone(),
             display_name: info.display_name,
             description: info.description.unwrap_or_default(),
             model_specialty: info.model_specialty,
-            default_reasoning_effort: info
-                .default_reasoning_level
-                .unwrap_or(ReasoningEffort::None),
+            default_reasoning_effort,
             supported_reasoning_efforts: info.supported_reasoning_levels.clone(),
             supports_personality: false,
             additional_speed_tiers: info.additional_speed_tiers,

@@ -13,6 +13,7 @@ use std::sync::Arc;
 #[test_case::test_case("missing-model")]
 #[test_case::test_case("no-efforts")]
 #[test_case::test_case("only-higher")]
+#[test_case::test_case("higher-or-off")]
 #[test_case::test_case("special")]
 #[test_case::test_case("invalid-persistent")]
 #[test_case::test_case("invalid-ultra")]
@@ -38,7 +39,7 @@ async fn correction_changes_only_supported_bounded_choices(scenario: &str) {
     model.default_reasoning_level = Some(ReasoningEffort::Low);
     let allowed = match scenario {
         "valid" => ReasoningEffort::High,
-        "only-higher" => ReasoningEffort::Max,
+        "only-higher" | "higher-or-off" => ReasoningEffort::Max,
         "special" => ReasoningEffort::Persistent,
         _ => ReasoningEffort::Low,
     };
@@ -46,6 +47,14 @@ async fn correction_changes_only_supported_bounded_choices(scenario: &str) {
         description: allowed.to_string(),
         effort: allowed,
     }];
+    if scenario == "higher-or-off" {
+        model
+            .supported_reasoning_levels
+            .push(ReasoningEffortPreset {
+                effort: ReasoningEffort::None,
+                description: "Turn reasoning off".to_string(),
+            });
+    }
     if scenario == "missing-model" {
         model.slug = "another-model".into();
     }

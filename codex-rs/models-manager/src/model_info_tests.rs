@@ -71,6 +71,18 @@ fn local_ultra_preserves_explicit_orchestration_policy_and_unknown_capabilities(
     model.multi_agent_version = None;
     model.supported_reasoning_levels.clear();
     assert_eq!(with_local_ultra(model.clone()), model);
+    model.supported_reasoning_levels = [
+        ReasoningEffort::None,
+        ReasoningEffort::Persistent,
+        ReasoningEffort::Custom("disabled".to_string()),
+    ]
+    .into_iter()
+    .map(|effort| ReasoningEffortPreset {
+        description: effort.to_string(),
+        effort,
+    })
+    .collect();
+    assert_eq!(with_local_ultra(model.clone()), model);
 }
 
 fn config_with_personality(personality: Option<Personality>) -> ModelsManagerConfig {

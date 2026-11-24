@@ -1537,7 +1537,7 @@ fn third_party_ultra_does_not_forward_or_silently_discard_encrypted_agent_conten
 }
 
 #[test]
-fn custom_provider_omits_unadvertised_reasoning_and_preserves_supported_efforts() {
+fn custom_provider_uses_its_default_for_an_unadvertised_override() {
     let client = test_model_client(SessionSource::Cli);
     let mut model = test_model_info();
     model.default_reasoning_level = None;
@@ -1560,7 +1560,7 @@ fn custom_provider_omits_unadvertised_reasoning_and_preserves_supported_efforts(
         client
             .build_reasoning(&model, Some(ReasoningEffort::Max), summary)
             .effort,
-        None
+        Some(ReasoningEffort::High)
     );
     assert_eq!(
         client

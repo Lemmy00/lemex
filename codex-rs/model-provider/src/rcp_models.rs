@@ -19,6 +19,13 @@ pub fn bundled_catalog() -> ModelsResponse {
     })
 }
 
+pub(crate) fn is_rcp_kimi_k3_1_pro(slug: &str) -> bool {
+    matches!(
+        slug,
+        "moonshotai/Kimi-K3.1-Pro" | "moonshotai/Kimi-K3.1-Pro-mxfp4"
+    )
+}
+
 #[cfg(test)]
 fn decode_catalog(
     body: &[u8],
@@ -349,20 +356,38 @@ fn apply_reasoning(
         model
             .default_reasoning_level
             .clone_from(&profile.default_reasoning_level);
-    } else if family.starts_with("openai/gpt-oss-") {
-        // RCP's Harmony backend explicitly rejects other effort strings.
-        model.supported_reasoning_levels = [
-            ReasoningEffort::Low,
-            ReasoningEffort::Medium,
-            ReasoningEffort::High,
-        ]
-        .into_iter()
-        .map(|effort| ReasoningEffortPreset {
-            description: format!("RCP-supported effort: {effort}"),
-            effort,
-        })
-        .collect();
-        model.default_reasoning_level = Some(ReasoningEffort::Medium);
+    } else {
+        let (efforts, default) = match family {
+            slug if is_rcp_kimi_k3_1_pro(slug) && is_rcp_kimi_k3_1_pro(&model.slug) => {
+                // Only these IDs also have Kimi's request role compatibility.
+                (
+                    [
+                        ReasoningEffort::Low,
+                        ReasoningEffort::High,
+                        ReasoningEffort::Max,
+                    ],
+                    ReasoningEffort::Max,
+                )
+            }
+            // RCP's Harmony backend explicitly rejects other effort strings.
+            family if family.starts_with("openai/gpt-oss-") => (
+                [
+                    ReasoningEffort::Low,
+                    ReasoningEffort::Medium,
+                    ReasoningEffort::High,
+                ],
+                ReasoningEffort::Medium,
+            ),
+            _ => return,
+        };
+        model.supported_reasoning_levels = efforts
+            .into_iter()
+            .map(|effort| ReasoningEffortPreset {
+                description: format!("RCP-supported effort: {effort}"),
+                effort,
+            })
+            .collect();
+        model.default_reasoning_level = Some(default);
     }
 }
 
@@ -491,6 +516,37 @@ mod tests {
             ["none", "low", "high", "xhigh", "max"]
         );
         assert!(!models[0].supports_reasoning_summary_parameter);
+    }
+
+    #[test]
+    fn rcp_kimi_k3_1_pro_ids_have_reasoning_efforts_without_metadata() {
+        let body = br#"{"data":[{"id":"moonshotai/Kimi-K3.1-Pro"},{"id":"moonshotai/Kimi-K3.1-Pro-mxfp4"}]}"#;
+        let models = decode_catalog(body, None, &bundled_catalog()).unwrap();
+        assert_eq!(models.len(), 2);
+        for model in models {
+            assert_eq!(model.default_reasoning_level, Some(ReasoningEffort::Max));
+            assert_eq!(
+                model
+                    .supported_reasoning_levels
+                    .iter()
+                    .map(|option| option.effort.as_str())
+                    .collect::<Vec<_>>(),
+                ["low", "high", "max"]
+            );
+        }
+    }
+
+    #[test]
+    fn rotating_rcp_alias_does_not_inherit_kimi_fallback() {
+        let metadata = json!({"data":[{"model_name":"epfl-aiaas/frontier","litellm_params":{"model":"hosted_vllm/moonshotai/Kimi-K3.1-Pro"}}]});
+        let models = decode_catalog(
+            br#"{"data":[{"id":"epfl-aiaas/frontier"}]}"#,
+            Some(&metadata),
+            &bundled_catalog(),
+        )
+        .unwrap();
+        assert!(models[0].supported_reasoning_levels.is_empty());
+        assert!(models[0].default_reasoning_level.is_none());
     }
 
     #[test]

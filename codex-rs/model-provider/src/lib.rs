@@ -63,6 +63,7 @@ pub use provider::provider_uses_first_party_auth_path;
 pub use provider::resolve_api_provider;
 pub use rcp_models::bundled_catalog as bundled_rcp_model_catalog;
 
+pub use request_preparation::adapt_responses_input;
 pub use request_preparation::prepare_provider_request;
 pub use request_setup::ResolvedProviderRequest;
 pub use request_setup::request_auth_owner;

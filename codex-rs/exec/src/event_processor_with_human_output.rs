@@ -470,7 +470,7 @@ fn config_summary_entries(
                 .model_reasoning_effort
                 .as_ref()
                 .map(std::string::ToString::to_string)
-                .unwrap_or_else(|| "none".to_string()),
+                .unwrap_or_else(|| "model default".to_string()),
         ));
         entries.push((
             "reasoning summaries",
