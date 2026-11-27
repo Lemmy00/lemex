@@ -38,6 +38,11 @@ runtime check and the private history fixture, including rejection of account
 reporting and credit operations. Runtime initialization and an audio SDP offer
 do not establish microphone/speaker availability or a live provider conversation.
 
+CI uses the verified [Fence 0.13.2 Action pin](https://github.com/openai/fence/releases/tag/v0.13.2)
+for compatibility with runner runtime mounts marked `noexec`. Audit mode,
+startup readiness and post-job evidence remain required. Native build inputs
+are unchanged by this CI update.
+
 The existing cryptography exception is reviewed in [npm-release.md](npm-release.md).
 No new vulnerability exception is introduced. The final release receipt records
 the verified source commit, package version, workflow URL, registry integrity
