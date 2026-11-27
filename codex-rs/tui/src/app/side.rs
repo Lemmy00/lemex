@@ -67,7 +67,6 @@ impl SideParentStatus {
             | ServerRequest::ExecCommandApproval { .. } => Some(SideParentStatus::NeedsApproval),
             ServerRequest::DynamicToolCall { .. }
             | ServerRequest::AttestationGenerate { .. }
-            | ServerRequest::CurrentTimeRead { .. }
             | ServerRequest::ChatgptAuthTokensRefresh { .. } => None,
         }
     }
@@ -199,6 +198,11 @@ impl SideThreadState {
 }
 
 impl App {
+    pub(super) fn scrollback_side_chats_enabled(&self) -> bool {
+        !self.local_settings.transcript_mode.is_owned()
+            && self.config.features.enabled(Feature::TuiWorkspace)
+    }
+
     pub(super) async fn running_side_thread_id(&self) -> Option<ThreadId> {
         for thread_id in self.side_threads.keys().copied() {
             if self.active_turn_id_for_thread(thread_id).await.is_some() {
@@ -228,10 +232,11 @@ impl App {
             .map(|state| (state.parent_thread_id, state.parent_status, state.storage))
         else {
             clear_side_ui(&mut self.chat_widget);
-            if self
-                .side_threads
-                .values()
-                .any(|state| state.parent_thread_id == active_thread_id)
+            let destination = self
+                .side_conversation_target(active_thread_id)
+                .filter(|_| self.docked_agent().is_none())
+                .map(|_| "side");
+            if let Some(destination) = destination
                 && let Some(binding) = self.keymap.primary_hint(
                     crate::keymap::KeymapContext::Global,
                     "toggle_side_conversation",
@@ -239,7 +244,7 @@ impl App {
             {
                 self.chat_widget
                     .set_side_conversation_context_label(Some(format!(
-                        "{} for side",
+                        "{} for {destination}",
                         binding.display_label()
                     )));
             }
@@ -257,6 +262,14 @@ impl App {
         self.chat_widget
             .set_interrupted_turn_notice_mode(InterruptedTurnNoticeMode::Suppress);
         let mut label_parts = Vec::new();
+        let scrollback = self.scrollback_side_chats_enabled();
+        let mut side = "Side".to_string();
+        if scrollback
+            && let Some(tabs) = self.sidebar().map(sidebar::SidebarPane::chat_tabs)
+            && let Some(index) = tabs.choice_index(active_thread_id)
+        {
+            side = format!("Side {index}/{}", tabs.choices.len());
+        }
         let parent_is_main = self.primary_thread_id == Some(parent_thread_id);
         if parent_is_main {
             label_parts.push("from main thread".to_string());
@@ -267,12 +280,6 @@ impl App {
         if let Some(parent_status) = parent_status {
             label_parts.push(parent_status.label(parent_is_main).to_string());
         }
-        if let Some(binding) = self.keymap.primary_hint(
-            crate::keymap::KeymapContext::Global,
-            "toggle_side_conversation",
-        ) {
-            label_parts.push(format!("{} to switch", binding.display_label()));
-        }
         let action = if storage == SideChatStorage::Attached
             && self.local_settings.workspace_enabled(&self.config)
         {
@@ -280,12 +287,33 @@ impl App {
         } else {
             "close"
         };
-        label_parts.push(format!(
-            "{} to {action}",
-            crate::key_hint::ctrl(KeyCode::Char('c')).display_label()
-        ));
+        label_parts.push(self.conversation_navigation_hints(action));
         self.chat_widget
-            .set_side_conversation_context_label(Some(format!("Side {}", label_parts.join(" · "))));
+            .set_side_conversation_context_label(Some(format!(
+                "{side} {}",
+                label_parts.join(" · ")
+            )));
+    }
+
+    pub(super) fn conversation_navigation_hints(&self, action: &str) -> String {
+        let switch = if self.scrollback_side_chats_enabled()
+            && self.active_side_parent_thread_id().is_some()
+        {
+            "cycle"
+        } else {
+            "switch"
+        };
+        let close = crate::key_hint::ctrl(KeyCode::Char('c')).display_label();
+        match self.keymap.primary_hint(
+            crate::keymap::KeymapContext::Global,
+            "toggle_side_conversation",
+        ) {
+            Some(binding) => format!(
+                "{} to {switch} · {close} to {action}",
+                binding.display_label()
+            ),
+            None => format!("{close} to {action}"),
+        }
     }
 
     pub(super) fn active_side_parent_thread_id(&self) -> Option<ThreadId> {
@@ -304,7 +332,7 @@ impl App {
             && (self.chat_widget.no_modal_or_popup_active()
                 // Replaying the parent may reopen a completion for its parked draft.
                 // The focused chooser hides it and owns the keystrokes.
-                || (self.chooser_focus() == Some(sidebar::PaneFocus::Sidebar)
+                || (self.panel_focus() == Some(sidebar::PaneFocus::Sidebar)
                     && self.sidebar_chooser_available()
                     && self.chat_widget.completion_can_yield_focus()))
     }
@@ -316,9 +344,18 @@ impl App {
     /// Zoom follows the displayed conversation even when its peer cannot be selected offline.
     pub(super) fn open_pane_focus(&self) -> Option<ThreadId> {
         let focused = self.current_displayed_thread_id()?;
+        if self.panel_focus() == Some(sidebar::PaneFocus::Sidebar)
+            && matches!(
+                self.sidebar()?.visible_content(),
+                Some(sidebar::SidebarContent::Document(_))
+            )
+        {
+            return Some(focused);
+        }
         let child = self.side_pair_key(focused)?;
-        (self.sidebar()?.visible_content() == Some(sidebar::SidebarContent::Chat(child)))
-            .then_some(focused)
+        (self.docked_agent().is_some()
+            || self.sidebar()?.visible_content() == Some(sidebar::SidebarContent::Chat(child)))
+        .then_some(focused)
     }
 
     pub(super) fn switchable_side_child(&self) -> Option<ThreadId> {
@@ -329,7 +366,11 @@ impl App {
     }
 
     pub(super) fn side_pair_key(&self, thread_id: ThreadId) -> Option<ThreadId> {
-        if self.side_threads.contains_key(&thread_id) {
+        if let Some((owner, agent)) = self.docked_agent()
+            && (thread_id == owner || thread_id == agent)
+        {
+            Some(agent)
+        } else if self.side_threads.contains_key(&thread_id) {
             Some(thread_id)
         } else {
             self.side_thread_for_parent(thread_id)
@@ -415,9 +456,13 @@ impl App {
         if self.overlay.is_none()
             && self.chat_widget.no_modal_or_popup_active()
             && self.chat_widget.composer_is_empty()
-            && let Some(target) = self.current_displayed_thread_id()
-            && let Some(side) = self.side_threads.get(&target)
         {
+            let Some(target) = self.current_displayed_thread_id() else {
+                return false;
+            };
+            let Some(side) = self.side_threads.get(&target) else {
+                return false;
+            };
             if matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&'c'))
                 && self.side_retention_enabled(tui)
                 && self.sidebar_chooser_available()
@@ -459,6 +504,40 @@ impl App {
         (target_thread_id == state.parent_thread_id).then_some(active_thread_id)
     }
 
+    pub(super) fn side_conversation_target(&self, active: ThreadId) -> Option<ThreadId> {
+        if self.scrollback_side_chats_enabled()
+            && !self.reconnect.offline
+            && let Some(pane) = self.sidebar()
+        {
+            let tabs = pane.chat_tabs();
+            if let Some(side) = self.side_threads.get(&active) {
+                return tabs
+                    .choice_index(active)
+                    .and_then(|index| tabs.choice(index + 1))
+                    .or(Some(side.parent_thread_id));
+            }
+            return tabs.choice(/*index*/ 1);
+        }
+        if let Some((owner, agent)) = self.docked_agent() {
+            Some(if active == agent { owner } else { agent })
+        } else if let Some(state) = self.side_threads.get(&active) {
+            Some(state.parent_thread_id)
+        } else {
+            self.side_thread_for_parent(active)
+        }
+    }
+
+    pub(super) async fn advance_conversation(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+    ) {
+        if let Err(err) = self.toggle_side_conversation(tui, app_server).await {
+            self.chat_widget
+                .add_error_message(format!("Failed to switch side conversation: {err}"));
+        }
+    }
+
     pub(super) async fn toggle_side_conversation(
         &mut self,
         tui: &mut tui::Tui,
@@ -467,13 +546,23 @@ impl App {
         let Some(active_thread_id) = self.current_displayed_thread_id() else {
             return Ok(());
         };
-        let target_thread_id = if let Some(state) = self.side_threads.get(&active_thread_id) {
-            state.parent_thread_id
-        } else if let Some(side_thread_id) = self.side_thread_for_parent(active_thread_id) {
-            side_thread_id
-        } else {
+        let Some(target_thread_id) = self.side_conversation_target(active_thread_id) else {
             return Ok(());
         };
+        let parent = self
+            .active_side_parent_thread_id()
+            .unwrap_or(active_thread_id);
+        if self.scrollback_side_chats_enabled()
+            && !self.reconnect.offline
+            && target_thread_id != parent
+        {
+            let target = super::sidebar_loading::Target {
+                backend_id: app_server.backend_id(),
+                parent,
+                child: target_thread_id,
+            };
+            return self.open_saved_chat(tui, app_server, target).await;
+        }
 
         self.select_agent_thread(tui, app_server, target_thread_id)
             .await?;
@@ -494,10 +583,18 @@ impl App {
         let Some(child) = self.current_displayed_thread_id() else {
             return Ok(());
         };
-        let Some(side) = self.side_threads.get(&child) else {
+        let parent = self
+            .side_threads
+            .get(&child)
+            .map(|side| side.parent_thread_id)
+            .or_else(|| {
+                self.docked_agent()
+                    .filter(|(_, agent)| *agent == child)
+                    .map(|(parent, _)| parent)
+            });
+        let Some(parent) = parent else {
             return Ok(());
         };
-        let parent = side.parent_thread_id;
         self.select_agent_thread(tui, app_server, parent).await?;
         if self.current_displayed_thread_id() == Some(parent) {
             self.sidebar_mut().hide();
@@ -585,6 +682,7 @@ impl App {
                         response: crate::dynamic_tools::failure_response(
                             "Source task was closed while handling a dynamic tool call",
                         ),
+                        reply: None,
                     });
                     task.abort();
                     false
@@ -743,9 +841,7 @@ impl App {
         mode: SideStartMode,
     ) -> Result<AppRunControl> {
         let workspace = self.side_retention_enabled(tui);
-        let existing = (mode == SideStartMode::Reuse || !workspace)
-            .then(|| self.side_thread_for_parent(parent_thread_id))
-            .flatten();
+        let scrollback = self.scrollback_side_chats_enabled();
         if let Some(pane) = self.sidebars.get_mut(&Some(parent_thread_id))
             && pane.creation.is_some()
         {
@@ -773,6 +869,17 @@ impl App {
             return Ok(AppRunControl::Continue);
         }
 
+        let save_chat =
+            (workspace || scrollback) && app_server.can_list_saved_side_chats(parent_thread_id);
+        let existing = self.side_thread_for_parent(parent_thread_id).filter(|id| {
+            mode == SideStartMode::Reuse
+                || (!workspace
+                    && (!save_chat
+                        || self
+                            .side_threads
+                            .get(id)
+                            .is_some_and(|side| side.storage == SideChatStorage::Temporary)))
+        });
         if let Some(side_thread_id) = existing {
             self.select_agent_thread(tui, app_server, side_thread_id)
                 .await?;
@@ -817,9 +924,10 @@ impl App {
         let fork = app_server.sidebar_fork(
             self.local_settings.clone(),
             self.side_fork_config(),
+            Some(self.chat_widget.session_workspace_roots().to_vec()),
             parent_thread_id,
             self.selected_server_profile(parent_thread_id),
-            if workspace && app_server.can_list_saved_side_chats(parent_thread_id) {
+            if save_chat {
                 SideChatStorage::Attached
             } else {
                 SideChatStorage::Temporary
@@ -907,8 +1015,8 @@ impl App {
         result: Result<Box<crate::app_server_session::SidebarFork>, String>,
     ) {
         match result {
-            Ok(fork) => {
-                app_server.observe_sidebar_fork(&fork);
+            Ok(mut fork) => {
+                app_server.observe_sidebar_fork(&mut fork);
                 let forked = fork.thread;
                 let child_thread_id = forked.session.thread_id;
                 if let Err(err) = fork.boundary {
@@ -953,7 +1061,7 @@ impl App {
                 if !enter {
                     self.side_companions
                         .entry(child_thread_id)
-                        .or_insert_with(|| SideCompanion::empty(forked.session.cwd.clone()));
+                        .or_insert_with(|| SideCompanion::empty(forked.session.cwd.to_path_buf()));
                 }
                 let channel = self.ensure_thread_channel(child_thread_id);
                 channel.backend_id = Some(app_server.backend_id());
@@ -991,7 +1099,7 @@ impl App {
                 if already_selected {
                     // Selection normally skips the live thread. Replay the initialized snapshot
                     // even if the picker exposed this child before the boundary RPC completed.
-                    self.store_active_thread_receiver().await;
+                    self.save_active_thread_state().await;
                     self.active_thread_id = None;
                 }
                 if let Err(err) = self
@@ -1033,8 +1141,8 @@ impl App {
                 }
             }
             Err(err) => {
-                self.chat_widget
-                    .set_side_conversation_context_label(/*label*/ None);
+                self.restore_side_user_message(user_message.take());
+                self.sync_side_thread_ui();
                 self.chat_widget.add_error_message(err);
             }
         }

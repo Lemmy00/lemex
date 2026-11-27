@@ -94,11 +94,18 @@ pub(crate) fn render_tooltip(mut template: &str, keymap: Option<&RuntimeKeymap>)
     while let Some((prefix, rest)) = template.split_once("{key:") {
         let (action, suffix) = rest.split_once('}')?;
         let (context, action) = action.split_once('.')?;
-        let action = keymap_action_id(context, action)?;
-        let hint = keymap?.primary_hint(action.context, action.action)?;
+        let keymap = keymap?;
+        let label = if (context, action) == ("global", "leader") {
+            keymap.chords.leader.first()?.display_label()
+        } else {
+            let action = keymap_action_id(context, action)?;
+            keymap
+                .primary_hint(action.context, action.action)?
+                .display_label()
+        };
         rendered.push_str(prefix);
         // A key or two-key chord can contain literal backticks; use a padded code span.
-        rendered.push_str(&format!("`` {} ``", hint.display_label()));
+        rendered.push_str(&format!("`` {label} ``"));
         template = suffix;
     }
     rendered.push_str(template);
@@ -375,7 +382,21 @@ mod tests {
 
     #[test]
     fn local_tips_do_not_advertise_removed_desktop_commands() {
-        assert!(TOOLTIPS.iter().all(|tip| !tip.contains("desktop app")));
+        for tip in TOOLTIPS.iter() {
+            for removed in [
+                "desktop app",
+                "Codex",
+                "`codex ",
+                "ChatGPT",
+                "send logs to OpenAI",
+                "usage limit resets",
+            ] {
+                assert!(
+                    !tip.contains(removed),
+                    "unexpected product promotion in {tip}"
+                );
+            }
+        }
     }
 
     #[test]

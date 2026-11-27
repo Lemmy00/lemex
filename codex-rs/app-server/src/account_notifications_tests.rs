@@ -14,6 +14,7 @@ async fn queued_notifications_follow_auth_owner_changes(owner_generation: u64) {
         let outgoing = OutgoingMessageSender::new(tx.clone());
         let (changes, auth_changes) = watch::channel(AuthChangeState::default());
         let updated = AccountUpdatedNotification {
+            reason: None,
             auth_mode: None,
             plan_type: None,
         };

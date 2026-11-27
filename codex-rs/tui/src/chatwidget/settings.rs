@@ -49,7 +49,7 @@ impl ChatWidget {
         } else if !self.daybreak_account_eligible() {
             None
         } else {
-            match crate::daybreak::availability(&self.model_catalog.models) {
+            match crate::daybreak::availability(self.model_catalog.models()) {
                 Some(true) => Some("Enable broader access for cybersecurity work"),
                 Some(false) => Some("Learn about broader access for cybersecurity work"),
                 None => Some("Manage broader access for cybersecurity work"),
@@ -223,6 +223,7 @@ impl ChatWidget {
         &mut self,
         current_email: Option<String>,
         current_workspace: Option<String>,
+        plan_type: PlanType,
     ) {
         if let Some(StatusAccountDisplay::ChatGpt {
             email, workspace, ..
@@ -230,6 +231,9 @@ impl ChatWidget {
         {
             *email = current_email;
             *workspace = current_workspace;
+            self.account_plan = Some(plan_type);
+            self.refresh_billing_plan();
+            self.refresh_status_surfaces();
         }
     }
 
@@ -276,7 +280,7 @@ impl ChatWidget {
         let had_refreshing_status_outputs = !self.refreshing_status_outputs.is_empty();
         let now = Local::now();
         for (_, handle) in self.refreshing_status_outputs.drain(..) {
-            handle.finish_rate_limit_refresh(&[], now);
+            handle.finish_rate_limit_refresh(&[], /*quota_plan*/ None, now);
         }
         if had_refreshing_status_outputs {
             self.request_redraw();
@@ -287,9 +291,14 @@ impl ChatWidget {
         self.status_line_workspace_messages_disabled = false;
         self.clear_thread_usage_state();
         self.status_account_display = status_account_display;
+        self.account_plan = plan_type;
+        self.quota_plan = None;
         self.plan_type = plan_type;
         self.has_chatgpt_account = has_chatgpt_account;
-        if api_key_changed {
+        if api_key_changed
+            || (self.model_catalog.models().is_empty()
+                && self.thread_params_mode != crate::ThreadParamsMode::Cloud)
+        {
             self.refresh_account_scoped_models();
         }
         self.set_daybreak_enabled(self.daybreak_enabled);
@@ -347,7 +356,7 @@ impl ChatWidget {
 
     pub(crate) fn should_disable_daybreak(&self, model: &str) -> bool {
         self.daybreak_enabled
-            && self.model_catalog.models.iter().any(|entry| {
+            && self.model_catalog.models().iter().any(|entry| {
                 entry.model == model
                     && crate::daybreak::availability(std::slice::from_ref(entry)) == Some(false)
             })
@@ -430,18 +439,7 @@ impl ChatWidget {
         &mut self,
         notification: ThreadSettingsUpdatedNotification,
     ) {
-        let Ok(thread_id) = ThreadId::from_string(&notification.thread_id) else {
-            tracing::warn!(
-                thread_id = notification.thread_id,
-                "ignoring app-server ThreadSettingsUpdated with invalid thread_id"
-            );
-            return;
-        };
-        if self.thread_id != Some(thread_id) {
-            return;
-        }
-
-        self.apply_thread_settings(notification.thread_settings);
+        self.apply_thread_settings(notification, /*replay_kind*/ None);
     }
 
     #[cfg(test)]
@@ -526,11 +524,61 @@ impl ChatWidget {
         self.refresh_open_model_picker();
     }
 
-    fn apply_thread_settings(&mut self, mut settings: ThreadSettings) {
+    pub(super) fn apply_thread_settings(
+        &mut self,
+        notification: ThreadSettingsUpdatedNotification,
+        replay_kind: Option<ReplayKind>,
+    ) {
+        let Ok(thread_id) = ThreadId::from_string(&notification.thread_id) else {
+            tracing::warn!(
+                thread_id = notification.thread_id,
+                "ignoring app-server ThreadSettingsUpdated with invalid thread_id"
+            );
+            return;
+        };
+        if self.thread_id != Some(thread_id) {
+            return;
+        }
+
+        let mut settings = notification.thread_settings;
         self.invalidate_permission_discovery();
-        let cwd_changed = self.config.cwd != settings.cwd;
-        self.apply_thread_settings_cwd(settings.cwd.clone());
-        self.config.model_provider_id = settings.model_provider.clone();
+        if let Some(environments) = &settings.environments {
+            self.primary_environment_cwd =
+                crate::session_state::primary_environment_cwd(environments);
+        }
+        let Ok(cwd) = crate::app_server_session::decode_thread_cwd(
+            &settings.cwd,
+            self.app_server_path_convention,
+        ) else {
+            tracing::warn!("Invalid cwd in thread settings");
+            return;
+        };
+        let permission_profile = match settings.sandbox_policy.permission_profile_for_cwd(&cwd) {
+            Ok(profile) => profile,
+            Err(err) => {
+                tracing::warn!(%err, "Invalid sandbox policy in thread settings");
+                return;
+            }
+        };
+        let cwd_changed = self.current_cwd != cwd;
+        self.status_line_project_root_name_cache = None;
+        if let Ok(local) = cwd.to_abs_path()
+            && local != self.config.cwd
+        {
+            self.config.cwd = local;
+            self.permission_discovery = None;
+        }
+        crate::session_state::retarget_workspace_root(
+            &mut self.current_workspace_roots,
+            &self.current_cwd,
+            &cwd,
+        );
+        crate::session_state::sync_local_workspace_roots(
+            &mut self.config,
+            &self.current_workspace_roots,
+        );
+        self.current_cwd = cwd;
+        self.set_model_provider(&settings.model_provider);
         self.set_daybreak_enabled(self.daybreak_enabled);
         self.set_service_tier(settings.service_tier.clone());
         if let Err(err) = self
@@ -545,12 +593,11 @@ impl ChatWidget {
         }
         self.set_approvals_reviewer(settings.approvals_reviewer.to_core());
 
-        let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
-            &settings.sandbox_policy.to_core(),
-            settings.cwd.as_path(),
-        );
         let permission_snapshot = PermissionProfileSnapshot::from_session_snapshot(
-            permission_profile,
+            crate::session_state::display_profile_for_roots(
+                permission_profile,
+                &self.current_workspace_roots,
+            ),
             settings.active_permission_profile.take().map(Into::into),
         );
         if let Err(err) = self
@@ -575,7 +622,14 @@ impl ChatWidget {
             self.queue_unavailable_daybreak_disable(&settings.model);
         }
         settings.collaboration_mode.settings.model = settings.model;
+        // A thread switch replays earlier effort changes after restoring the session.
+        // Establish each replayed tier before refreshing the composer so only live changes animate.
+        if replay_kind.is_some() {
+            self.bottom_pane
+                .set_active_reasoning_effort_baseline(settings.effort.as_ref());
+        }
         settings.collaboration_mode.settings.reasoning_effort = settings.effort;
+        self.thread_settings_confirmed = true;
         self.set_effective_collaboration_mode(settings.collaboration_mode);
         self.refresh_effective_service_tier();
         self.refresh_status_surfaces();
@@ -596,30 +650,6 @@ impl ChatWidget {
         }
         self.refresh_plugin_mentions();
         self.request_redraw();
-    }
-
-    fn apply_thread_settings_cwd(&mut self, cwd: AbsolutePathBuf) {
-        let previous_cwd = std::mem::replace(&mut self.config.cwd, cwd.clone());
-        if previous_cwd != cwd {
-            self.permission_discovery = None;
-        }
-        self.current_cwd = Some(cwd.to_path_buf());
-        self.status_line_project_root_name_cache = None;
-
-        if !self.config.workspace_roots.contains(&previous_cwd) {
-            return;
-        }
-
-        let previous_roots = std::mem::take(&mut self.config.workspace_roots);
-        self.config.workspace_roots.push(cwd);
-        for root in previous_roots {
-            if root != previous_cwd && !self.config.workspace_roots.contains(&root) {
-                self.config.workspace_roots.push(root);
-            }
-        }
-        self.config
-            .permissions
-            .set_workspace_roots(self.config.workspace_roots.clone());
     }
 
     pub(crate) fn set_effective_collaboration_mode(&mut self, mode: CollaborationMode) {

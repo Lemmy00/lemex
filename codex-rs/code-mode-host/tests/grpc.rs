@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::PoisonError;
 use std::time::Duration;
@@ -9,8 +10,10 @@ use codex_code_mode::CodeModeNestedToolCall;
 use codex_code_mode::CodeModeSession;
 use codex_code_mode::CodeModeSessionCellExecutionLimits;
 use codex_code_mode::CodeModeSessionDelegate;
+use codex_code_mode::CodeModeSessionOptions;
 use codex_code_mode::CodeModeSessionProvider;
 use codex_code_mode::CodeModeToolKind;
+use codex_code_mode::CodeModeToolResult;
 use codex_code_mode::ExecuteRequest;
 use codex_code_mode::FunctionCallOutputContentItem;
 use codex_code_mode::GrpcCodeModeSessionProvider;
@@ -215,6 +218,103 @@ async fn grpc_endpoints_reject_credentials_without_disclosing_them() {
 }
 
 #[tokio::test]
+async fn text_omits_duplicate_fallback_only_for_the_original_mcp_result() -> Result<()> {
+    let host = HostHarness::start("grpc://127.0.0.1:0").await?;
+    let session = GrpcCodeModeSessionProvider::new(host.endpoint)
+        .create_session()
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let fallback = r#"{ "rows": [ { "z": "ok", "a": 1.0 } ] }"#;
+    let raw = json!({
+        "content": [{"type": "text", "text": fallback}],
+        "structuredContent": {"rows": [{"a": 1, "z": "ok"}]},
+        "isError": false,
+    });
+    let mut req = request(
+        r#"
+const [mcp, plain] = await Promise.all([
+    tools.lookup({ format: "mcp" }),
+    tools.lookup({ format: "json" }),
+]);
+text(mcp);
+text(mcp);
+text(JSON.stringify(mcp));
+text({ ...mcp });
+text(plain);
+store("saved", mcp);
+text(load("saved"));
+await tools.lookup(mcp);
+content(mcp.content);
+mcp.structuredContent = { edited: true };
+text(mcp);
+mcp.toJSON = function () { delete this.toJSON; return plain; };
+text(mcp);
+let reads = 0;
+Object.setPrototypeOf(mcp, {
+    get toJSON() {
+        reads++;
+        return () => plain;
+    },
+});
+text(mcp);
+text(reads);
+"#,
+    );
+    req.enabled_tools = vec![tool("lookup")];
+    let delegate = Arc::new(RecordingDelegate {
+        results_by_input: HashMap::from([
+            (
+                json!({"format": "mcp"}),
+                CodeModeToolResult::McpCallToolResult(raw.clone()),
+            ),
+            (
+                json!({"format": "json"}),
+                CodeModeToolResult::Json(raw.clone()),
+            ),
+        ]),
+        ..Default::default()
+    });
+    let response = execute(&session, req, delegate.clone()).await?;
+    let RuntimeResponse::Result {
+        content_items,
+        error_text: None,
+        ..
+    } = response
+    else {
+        panic!("unexpected response {response:?}");
+    };
+    let reduced = json!({"structuredContent": raw["structuredContent"], "isError": false});
+    let mut edited = raw.clone();
+    edited["structuredContent"] = json!({"edited": true});
+    let expected = [
+        reduced.to_string(),
+        reduced.to_string(),
+        raw.to_string(),
+        raw.to_string(),
+        raw.to_string(),
+        raw.to_string(),
+        fallback.to_string(),
+        edited.to_string(),
+        raw.to_string(),
+        raw.to_string(),
+        "1".to_string(),
+    ]
+    .map(|text| FunctionCallOutputContentItem::InputText { text });
+    assert_eq!(content_items, expected);
+    assert_eq!(
+        delegate
+            .invocations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last()
+            .and_then(|call| call.input.as_ref()),
+        Some(&raw)
+    );
+    session.shutdown().await.map_err(anyhow::Error::msg)?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn tcp_session_persists_values_and_forwards_tools_notifications_and_closure() -> Result<()> {
     let host = HostHarness::start("grpc://127.0.0.1:0").await?;
     assert!(host.endpoint.starts_with("http://127.0.0.1:"));
@@ -222,7 +322,10 @@ async fn tcp_session_persists_values_and_forwards_tools_notifications_and_closur
     let delegate = Arc::new(RecordingDelegate::default());
     let first_delegate = Arc::new(RecordingDelegate::default());
     let session = provider
-        .create_session()
+        .create_session_with_options(CodeModeSessionOptions {
+            heartbeat_interval_s: 1,
+            ..CodeModeSessionOptions::default()
+        })
         .await
         .map_err(anyhow::Error::msg)?;
 
@@ -243,6 +346,8 @@ async fn tcp_session_persists_values_and_forwards_tools_notifications_and_closur
         }
     );
 
+    // Leave both streams idle long enough for the host to send a heartbeat.
+    tokio::time::sleep(Duration::from_secs(2)).await;
     let mut callback = request(
         r#"const result = await tools.echo({ value: String(load("key")) }); notify("notice"); text(result.value);"#,
     );
@@ -1171,6 +1276,7 @@ async fn dropping_a_grpc_lease_retires_its_server_session() -> Result<()> {
         .context("connect raw gRPC client")?;
     let mut lease = client
         .open_session(grpc::OpenSessionRequest {
+            heartbeat_interval_s: 1,
             max_pending_delegate_calls: None,
             cell_execution_limits: None,
             output_truncation: None,
@@ -1186,12 +1292,32 @@ async fn dropping_a_grpc_lease_retires_its_server_session() -> Result<()> {
     let Some(grpc::session_event::Event::Opened(opened)) = first.event else {
         anyhow::bail!("raw gRPC session did not start with an opening event");
     };
+    let mut subscription = client
+        .subscribe_to_tool_calls(grpc::SubscribeToToolCallsRequest {
+            heartbeat_interval_s: 1,
+            session_id: opened.session_id.clone(),
+            tool_names: Vec::new(),
+        })
+        .await?
+        .into_inner();
+    let (event, call) = timeout(TEST_TIMEOUT, async {
+        tokio::try_join!(lease.message(), subscription.message())
+    })
+    .await
+    .context("missing an idle Code Mode stream heartbeat")??;
+    assert!(matches!(
+        event.and_then(|event| event.event),
+        Some(grpc::session_event::Event::Heartbeat(_))
+    ));
+    assert!(call.is_some_and(|call| call.heartbeat.is_some()));
+    drop(subscription);
     drop(lease);
 
     timeout(TEST_TIMEOUT, async {
         loop {
             match client
                 .subscribe_to_tool_calls(grpc::SubscribeToToolCallsRequest {
+                    heartbeat_interval_s: 0,
                     session_id: opened.session_id.clone(),
                     tool_names: Vec::new(),
                 })

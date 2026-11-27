@@ -2,7 +2,6 @@ mod configured;
 mod destination;
 mod environment;
 mod matching;
-mod provider_config;
 mod providers;
 mod registry;
 mod replacement;
@@ -26,6 +25,8 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use url::Url;
 
+pub use codex_network_policy_types::CredentialAuthMethod;
+pub use codex_network_policy_types::CredentialProviderConfig;
 pub use environment::CredentialBrokerContext;
 pub use environment::CredentialBrokerEnvironment;
 pub use environment::brokered_credential_binding_env_keys;
@@ -37,8 +38,15 @@ pub use environment::credential_broker_provider_context_env_keys;
 pub use environment::credential_broker_provider_sources_allowed;
 pub use environment::is_credential_broker_provider_env_key;
 pub(crate) use environment::marked_credential_dummy_env_keys;
-pub use provider_config::CredentialAuthMethod;
-pub use provider_config::CredentialProviderConfig;
+
+/// Validate a complete provider definition using the broker's compilation rules.
+pub fn validate_credential_provider(
+    id: &str,
+    config: &CredentialProviderConfig,
+) -> anyhow::Result<()> {
+    configured::ConfiguredCredentialProvider::compile(id, config)?;
+    Ok(())
+}
 
 pub const CREDENTIAL_BROKER_ACTIVE_ENV_KEY: &str = "CODEX_NETWORK_PROXY_CREDENTIAL_BROKER_ACTIVE";
 pub(crate) const BROKERED_CREDENTIALS_ENV_KEY: &str = "CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS";
@@ -54,6 +62,71 @@ pub enum CredentialMaskingFailureMode {
     Deny,
     /// Reject the command environment.
     Error,
+}
+
+/// How the proxy handles brokered credentials while an executor shell starts.
+#[derive(Clone, Copy)]
+pub enum ShellStartupCredentials {
+    ProtectedSnapshot,
+    MaskedCommand,
+    UnmaskedCommand,
+}
+
+impl ShellStartupCredentials {
+    /// Only this exact login invocation can be replayed from a protected snapshot.
+    pub fn supports_snapshot(
+        argv: &[String],
+        arg0: Option<&str>,
+        shell_name: &str,
+        shell_path: &str,
+    ) -> bool {
+        cfg!(any(target_os = "linux", target_os = "macos"))
+            && arg0.is_none()
+            && shell_name == "zsh"
+            && matches!(argv, [program, flag, _] if program == shell_path && flag == "-lc"
+                && std::path::Path::new(program).file_name().is_some_and(|name| name == "zsh"))
+    }
+
+    /// Classify the original shell environment before proxy preparation rewrites it.
+    pub fn for_command(
+        argv: &[String],
+        arg0: Option<&str>,
+        snapshot_shell: Option<(&str, &str)>,
+        env: &HashMap<String, String>,
+    ) -> Self {
+        if let Some((name, path)) = snapshot_shell {
+            if Self::supports_snapshot(argv, arg0, name, path) {
+                return Self::ProtectedSnapshot;
+            }
+        } else if cfg!(any(target_os = "linux", target_os = "macos"))
+            && arg0.is_none()
+            && matches!(argv, [program, flag, _] if std::path::Path::new(program).file_name().is_some_and(|name| name == "bash") && flag == "-c")
+            && !["BASH_ENV", "ENV", "SSH_CLIENT", "SSH2_CLIENT"]
+                .iter()
+                .any(|key| env.contains_key(*key))
+        {
+            return Self::MaskedCommand;
+        }
+        Self::UnmaskedCommand
+    }
+
+    /// Apply the startup decision to this child only. Earlier commands retain their bindings.
+    pub fn apply(
+        self,
+        proxy: &crate::NetworkProxy,
+        env: &mut HashMap<String, String>,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::MaskedCommand => {
+                proxy.handle_unmasked_credentials(env, CredentialMaskingFailureMode::Warn)
+            }
+            // Both start with real credentials. Protected snapshots mask the captured state afterward.
+            Self::ProtectedSnapshot | Self::UnmaskedCommand => {
+                proxy.restore_and_disable_brokered_credentials(env, &mut []);
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Clone)]

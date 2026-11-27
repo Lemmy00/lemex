@@ -18,6 +18,8 @@ use crate::ConversationTranscriptConfig;
 use crate::ConversationTranscriptEntry;
 use crate::ConversationTranscriptEntryKind;
 use crate::ConversationTranscriptOptions;
+use crate::ElasticBudgetConfig;
+use crate::ElasticSection;
 use crate::PreparedTranscript;
 use crate::Retention;
 use crate::TranscriptContent;
@@ -59,6 +61,7 @@ struct TranscriptEntry {
     original_bytes: usize,
     retained_bytes: usize,
     source: Option<codex_history::RetainedSource>,
+    tool_priority: BudgetPriority,
 }
 
 impl ContextProfile {
@@ -73,6 +76,7 @@ impl ContextProfile {
                     include_tool_outputs: true,
                     include_reasoning: false,
                     native_multi_agent_namespace: None,
+                    frame_native_agent_actions: false,
                 },
                 entry_limits: TranscriptEntryLimits {
                     message_tokens: 5_000,
@@ -100,6 +104,7 @@ impl ContextProfile {
                     include_tool_outputs: true,
                     include_reasoning: false,
                     native_multi_agent_namespace: None,
+                    frame_native_agent_actions: false,
                 },
                 entry_limits: TranscriptEntryLimits {
                     message_tokens: 2_000,
@@ -128,6 +133,7 @@ impl ContextProfile {
             transcript_entries.iter().map(Cow::Borrowed),
             entry_number_offset,
             ContextBudgeting::Fixed,
+            /*elastic*/ None,
         )
     }
 
@@ -136,7 +142,13 @@ impl ContextProfile {
         transcript_entries: impl IntoIterator<Item = Cow<'a, ConversationTranscriptEntry>>,
         entry_number_offset: usize,
         budgeting: ContextBudgeting,
+        elastic: Option<&ElasticBudgetConfig>,
     ) -> PreparedTranscript {
+        let reserve_audio = elastic.is_some_and(|config| {
+            config
+                .sections
+                .contains_key(&ElasticSection::TranscriptAudio)
+        });
         let entries = transcript_entries
             .into_iter()
             .enumerate()
@@ -151,9 +163,13 @@ impl ContextProfile {
                         TranscriptEntryKind::ProtectedMessage
                     }
                     ConversationTranscriptEntryKind::Assistant
+                    | ConversationTranscriptEntryKind::UserAudioTranscript(_)
                     | ConversationTranscriptEntryKind::Reasoning => TranscriptEntryKind::Message,
-                    ConversationTranscriptEntryKind::ToolCall(_)
+                    ConversationTranscriptEntryKind::SelectedExecOutput
+                    | ConversationTranscriptEntryKind::ToolCall(_)
+                    | ConversationTranscriptEntryKind::EnclosingToolCall(_)
                     | ConversationTranscriptEntryKind::ToolOutput(_)
+                    | ConversationTranscriptEntryKind::ToolAudioTranscript(_)
                     | ConversationTranscriptEntryKind::NodeReplToolOutput(_) => {
                         TranscriptEntryKind::Tool
                     }
@@ -207,6 +223,13 @@ impl ContextProfile {
                     original_bytes: entry.original_bytes,
                     retained_bytes,
                     source: retained_source.map(|retained| retained.source.clone()),
+                    tool_priority: match (&entry.kind, budgeting) {
+                        (
+                            ConversationTranscriptEntryKind::SelectedExecOutput,
+                            ContextBudgeting::Elastic,
+                        ) => BudgetPriority::SelectedExecResult,
+                        _ => BudgetPriority::Tool,
+                    },
                 }
             })
             .collect::<Vec<_>>();
@@ -310,11 +333,17 @@ impl ContextProfile {
                             }
                         }
                         TranscriptEntryKind::ProtectedMessage => Budgeted::required(entry.content),
+                        TranscriptEntryKind::Message | TranscriptEntryKind::Tool
+                            if reserve_audio
+                                && matches!(&entry.content, TranscriptContent::Record(record) if record.is_audio_transcript) =>
+                        {
+                            Budgeted::optional(entry.content, BudgetPriority::AudioTranscript)
+                        }
                         TranscriptEntryKind::Message => {
                             Budgeted::optional(entry.content, BudgetPriority::Commentary)
                         }
                         TranscriptEntryKind::Tool => {
-                            Budgeted::optional(entry.content, BudgetPriority::Tool)
+                            Budgeted::optional(entry.content, entry.tool_priority)
                         }
                     })
                 } else {
@@ -375,11 +404,15 @@ fn prepare_fixed_content<'a>(
     };
     let tokens = match &entry.kind {
         ConversationTranscriptEntryKind::ToolCall(_)
-        | ConversationTranscriptEntryKind::ToolOutput(_) => limits.tool_tokens,
+        | ConversationTranscriptEntryKind::EnclosingToolCall(_)
+        | ConversationTranscriptEntryKind::ToolOutput(_)
+        | ConversationTranscriptEntryKind::ToolAudioTranscript(_) => limits.tool_tokens,
         ConversationTranscriptEntryKind::Assistant
         | ConversationTranscriptEntryKind::ProtectedAssistant
+        | ConversationTranscriptEntryKind::UserAudioTranscript(_)
         | ConversationTranscriptEntryKind::Reasoning => limits.message_tokens,
         ConversationTranscriptEntryKind::NodeReplToolOutput(_) => limits.node_repl_output_tokens,
+        ConversationTranscriptEntryKind::SelectedExecOutput => limits.tool_tokens,
         ConversationTranscriptEntryKind::User | ConversationTranscriptEntryKind::Developer => {
             return std::borrow::Cow::Borrowed(&entry.content);
         }

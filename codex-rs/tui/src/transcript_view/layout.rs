@@ -25,13 +25,14 @@ pub(super) fn activity_layout(
     mut lines: ActivityTranscriptLines,
     width: u16,
     expanded: bool,
+    bidi_layout: bool,
     shortcut: Option<ShortcutHint>,
 ) -> TextLayout {
     let has_details = !lines.activity.is_empty() && (expanded || lines.disclosure.is_some());
     let source_offset = (!lines.auxiliary.is_empty())
         .then(|| TextLayout::new(lines.activity.clone(), width).text().len());
     lines.activity.extend(lines.auxiliary);
-    let layout = TextLayout::new(lines.activity, width);
+    let layout = TextLayout::new(bidi::session_lines(lines.activity, bidi_layout), width);
     if !has_details {
         return layout;
     }
@@ -59,7 +60,7 @@ pub(super) fn activity_layout(
 }
 
 fn cell_content_layout(
-    cell: &dyn HistoryCell,
+    cell: &Arc<dyn HistoryCell>,
     width: u16,
     mode: HistoryRenderMode,
     presentation: CellPresentation,
@@ -78,20 +79,34 @@ fn cell_content_layout(
             },
             width,
             presentation.expanded,
+            presentation.bidi_layout,
             shortcut,
         )
     } else {
-        TextLayout::new(
-            crate::history_cell::fullscreen_session_lines(cell, width, presentation.detailed, mode),
+        let lines = crate::history_cell::fullscreen_session_lines(
+            cell.as_ref(),
             width,
-        )
+            presentation.detailed,
+            mode,
+        );
+        TextLayout::new(bidi::session_lines(lines, presentation.bidi_layout), width)
     };
     if let Some(protocol) = presentation.image_protocol
         && let Some(path) = cell.image_path()
     {
+        use crate::transcript_image::PreviewKind;
+        let kind = if cell
+            .as_any()
+            .is::<crate::history_cell::ImageGenerationHistoryCell>()
+        {
+            PreviewKind::Generated
+        } else {
+            PreviewKind::Inspected
+        };
         layout.image =
-            crate::transcript_image::TranscriptImage::load(path.as_path(), width, protocol)
+            crate::transcript_image::TranscriptImage::load(path.as_path(), width, protocol, kind)
                 .map(Arc::new);
+        layout.image_left_aligned = kind == PreviewKind::Generated;
     }
     layout
 }
@@ -102,7 +117,9 @@ fn is_rich_user_prompt(cell: &dyn HistoryCell, mode: HistoryRenderMode) -> bool 
 
 #[derive(Default)]
 pub(super) struct LayoutCache {
+    pub(super) images: markdown_images::MarkdownImages,
     entries: Vec<CachedLayout>,
+    document_resize_preview: bool,
     frame: u64,
     render_state: Option<RenderState>,
 }
@@ -110,6 +127,7 @@ pub(super) struct LayoutCache {
 #[derive(PartialEq, Eq)]
 struct RenderState {
     theme: u64,
+    document_links: bool,
     foreground: Option<(u8, u8, u8)>,
     background: Option<(u8, u8, u8)>,
     color_level: crate::terminal_palette::StdoutColorLevel,
@@ -132,6 +150,7 @@ pub(super) struct CellPresentation {
     shares_prompt_background: bool,
     turn_tip_space: bool,
     expanded: bool,
+    bidi_layout: bool,
     disclosure: bool,
     detailed: bool,
     image_protocol: Option<crate::terminal_image::ImageProtocol>,
@@ -152,6 +171,7 @@ impl TranscriptView {
             self.disclosure.expanded.extend(ids);
         }
         CellPresentation {
+            bidi_layout: self.bidi_layout,
             summarized: false,
             separated: false,
             shares_prompt_background: false,
@@ -193,6 +213,8 @@ impl TranscriptView {
         if let Some(layout) = self
             .snapshot()
             .and_then(|snapshot| snapshot.pinned.get(&key))
+            // Refresh previews after selection releases the pinned text layout.
+            .filter(|layout| self.selection.is_some() || !layout.has_markdown_images)
         {
             return Some(Arc::clone(layout));
         }
@@ -286,7 +308,7 @@ impl TranscriptView {
                     self.cache
                         .has_visible_content(previous, width, previous_presentation, || {
                             cell_content_layout(
-                                previous.as_ref(),
+                                previous,
                                 width,
                                 mode,
                                 previous_presentation,
@@ -300,8 +322,7 @@ impl TranscriptView {
         presentation.shares_prompt_background = shares_prompt_background;
         presentation.turn_tip_space = self.turn_tip_key == Some(EntryKey::cell(cell));
         Some(self.cache.get(cell, width, presentation, || {
-            let mut layout =
-                cell_content_layout(cell.as_ref(), width, mode, presentation, shortcut);
+            let mut layout = cell_content_layout(cell, width, mode, presentation, shortcut);
             if shares_prompt_background {
                 layout = layout.without_leading_blank_row();
             }
@@ -314,10 +335,32 @@ impl TranscriptView {
 }
 
 impl LayoutCache {
+    pub(super) fn cell_size(&self) -> Option<(u32, u32)> {
+        self.render_state.as_ref().and_then(|state| state.cell_size)
+    }
+
+    pub(super) fn set_document_resize_preview(&mut self, active: bool) {
+        if self.document_resize_preview && !active {
+            // Markdown tables and other width-dependent content need an exact final layout.
+            self.clear();
+        }
+        self.document_resize_preview = active;
+    }
+
+    pub(super) fn has_mutable_source(&self) -> bool {
+        self.entries.iter().any(|entry| {
+            entry
+                .source
+                .upgrade()
+                .is_some_and(|cell| !cell.has_stable_transcript_height())
+        })
+    }
+
     pub(super) fn begin_frame(&mut self) {
         self.frame = self.frame.wrapping_add(/*rhs*/ 1);
         let state = RenderState {
             theme: crate::render::highlight::syntax_theme_revision(),
+            document_links: crate::markdown_render::preferences::document_links_enabled(),
             foreground: crate::terminal_palette::default_fg(),
             background: crate::terminal_palette::default_bg(),
             color_level: crate::terminal_palette::stdout_color_level(),
@@ -326,6 +369,9 @@ impl LayoutCache {
         if self.render_state.as_ref() != Some(&state) {
             self.entries.clear();
             self.render_state = Some(state);
+        }
+        if let Some(reply) = self.images.poll() {
+            self.entries.retain(|entry| !entry.source.ptr_eq(&reply));
         }
     }
 
@@ -339,21 +385,33 @@ impl LayoutCache {
         let source = Arc::downgrade(cell);
         let animation_tick = cell.transcript_animation_tick();
         if let Some(index) = self.entries.iter().position(|entry| {
-            entry.width == width
+            (entry.width == width || self.document_resize_preview)
                 && entry.presentation == presentation
                 && entry.source.ptr_eq(&source)
                 && (entry.rendered_frame == self.frame
                     || (cell.has_stable_transcript_height()
                         && entry.animation_tick == animation_tick))
         }) {
-            let layout = Arc::clone(&self.entries[index].layout);
+            let entry = &mut self.entries[index];
+            if entry.width != width {
+                // Keep the document's styled source and links while the divider moves.
+                entry.layout = Arc::new(entry.layout.rewrap(width));
+                entry.width = width;
+            }
+            let layout = Arc::clone(&entry.layout);
             if index + 1 != self.entries.len() {
                 let entry = self.entries.remove(index);
                 self.entries.push(entry);
             }
             return layout;
         }
-        let layout = render();
+        let mut layout = render();
+        if let Some(protocol) = presentation.image_protocol
+            && cell.as_any().is::<crate::history_cell::AgentMarkdownCell>()
+        {
+            let size = self.cell_size();
+            images::attach(&mut layout, cell, protocol, size, &self.images);
+        }
         let layout = if presentation.separated {
             layout.with_leading_separator()
         } else {
@@ -418,6 +476,8 @@ impl LayoutCache {
     fn evict(&mut self) {
         let retained_bytes = |entry: &CachedLayout| {
             entry.layout.text().len()
+                + entry.layout.mapping_bytes
+                + images::retained_bytes(&entry.layout)
                 + entry
                     .layout
                     .image

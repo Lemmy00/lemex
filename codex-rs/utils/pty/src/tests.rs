@@ -511,8 +511,8 @@ async fn pipe_and_pty_share_interface() -> anyhow::Result<()> {
         crate::ChildFds::Inherited(&[]),
     )
     .await?;
-    let (_pipe_session, pipe_output_rx, pipe_exit_rx) = combine_spawned_output(pipe);
-    let (_pty_session, pty_output_rx, pty_exit_rx) = combine_spawned_output(pty);
+    let (pipe_session, pipe_output_rx, pipe_exit_rx) = combine_spawned_output(pipe);
+    let (pty_session, pty_output_rx, pty_exit_rx) = combine_spawned_output(pty);
 
     let timeout_ms = if cfg!(windows) { 10_000 } else { 3_000 };
     let (pipe_out, pipe_code) =
@@ -520,8 +520,11 @@ async fn pipe_and_pty_share_interface() -> anyhow::Result<()> {
     let (pty_out, pty_code) =
         collect_output_until_exit(pty_output_rx, pty_exit_rx, timeout_ms).await;
 
-    assert_eq!(pipe_code, 0);
-    assert_eq!(pty_code, 0);
+    for (session, code) in [(&pipe_session, pipe_code), (&pty_session, pty_code)] {
+        assert_eq!(code, 0);
+        assert!(session.has_exited());
+        assert_eq!(session.exit_code(), Some(code));
+    }
     assert!(
         String::from_utf8_lossy(&pipe_out).contains("pipe_ok"),
         "pipe output mismatch: {pipe_out:?}"
@@ -764,29 +767,32 @@ async fn driver_backed_process_drains_output_that_arrives_after_exit_signal() ->
     });
 
     let SpawnedProcess {
-        session: _session,
+        session,
         stdout_rx,
         stderr_rx: _stderr_rx,
         exit_rx,
     } = spawned;
     let stdout_task = tokio::spawn(async move { collect_split_output(stdout_rx).await });
 
-    exit_tx.send(0).expect("send exit code");
-    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-    stdout_tx.send(b"tail".to_vec())?;
-    drop(stdout_tx);
-
+    assert_eq!((session.has_exited(), session.exit_code()), (false, None));
+    exit_tx.send(17).expect("send exit code");
     let timeout = tokio::time::Duration::from_secs(2);
     let code = tokio::time::timeout(timeout, exit_rx)
         .await
-        .map_err(|_| anyhow::anyhow!("timed out waiting for driver exit"))?
-        .unwrap_or(-1);
+        .map_err(|_| anyhow::anyhow!("timed out waiting for driver exit"))??;
+    assert_eq!(code, 17);
+    assert_eq!(
+        (session.has_exited(), session.exit_code()),
+        (true, Some(code))
+    );
+
+    stdout_tx.send(b"tail".to_vec())?;
+    drop(stdout_tx);
     let stdout = tokio::time::timeout(timeout, stdout_task)
         .await
         .map_err(|_| anyhow::anyhow!("timed out waiting to drain driver stdout"))??;
 
     assert_eq!(stdout, b"tail".to_vec());
-    assert_eq!(code, 0);
 
     Ok(())
 }
@@ -1277,6 +1283,53 @@ fn pty_terminate_reaps_child_when_waiter_is_queued() -> anyhow::Result<()> {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn pty_with_dispatch_name_uses_child_home_and_path() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    std::fs::create_dir_all(home.path().join("bin/tools"))?;
+    std::os::unix::fs::symlink("/bin/sh", home.path().join("bin/tools/sh"))?;
+    let missing_cwd = home.path().join("missing");
+    let env = HashMap::from([(
+        "HOME".to_owned(),
+        home.path().to_str().expect("temp path").to_owned(),
+    )]);
+    let mut search_env = env.clone();
+    search_env.insert("PATH".to_owned(), "bin".to_owned());
+    let arg0 = Some("pty-dispatch".to_owned());
+    let args = [
+        "-c".to_owned(),
+        r#"test -x bin/tools/sh && printf '%s' "$0""#.to_owned(),
+    ];
+    let spawn = |program, env| {
+        spawn_pty_process(
+            program,
+            &args,
+            &missing_cwd,
+            env,
+            &arg0,
+            TerminalSize::default(),
+            crate::ChildFds::Inherited(&[]),
+        )
+    };
+    assert!(
+        spawn("sh", &env).await.is_err(),
+        "PTY searched outside its environment"
+    );
+    for (program, env) in [("./bin/tools/sh", &env), ("tools/sh", &search_env)] {
+        let mut child = spawn(program, env).await?;
+        let mut output = Vec::new();
+        while let Some(chunk) = child.stdout_rx.recv().await {
+            output.extend(chunk);
+        }
+        assert_eq!(
+            (child.exit_rx.await?, output),
+            (0, b"pty-dispatch".to_vec())
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn pty_attachments_preserve_shell_environment_and_signal_status() -> anyhow::Result<()> {
     use std::os::fd::AsRawFd;
     let reader = std::fs::File::open("/dev/null")?;
@@ -1311,10 +1364,9 @@ async fn pty_attachments_preserve_shell_environment_and_signal_status() -> anyho
             unsafe { libc::fcntl(reader.as_raw_fd(), libc::F_GETFD) },
             flags
         );
-        let (_session, output_rx, exit_rx) = combine_spawned_output(spawned);
         let (bytes, status) =
-            collect_output_until_exit(output_rx, exit_rx, /*timeout_ms*/ 2_000).await;
-        assert_eq!(status, expected_status);
+            tokio::join!(collect_split_output(spawned.stdout_rx), spawned.exit_rx);
+        assert_eq!(status?, expected_status);
         output.push(bytes);
     }
     assert!(!output[0].is_empty());

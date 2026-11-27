@@ -9,6 +9,7 @@ use codex_api::ImageEditRequest;
 use codex_api::ImageGenerationRequest;
 use codex_api::ImageOutput;
 use codex_api::ImageQuality;
+use codex_attachment_store::UploadContent;
 use codex_attachment_store::UploadRequest;
 use codex_attachment_store::UploadResult;
 use codex_exec_server::CreateDirectoryOptions;
@@ -41,6 +42,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
+use codex_tools::CodeModeToolResult;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
@@ -79,6 +81,7 @@ pub(crate) struct ImageGenerationTool {
     save_root: Option<AbsolutePathBuf>,
     thread_id: String,
     gif_enabled: bool,
+    exposure: ToolExposure,
 }
 
 impl ImageGenerationTool {
@@ -88,12 +91,14 @@ impl ImageGenerationTool {
         save_root: Option<AbsolutePathBuf>,
         thread_id: String,
         gif_enabled: bool,
+        exposure: ToolExposure,
     ) -> Self {
         Self {
             backend,
             save_root,
             thread_id,
             gif_enabled,
+            exposure,
         }
     }
 }
@@ -124,6 +129,7 @@ fn legacy_end_event(item: &ImageGenerationItem) -> EventMsg {
         saved_path: item.saved_path.clone(),
         input_images: item.input_images.clone(),
         generation_id: item.generation_id.clone(),
+        image_metadata: item.image_metadata.clone(),
     })
 }
 
@@ -134,7 +140,7 @@ fn extension_turn_item(item: ImageGenerationItem, legacy_event: EventMsg) -> Ext
     }
 }
 
-impl<'call> ToolExecutor<ToolCall<'call>> for ImageGenerationTool {
+impl ToolExecutor for ImageGenerationTool {
     /// Keeps the tool in the existing image-generation Responses namespace.
     fn tool_name(&self) -> ToolName {
         ToolName::namespaced(IMAGE_GEN_NAMESPACE, IMAGEGEN_TOOL_NAME)
@@ -145,16 +151,12 @@ impl<'call> ToolExecutor<ToolCall<'call>> for ImageGenerationTool {
         imagegen_tool_spec(self.gif_enabled)
     }
 
-    /// Exposes image generation directly and through the nested code-mode tool surface.
     fn exposure(&self) -> ToolExposure {
-        ToolExposure::Direct
+        self.exposure
     }
 
     /// Executes the selected image operation and returns the completed image result.
-    fn handle<'a>(&'a self, call: ToolCall<'call>) -> codex_extension_api::ToolExecutorFuture<'a>
-    where
-        'call: 'a,
-    {
+    fn handle<'a>(&'a self, call: ToolCall<'a>) -> codex_extension_api::ToolExecutorFuture<'a> {
         Box::pin(self.handle_call(call))
     }
 }
@@ -190,6 +192,7 @@ impl ImageGenerationTool {
                     input_images: Vec::new(),
                     imagegen_request_id: None,
                     generation_id: None,
+                    image_metadata: Default::default(),
                 },
                 EventMsg::ImageGenerationBegin(ImageGenerationBeginEvent {
                     call_id: call.call_id.clone(),
@@ -222,12 +225,7 @@ impl ImageGenerationTool {
                 Some(ImageBackground::Auto) | None => None,
             };
             match response.data.into_iter().next() {
-                Some(data) => Ok((
-                    data.b64_json,
-                    transparent_background,
-                    imagegen_request_id,
-                    data.generation_id,
-                )),
+                Some(data) => Ok((data, transparent_background, imagegen_request_id)),
                 None => Err((
                     "image generation returned no image data".to_string(),
                     None,
@@ -235,7 +233,7 @@ impl ImageGenerationTool {
                 )),
             }
         });
-        let (result, transparent_background, imagegen_request_id, generation_id) = match result {
+        let (data, transparent_background, imagegen_request_id) = match result {
             Ok(result) => result,
             Err((message, failure, imagegen_request_id)) => {
                 let item = ImageGenerationItem {
@@ -251,6 +249,7 @@ impl ImageGenerationTool {
                     input_images: Vec::new(),
                     imagegen_request_id,
                     generation_id: None,
+                    image_metadata: Default::default(),
                 };
                 let legacy_event = legacy_end_event(&item);
                 call.turn_item_emitter
@@ -259,6 +258,7 @@ impl ImageGenerationTool {
                 return Err(FunctionCallError::RespondToModel(message));
             }
         };
+        let result = data.b64_json;
         // TODO(anp): Migrate image tool path arguments and saved-path events to PathUri so image
         // operations can use the primary environment even when its paths are foreign to the host.
         let saved_path = save_image_generation_result(
@@ -278,9 +278,11 @@ impl ImageGenerationTool {
                 let request = UploadRequest {
                     thread_id: self.thread_id.clone(),
                     ephemeral: call.ephemeral,
-                    file_name: None,
-                    tags: HashMap::from([("usage".to_string(), "image_gen".to_string())]),
-                    data,
+                    content: UploadContent::Image {
+                        file_name: None,
+                        tags: HashMap::from([("usage".to_string(), "image_gen".to_string())]),
+                        data,
+                    },
                 };
                 match call.attachment_store.upload(request).await {
                     Ok(UploadResult::File { file_id }) => GeneratedImageRef::File { file_id },
@@ -315,7 +317,8 @@ impl ImageGenerationTool {
             saved_path: saved_path.clone(),
             input_images,
             imagegen_request_id,
-            generation_id,
+            generation_id: data.generation_id,
+            image_metadata: data.image_metadata,
         };
         let legacy_event = legacy_end_event(&item);
         call.turn_item_emitter
@@ -771,7 +774,7 @@ impl ToolOutput for GeneratedImageOutput {
     }
 
     /// Returns the object consumed by the code-mode `generatedImage()` helper.
-    fn code_mode_result(&self, _payload: &ToolPayload) -> Value {
+    fn code_mode_result(&self, _payload: &ToolPayload) -> CodeModeToolResult {
         let mut result = Map::from_iter([(
             "image_url".to_string(),
             Value::String(format!(
@@ -786,7 +789,7 @@ impl ToolOutput for GeneratedImageOutput {
                 Value::String(output_hint.clone()),
             );
         }
-        Value::Object(result)
+        CodeModeToolResult::from(Value::Object(result))
     }
 
     /// Returns generated bytes and persisted-artifact context for model follow-up.

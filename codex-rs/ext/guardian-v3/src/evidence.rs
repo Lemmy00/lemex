@@ -2,23 +2,30 @@
 //! A capture has a fixed end; consumers acknowledge records only after their writes succeed.
 
 use anyhow::ensure;
+use codex_context_fragments::AnnotatedContent;
+use codex_context_fragments::set_annotated_content;
+use codex_context_fragments::to_annotated_content;
 use codex_history::CodexHarnessMetadata;
 use codex_history::HistoryInitialization;
 use codex_history::ResponseItemEnvelope;
 use codex_history::RetainedContextEvent;
 use codex_history::RolloutItem;
 use codex_protocol::ThreadId;
+use codex_protocol::models::ContentItem;
 use codex_protocol::models::ContentItemProvenance;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::is_closing_media_label;
+use codex_protocol::models::is_opening_media_label;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::HistoryPosition;
 use codex_protocol::protocol::ThreadHistoryMode;
+use codex_thread_store::OriginalHistoryRead;
 use codex_thread_store::OriginalHistoryRequest;
 use codex_thread_store::ThreadStore;
+use codex_thread_store::ThreadStoreResult;
 use codex_utils_string::to_json_string_bounded;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::Arc;
 
 /// Position in the containing snapshot's root history, independent of channel routing.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -35,15 +42,6 @@ impl EvidenceId {
             /*max_bytes*/ 512,
         )?)
     }
-
-    pub(crate) fn from_request_id(request: &str, channel: &str) -> anyhow::Result<Self> {
-        let (ordinal, destination): (u64, String) = serde_json::from_str(request)?;
-        ensure!(
-            destination == channel,
-            "evidence request ID channel mismatch"
-        );
-        Ok(Self { ordinal })
-    }
 }
 
 /// Original model-visible evidence, with roles, call IDs and verified source order.
@@ -57,21 +55,25 @@ pub struct OriginalEvidence {
 }
 
 /// An immutable capture. Later history appends cannot enter its reads or routing.
-/// Clones share the captured records rather than copying message payloads.
-#[derive(Clone)]
 pub struct EvidenceSnapshot {
     thread_id: ThreadId,
     start: HistoryPosition,
     end: HistoryPosition,
-    records: Arc<[OriginalEvidence]>,
+    records: Vec<OriginalEvidence>,
+    // Report these positions only when the intake cursor accepts this capture.
+    pub(super) skipped_incomplete_deliveries: Vec<u64>,
 }
 
 impl EvidenceSnapshot {
+    pub(super) fn source_advanced(&self) -> bool {
+        self.start != self.end
+    }
+
     pub fn thread_id(&self) -> ThreadId {
         self.thread_id
     }
 
-    /// Exclusive durable source boundary to bind later retrieval to this capture.
+    /// Exclusive end of the original history read by the housekeeper.
     pub fn cutoff(&self) -> HistoryPosition {
         self.end
     }
@@ -91,6 +93,17 @@ pub struct EvidenceCursor {
 }
 
 impl EvidenceCursor {
+    pub(super) fn start(thread_id: ThreadId) -> Self {
+        Self {
+            thread_id,
+            position: HistoryPosition {
+                thread_id,
+                end_ordinal_exclusive: 0,
+                end_byte_offset: 0,
+            },
+        }
+    }
+
     /// Fresh roots have no prior evidence. Resumed roots start at their durable tail.
     pub async fn at_thread_ready(
         store: &dyn ThreadStore,
@@ -103,14 +116,9 @@ impl EvidenceCursor {
             "Guardian evidence requires paginated root history"
         );
         match initialization {
-            HistoryInitialization::New | HistoryInitialization::Cleared => Ok(Self {
-                thread_id,
-                position: HistoryPosition {
-                    thread_id,
-                    end_ordinal_exclusive: 0,
-                    end_byte_offset: 0,
-                },
-            }),
+            HistoryInitialization::New | HistoryInitialization::Cleared => {
+                Ok(Self::start(thread_id))
+            }
             HistoryInitialization::ColdResume
             | HistoryInitialization::SuppliedHistory
             | HistoryInitialization::WarmFork
@@ -133,13 +141,31 @@ impl EvidenceCursor {
         self.thread_id
     }
 
+    pub(super) fn position(&self) -> HistoryPosition {
+        self.position
+    }
+
     /// Read the unread suffix through a fixed cutoff without advancing progress.
     pub async fn capture(&self, store: &dyn ThreadStore) -> anyhow::Result<EvidenceSnapshot> {
-        let history = store
+        self.snapshot(self.read_history(store).await?)
+    }
+
+    pub(super) async fn read_history(
+        &self,
+        store: &dyn ThreadStore,
+    ) -> ThreadStoreResult<OriginalHistoryRead> {
+        store
             .read_original_history(self.thread_id, OriginalHistoryRequest::After(self.position))
-            .await?;
+            .await
+    }
+
+    pub(super) fn snapshot(
+        &self,
+        history: OriginalHistoryRead,
+    ) -> anyhow::Result<EvidenceSnapshot> {
         let end = history.end;
         let mut records = Vec::new();
+        let mut skipped_incomplete_deliveries = Vec::new();
         for record in history.items {
             // The first capture of a previously empty rollout includes its validated header.
             if record.end.end_ordinal_exclusive == 1
@@ -147,13 +173,16 @@ impl EvidenceCursor {
             {
                 continue;
             }
-            if let Some(original) = review_original(record.item)? {
+            let ordinal = record
+                .end
+                .end_ordinal_exclusive
+                .checked_sub(1)
+                .ok_or_else(|| anyhow::anyhow!("evidence record has no source ordinal"))?;
+            if let Some(original) =
+                review_original(record.item, ordinal, &mut skipped_incomplete_deliveries)?
+            {
                 records.push(OriginalEvidence {
-                    id: EvidenceId {
-                        ordinal: record.end.end_ordinal_exclusive.checked_sub(1).ok_or_else(
-                            || anyhow::anyhow!("evidence record has no source ordinal"),
-                        )?,
-                    },
+                    id: EvidenceId { ordinal },
                     original,
                     end: record.end,
                 });
@@ -163,7 +192,8 @@ impl EvidenceCursor {
             thread_id: self.thread_id,
             start: self.position,
             end,
-            records: records.into(),
+            records,
+            skipped_incomplete_deliveries,
         })
     }
 
@@ -306,8 +336,32 @@ fn selected(envelope: &ResponseItemEnvelope) -> anyhow::Result<bool> {
     })
 }
 
+/// Keep captions and their provenance. Local images can also have a pair of harness labels.
+fn without_image_attachments(parts: Vec<AnnotatedContent>) -> Vec<AnnotatedContent> {
+    let mut retained = Vec::with_capacity(parts.len());
+    let mut parts = parts.into_iter();
+    while let Some(part) = parts.next() {
+        if let ContentItem::InputText { text: open } = part.content()
+            && let [image, close, ..] = parts.as_slice()
+            && matches!(image.content(), ContentItem::InputImage { .. })
+            && is_opening_media_label(open, image.content())
+            && matches!(close.content(), ContentItem::InputText { text } if is_closing_media_label(text, image.content()))
+        {
+            // Consume the image and its closing label together.
+            let _ = parts.nth(1);
+        } else if !matches!(part.content(), ContentItem::InputImage { .. }) {
+            retained.push(part);
+        }
+    }
+    retained
+}
+
 /// Select original evidence at intake and strip host-only metadata before routing.
-fn review_original(mut item: RolloutItem) -> anyhow::Result<Option<RolloutItem>> {
+fn review_original(
+    mut item: RolloutItem,
+    ordinal: u64,
+    skipped_incomplete_deliveries: &mut Vec<u64>,
+) -> anyhow::Result<Option<RolloutItem>> {
     let include = match &item {
         RolloutItem::ResponseItem(envelope) => selected(envelope)?,
         RolloutItem::RetainedContext(RetainedContextEvent::VerifiedAnswer { answer, .. }) => {
@@ -318,10 +372,16 @@ fn review_original(mut item: RolloutItem) -> anyhow::Result<Option<RolloutItem>>
             message,
             ..
         }) => {
-            ensure!(message.complete, "incomplete delivered assistant message");
-            true
+            if !message.complete {
+                skipped_incomplete_deliveries.push(ordinal);
+            }
+            message.complete
         }
-        RolloutItem::SessionMeta(_) | RolloutItem::EventMsg(EventMsg::ThreadRolledBack(_)) => {
+        RolloutItem::SessionMeta(_)
+        | RolloutItem::EventMsg {
+            event: EventMsg::ThreadRolledBack(_),
+            ..
+        } => {
             anyhow::bail!("evidence history was replaced");
         }
         RolloutItem::RetainedContext(RetainedContextEvent::AcceptedFileAudio { .. })
@@ -333,13 +393,33 @@ fn review_original(mut item: RolloutItem) -> anyhow::Result<Option<RolloutItem>>
         | RolloutItem::TokenUsageRecord(_)
         | RolloutItem::WorldState(_)
         | RolloutItem::SecurityRiskScore(_)
-        | RolloutItem::EventMsg(_)
+        | RolloutItem::EventMsg { .. }
         | RolloutItem::RealtimeItem(_) => false,
     };
     if !include {
         return Ok(None);
     }
     if let RolloutItem::ResponseItem(envelope) = &mut item {
+        // Ordinary user images are outside the sync reviewer's evidence. Omit
+        // them before the housekeeper budgets the record or serializes a board post.
+        if let ResponseItem::Message { role, content, .. } = &envelope.item
+            && role == "user"
+            && content
+                .iter()
+                .any(|part| matches!(part, ContentItem::InputImage { .. }))
+            && let Some(parts) = to_annotated_content(&mut envelope.item)
+        {
+            let retained = without_image_attachments(parts);
+            if retained.iter().all(|part| match part.content() {
+                ContentItem::InputText { text } | ContentItem::OutputText { text, .. } => {
+                    text.trim().is_empty()
+                }
+                ContentItem::InputAudio { .. } | ContentItem::InputImage { .. } => false,
+            }) {
+                return Ok(None);
+            }
+            let _ = set_annotated_content(&mut envelope.item, retained);
+        }
         // Admission uses private host provenance. Keep only the source order in the
         // copy seen by the housekeeper, board readers and reviewer.
         envelope.metadata = envelope

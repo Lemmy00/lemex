@@ -83,11 +83,22 @@ impl ChatWidget {
     }
 
     pub(crate) fn keymap_contexts(&self) -> crate::keymap::KeymapContextSet {
-        let contexts = self.bottom_pane.keymap_contexts();
-        if self.visible_new_backend_control().is_some() {
-            contexts.with_backend_cycling()
-        } else {
-            contexts
+        let mut contexts = self.bottom_pane.keymap_contexts();
+        if let Some((cycle, choose_environment)) = self.visible_new_backend_control() {
+            if cycle.is_some() {
+                contexts = contexts.with_backend_cycling();
+            }
+            if choose_environment.is_some() {
+                contexts = contexts.with_cloud_environment_selection();
+            }
+        }
+        contexts
+    }
+
+    pub(crate) fn set_key_chord_pending(&mut self, pending: bool) {
+        self.bottom_pane.key_chord_pending = pending;
+        if pending && !self.has_active_modal() {
+            self.bottom_pane.record_composer_activity_at(Instant::now());
         }
     }
 
@@ -112,6 +123,14 @@ impl ChatWidget {
         }
     }
 
+    pub(crate) fn protect_modal_from_held_activation_key(&mut self, now: Instant) {
+        if !self.bottom_pane.reports_key_releases()
+            && let Some(guard) = &mut self.bottom_pane.view_transition_key_guard
+        {
+            guard.extend_for_protected_view(now);
+        }
+    }
+
     pub(crate) fn consume_view_transition_key_event(&mut self, key_event: KeyEvent) -> bool {
         self.bottom_pane
             .consume_view_transition_key_event(key_event)
@@ -122,9 +141,15 @@ impl ChatWidget {
         self.handle_key_event_with_activation_key(key_event, /*activation_key*/ None)
     }
 
-    pub(crate) fn set_new_backend_control(&mut self, label: Option<String>) {
-        if self.new_backend_label != label {
+    pub(crate) fn set_new_backend_control(
+        &mut self,
+        label: Option<String>,
+        cloud_environment_name: Option<String>,
+    ) {
+        if self.new_backend_label != label || self.cloud_environment_name != cloud_environment_name
+        {
             self.new_backend_label = label;
+            self.cloud_environment_name = cloud_environment_name;
             self.request_redraw();
         }
     }
@@ -138,9 +163,11 @@ impl ChatWidget {
             && self.initial_user_message.is_none()
     }
 
-    pub(super) fn visible_new_backend_control(&self) -> Option<&str> {
-        let label = self.new_backend_label.as_deref()?;
-        (self.can_choose_new_backend()
+    pub(super) fn visible_new_backend_control(&self) -> Option<(Option<&str>, Option<&str>)> {
+        let cycle = self.new_backend_label.as_deref();
+        let environment = self.cloud_environment_name.as_deref();
+        ((cycle.is_some() || environment.is_some())
+            && self.can_choose_new_backend()
             && self.bottom_pane.no_modal_or_popup_active()
             && !self.fork_in_progress
             && !self.shortcut_overlay_visible()
@@ -148,7 +175,34 @@ impl ChatWidget {
             && self.safety_recourse.is_none()
             && !self.has_provider_error()
             && matches!(self.external_editor_state, ExternalEditorState::Closed))
-        .then_some(label)
+        .then_some((cycle, environment))
+    }
+
+    pub(crate) fn interrupts_acknowledged_steer(&self, key: KeyEvent) -> bool {
+        self.turn_lifecycle.steer_hint == SteerHint::Acknowledged
+            && self.bottom_pane.should_interrupt_running_task(key)
+    }
+
+    fn ignore_late_interrupt(
+        &mut self,
+        key_event: KeyEvent,
+        activation_key: Option<KeyBinding>,
+    ) -> bool {
+        if !self.interrupts_acknowledged_steer(key_event) {
+            return false;
+        }
+        self.turn_lifecycle.steer_hint = SteerHint::Hidden;
+        let key = activation_key.unwrap_or_else(|| KeyBinding::from_event(key_event));
+        self.suppress_current_view_key_until_release(
+            key,
+            Instant::now(),
+            ActivationKeySuppression::ReportedRepeats,
+        );
+        self.bottom_pane.show_footer_flash(
+            "Message received. Ignored one interrupt.".dim().into(),
+            Duration::from_secs(3),
+        );
+        true
     }
 
     pub(crate) fn handle_key_event_with_activation_key(
@@ -194,12 +248,12 @@ impl ChatWidget {
         }
 
         let keymap = self.bottom_pane.keymap();
-        if keymap.app.change_host.is_pressed(key_event)
-            && self.visible_new_backend_control().is_some()
-        {
-            self.app_event_tx
-                .send(AppEvent::CycleNewConversationBackend);
-            return KeyEventAction::None;
+        if let Some((cycle, _)) = self.visible_new_backend_control() {
+            if cycle.is_some() && keymap.app.change_host.is_pressed(key_event) {
+                self.app_event_tx
+                    .send(AppEvent::CycleNewConversationBackend);
+                return KeyEventAction::None;
+            }
         }
 
         if self.shortcut_overlay_visible() && key_hint::plain(KeyCode::Esc).is_press(key_event) {
@@ -223,6 +277,9 @@ impl ChatWidget {
             && self.pending_image_submission.is_some()
         {
             if self.is_cancellable_work_active() {
+                if self.ignore_late_interrupt(key_event, activation_key) {
+                    return KeyEventAction::None;
+                }
                 self.requeue_image_submission();
                 self.input_queue.recovered_queue = true;
                 if self.submit_op(AppCommand::interrupt()) {
@@ -348,6 +405,9 @@ impl ChatWidget {
             }
             _ => {
                 let had_modal_or_popup = !self.bottom_pane.no_modal_or_popup_active();
+                if self.ignore_late_interrupt(key_event, activation_key) {
+                    return KeyEventAction::None;
+                }
                 let should_pause_active_goal =
                     self.bottom_pane.should_interrupt_running_task(key_event);
                 let input_result = self
@@ -462,6 +522,10 @@ impl ChatWidget {
         self.bottom_pane.shortcut_overlay_visible()
     }
 
+    pub(crate) fn handle_shortcut_view_key(&mut self, key: KeyEvent) -> bool {
+        self.bottom_pane.handle_shortcut_view_key(key)
+    }
+
     pub(crate) fn no_modal_or_popup_active(&self) -> bool {
         self.bottom_pane.no_modal_or_popup_active()
     }
@@ -471,7 +535,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn can_launch_external_editor(&self) -> bool {
-        !self.external_writer_view && self.bottom_pane.can_launch_external_editor()
+        !self.is_read_only_view() && self.bottom_pane.can_launch_external_editor()
     }
 
     pub(crate) fn can_run_ctrl_l_clear_now(&mut self) -> bool {
@@ -596,7 +660,7 @@ impl ChatWidget {
 
     pub(crate) fn handle_paste(&mut self, text: String) {
         self.cancel_quick_dial_menu();
-        if (self.external_writer_view || self.has_provider_error())
+        if (self.is_read_only_view() || self.has_provider_error())
             && !self.bottom_pane.has_active_view()
         {
             return;
@@ -626,12 +690,9 @@ impl ChatWidget {
     fn finish_paste_burst_tick(&mut self, frame_requester: FrameRequester, flushed: bool) -> bool {
         if flushed {
             self.refresh_startup_recovery();
-            // A paste just flushed; request an immediate redraw and skip this frame.
-            self.request_redraw();
-            true
-        } else if self.is_in_paste_burst() {
-            // While capturing a burst, schedule a follow-up tick and skip this frame
-            // to avoid redundant renders between ticks.
+        }
+        // Paint the flushed input on this frame unless an editor is still buffering.
+        if self.is_in_paste_burst() {
             frame_requester.schedule_frame_in(
                 crate::bottom_pane::ChatComposer::recommended_paste_flush_delay(),
             );

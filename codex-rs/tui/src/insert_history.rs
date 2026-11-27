@@ -14,6 +14,7 @@ use crate::terminal_hyperlinks::HyperlinkLine;
 use crate::terminal_hyperlinks::decorate_spans;
 use crate::terminal_hyperlinks::plain_hyperlink_lines;
 use crate::terminal_hyperlinks::remap_wrapped_line;
+use crate::width::physical_row_count;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::line_contains_url_like;
@@ -131,29 +132,33 @@ where
     // - Non-URL lines also flow through adaptive wrapping; behavior is
     //   equivalent to standard wrapping when no URL is present.
     let wrap_width = area.width.max(1) as usize;
-    let (wrapped, wrapped_rows) = wrap_history_hyperlink_lines(lines, wrap_width, wrap_policy);
+    let (mut wrapped, wrapped_rows) = wrap_history_hyperlink_lines(lines, wrap_width, wrap_policy);
+    if terminal.bidi_layout {
+        crate::terminal_hyperlinks::bidi::paint_rows(&mut wrapped, wrap_width);
+    }
     let wrapped_lines = wrapped_rows as u16;
     match mode {
         InsertHistoryMode::FullScreen => {
             // The existing viewport is immediately replaced in the same draw pass. Clear it
             // before terminal scrolling can move composer contents into scrollback.
             terminal.clear_after_position(area.as_position())?;
-            let writer = terminal.backend_mut();
-            queue!(writer, MoveTo(/*x*/ 0, area.top()))?;
-            for (index, line) in wrapped.iter().enumerate() {
-                if index > 0 {
-                    queue!(writer, Print("\r\n"))?;
+            write_buffered(terminal.backend_mut(), |writer| {
+                queue!(writer, MoveTo(/*x*/ 0, area.top()))?;
+                for (index, line) in wrapped.iter().enumerate() {
+                    if index > 0 {
+                        queue!(writer, Print("\r\n"))?;
+                    }
+                    write_history_line(writer, line, wrap_width)?;
                 }
-                write_history_line(writer, line, wrap_width)?;
-            }
 
-            // Writing raw source text through the terminal preserves its soft-wrap metadata.
-            // Advance through empty rows for the viewport so history ends immediately above the
-            // composer even when a replay batch is taller than the visible history region.
-            for _ in 0..area.height {
-                queue!(writer, Print("\r\n"), Clear(ClearType::UntilNewLine))?;
-            }
-            queue!(writer, MoveTo(last_cursor_pos.x, last_cursor_pos.y))?;
+                // Writing raw source text through the terminal preserves its soft-wrap metadata.
+                // Advance through empty rows for the viewport so history ends immediately above the
+                // composer even when a replay batch is taller than the visible history region.
+                for _ in 0..area.height {
+                    queue!(writer, Print("\r\n"), Clear(ClearType::UntilNewLine))?;
+                }
+                queue!(writer, MoveTo(last_cursor_pos.x, last_cursor_pos.y))
+            })?;
 
             let viewport_top = area
                 .top()
@@ -209,13 +214,18 @@ where
             // fetch/restore the cursor position. insert_history_lines should be cursor-position-neutral :)
             queue!(writer, MoveTo(/*x*/ 0, cursor_top))?;
 
-            for line in &wrapped {
-                queue!(writer, Print("\r\n"))?;
-                write_history_line(writer, line, wrap_width)?;
-            }
+            write_buffered(writer, |writer| {
+                for line in &wrapped {
+                    queue!(writer, Print("\r\n"))?;
+                    write_history_line(writer, line, wrap_width)?;
+                }
 
-            queue!(writer, ResetScrollRegion)?;
-            queue!(writer, MoveTo(last_cursor_pos.x, last_cursor_pos.y))?;
+                queue!(
+                    writer,
+                    ResetScrollRegion,
+                    MoveTo(last_cursor_pos.x, last_cursor_pos.y)
+                )
+            })?;
         }
     }
 
@@ -227,6 +237,19 @@ where
     }
 
     Ok(())
+}
+
+/// Coalesce newlines before they reach line-buffered stdout without buffering the entire replay.
+fn write_buffered<W: Write>(
+    backend: &mut W,
+    write: impl FnOnce(&mut io::BufWriter<&mut W>) -> io::Result<()>,
+) -> io::Result<()> {
+    let mut writer = io::BufWriter::new(backend);
+    let result = write(&mut writer);
+    // Disarm BufWriter's drop-time retry on error. On success, drain without flushing stdout.
+    let (backend, remaining) = writer.into_parts();
+    result?;
+    backend.write_all(&remaining.map_err(io::Error::other)?)
 }
 
 pub(crate) fn wrap_history_hyperlink_lines(
@@ -260,7 +283,7 @@ pub(crate) fn wrap_history_hyperlink_lines(
         };
         wrapped_rows += line_wrapped
             .iter()
-            .map(|wrapped_line| wrapped_line.width().max(/*other*/ 1).div_ceil(wrap_width))
+            .map(|wrapped_line| physical_row_count(&wrapped_line.line, wrap_width))
             .sum::<usize>();
         wrapped.extend(line_wrapped);
     }
@@ -297,7 +320,7 @@ fn write_history_line<W: Write>(
     line: &HyperlinkLine,
     wrap_width: usize,
 ) -> io::Result<()> {
-    let physical_rows = line.width().max(1).div_ceil(wrap_width) as u16;
+    let physical_rows = physical_row_count(&line.line, wrap_width) as u16;
     if physical_rows > 1 {
         queue!(writer, SavePosition)?;
         for _ in 1..physical_rows {
@@ -433,6 +456,36 @@ mod tests {
     use crate::test_backend::VT100Backend;
     use ratatui::layout::Rect;
     use ratatui::style::Color;
+
+    #[test]
+    fn long_history_batches_newlines_and_restores_the_cursor() {
+        let width = 20;
+        let height = 8;
+        for mode in [InsertHistoryMode::Standard, InsertHistoryMode::FullScreen] {
+            let backend = VT100Backend::new(width, height);
+            let mut term = crate::custom_terminal::Terminal::with_options(backend).unwrap();
+            term.set_viewport_area(Rect::new(0, height - 2, width, 2));
+            term.set_cursor_position((3, height - 1)).unwrap();
+            let cursor = term.backend().vt100().screen().cursor_position();
+            let lines = (0..500).map(|i| Line::from(format!("row {i}"))).collect();
+            insert_history_lines_with_mode_and_wrap_policy(
+                &mut term,
+                lines,
+                mode,
+                HistoryLineWrapPolicy::PreWrap,
+            )
+            .unwrap();
+
+            let screen = term.backend().vt100().screen();
+            pretty_assertions::assert_eq!(screen.cursor_position(), cursor);
+            pretty_assertions::assert_eq!(screen.rows(0, width).nth(5).unwrap(), "row 499");
+            let writes = term.backend().newline_writes;
+            assert!(
+                writes < 50,
+                "{mode:?} sent 500 rows in {writes} newline writes"
+            );
+        }
+    }
 
     #[test]
     fn writes_bold_then_regular_spans() {
@@ -951,6 +1004,61 @@ mod tests {
     }
 
     #[test]
+    fn rtl_transcript_stream_matches_finalized_scrollback() {
+        use crate::history_cell::AgentMarkdownCell;
+        use crate::history_cell::HistoryCell;
+        use crate::history_cell::HistoryRenderMode;
+        use crate::history_cell::StreamingAgentTailCell;
+        use crate::history_cell::new_user_prompt;
+        use crate::streaming::controller::StreamController;
+        use crate::terminal_hyperlinks::bidi;
+        use pretty_assertions::assert_eq;
+        let cwd = std::path::Path::new(".");
+        let width = 48;
+        let mut stream =
+            StreamController::new(Some(usize::from(width) - 2), cwd, HistoryRenderMode::Rich);
+        stream.push("افتح `--file.rs` ثم ش");
+        stream.push("غل Lemex 123 (مَرْحَبًا)");
+        let preview = stream.current_tail_lines();
+        let tail = StreamingAgentTailCell::new(preview, stream.tail_starts_stream());
+        let mut live = tail.display_hyperlink_lines(width);
+        bidi::paint_rows(&mut live, width.into());
+        let (committed, source) = stream.finalize();
+        let finalized = AgentMarkdownCell::new(source.unwrap(), cwd);
+        let question = "مرحبا https://example.org/?a=1&b=2#help";
+        let prompt = new_user_prompt(question.into(), vec![], vec![], vec![]);
+        let mut lines = prompt.display_hyperlink_lines(width);
+        lines.extend(committed.unwrap().display_hyperlink_lines(width));
+        lines.extend(finalized.display_hyperlink_lines(width));
+        let backend = VT100Backend::new(width, /*height*/ 12);
+        let mut term = crate::custom_terminal::Terminal::with_options(backend).unwrap();
+        term.bidi_layout = true;
+        term.set_viewport_area(Rect::new(
+            /*x*/ 0, /*y*/ 11, width, /*height*/ 1,
+        ));
+        let size = term.last_known_screen_size;
+        insert_history_hyperlink_lines_with_mode_and_wrap_policy(
+            &mut term,
+            &lines,
+            InsertHistoryMode::Standard,
+            HistoryLineWrapPolicy::PreWrap,
+            size,
+        )
+        .unwrap();
+        let rows = term
+            .backend()
+            .vt100()
+            .screen()
+            .rows(/*start*/ 0, width)
+            .filter(|row| !row.trim().is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[1], rows[2]);
+        assert_eq!(live[0].line.to_string(), rows[1]);
+        insta::assert_snapshot!(rows[..2].join("\n"));
+    }
+
+    #[test]
     fn vt100_user_message_url_wrap_preserves_gutter_and_background() {
         use crate::history_cell::HistoryCell;
         use crate::history_cell::UserHistoryCell;
@@ -1282,37 +1390,34 @@ mod tests {
     }
 
     #[test]
-    fn vt100_long_unwrapped_url_does_not_insert_extra_blank_gap_before_content() {
-        let width: u16 = 56;
-        let height: u16 = 24;
+    fn vt100_long_unwrapped_url_preserves_adjacent_history() {
+        let width: u16 = 20;
+        let height: u16 = 8;
         let backend = VT100Backend::new(width, height);
         let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
-        let viewport = Rect::new(0, height - 1, width, 1);
-        term.set_viewport_area(viewport);
+        term.set_viewport_area(Rect::new(0, 0, width, 1));
 
         let prompt = "Write a long URL as output for testing";
         insert_history_lines(&mut term, vec![Line::from(prompt)]).expect("insert prompt line");
 
-        let long_url = format!(
-            "https://example.test/api/v1/projects/alpha-team/releases/2026-02-17/builds/1234567890/{}",
-            "very-long-segment-".repeat(16),
-        );
+        // The first 界 cannot fit in the last column, so the final x needs a third row.
+        let long_url = "https://test.org/界界界界界界界界界界x";
         let url_line: Line<'static> = Line::from(vec!["• ".into(), long_url.into()]);
         insert_history_lines(&mut term, vec![url_line]).expect("insert long url line");
 
-        let rows: Vec<String> = term.backend().vt100().screen().rows(0, width).collect();
-        let prompt_row = rows
-            .iter()
-            .position(|row| row.contains("Write a long URL as output for testing"))
-            .unwrap_or_else(|| panic!("expected prompt row in screen rows: {rows:?}"));
-        let url_row = rows
-            .iter()
-            .position(|row| row.contains("• https://example.test/api"))
-            .unwrap_or_else(|| panic!("expected URL first row in screen rows: {rows:?}"));
-
-        assert!(
-            url_row <= prompt_row + 2,
-            "expected URL content to appear immediately after prompt (allowing at most one spacer row), got prompt_row={prompt_row}, url_row={url_row}, rows={rows:?}",
-        );
+        let rows: Vec<String> = term
+            .backend()
+            .vt100()
+            .screen()
+            .rows(0, width)
+            .take(usize::from(term.viewport_area.y))
+            .collect();
+        insta::assert_snapshot!(rows.join("\n"), @r"
+        Write a long URL as
+        output for testing
+        • https://test.org/
+        界界界界界界界界界界
+        x
+        ");
     }
 }

@@ -17,7 +17,9 @@ use codex_network_proxy::NetworkProxyConfig;
 use codex_network_proxy::NetworkProxyConstraints;
 use codex_network_proxy::NetworkProxyHandle;
 use codex_network_proxy::NetworkProxyState;
+use codex_network_proxy::apply_environment_policy;
 use codex_network_proxy::build_config_state;
+use codex_network_proxy::environment_policy_from_config;
 use codex_network_proxy::host_and_port_from_network_addr;
 #[cfg(any(target_os = "windows", test))]
 use codex_network_proxy::managed_proxy_ports;
@@ -26,6 +28,7 @@ use codex_network_proxy::validate_policy_against_constraints;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_utils_path_uri::Platform;
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -110,6 +113,10 @@ impl NetworkProxySpec {
 
     pub fn proxy_host_and_port(&self) -> String {
         host_and_port_from_network_addr(&self.config.proxy_url, /*default_port*/ 3128)
+    }
+
+    pub fn transparent_tcp(&self) -> bool {
+        self.config.transparent_tcp
     }
 
     pub fn socks_enabled(&self) -> bool {
@@ -229,33 +236,25 @@ impl NetworkProxySpec {
             Platform::native(),
             local_binding_policy,
         )?;
-        let mut builder = NetworkProxy::builder()
-            .state(Arc::new(state))
-            .managed_proxy_routing(managed_proxy_routing);
-        let retained_policy_decider = policy_decider.as_ref().map(Arc::clone);
-        if enable_network_approval_flow && !self.hard_deny_allowlist_misses {
-            if let Some(policy_decider) = policy_decider {
-                builder = builder.policy_decider_arc(policy_decider);
-            } else if Self::managed_sandbox_active(permission_profile) {
-                builder = builder
-                    .policy_decider(|_request| async { NetworkDecision::ask("not_allowed") });
-            }
-        }
-        if let Some(blocked_request_observer) = blocked_request_observer {
-            builder = builder.blocked_request_observer_arc(blocked_request_observer);
-        }
-        let proxy = builder.build().await.map_err(|err| {
-            std::io::Error::other(format!("failed to build network proxy: {err}"))
-        })?;
-        let handle = proxy
-            .run()
-            .await
-            .map_err(|err| std::io::Error::other(format!("failed to run network proxy: {err}")))?;
-        Ok(StartedNetworkProxy::new(
-            proxy,
-            handle,
-            retained_policy_decider,
-        ))
+        let active_decider: Option<Arc<dyn NetworkPolicyDecider>> =
+            if !enable_network_approval_flow || self.hard_deny_allowlist_misses {
+                None
+            } else if policy_decider.is_none() && Self::managed_sandbox_active(permission_profile) {
+                Some(Arc::new(|_request| async {
+                    NetworkDecision::ask("not_allowed")
+                }))
+            } else {
+                policy_decider.clone()
+            };
+        let (proxy, handle) = NetworkProxy::start_managed(
+            state,
+            managed_proxy_routing,
+            active_decider,
+            blocked_request_observer,
+        )
+        .await
+        .map_err(std::io::Error::other)?;
+        Ok(StartedNetworkProxy::new(proxy, handle, policy_decider))
     }
 
     pub(crate) fn recompute_for_permission_profile(
@@ -271,7 +270,7 @@ impl NetworkProxySpec {
 
     /// Returns proxy activation and traffic policy without controller-owned runtime settings.
     pub fn environment_policy(&self) -> EnvironmentNetworkPolicy {
-        EnvironmentNetworkPolicy::from_config(&self.config, self.hard_deny_allowlist_misses)
+        environment_policy_from_config(&self.config, self.hard_deny_allowlist_misses)
     }
 
     pub(crate) fn for_environment(
@@ -323,7 +322,7 @@ impl NetworkProxySpec {
                 permission_profile,
             )?,
         };
-        policy.apply_to(&mut spec.config);
+        apply_environment_policy(policy, &mut spec.config);
         spec.config.allow_local_binding =
             Some(routed_binding.unwrap_or_default().resolve(&spec.config));
         let protected_denials = spec.config.denied_domains().unwrap_or_default();
@@ -554,6 +553,9 @@ impl NetworkProxySpec {
         if let Some(socks_port) = requirements.socks_port {
             config.socks_url = format!("http://127.0.0.1:{socks_port}");
         }
+        if let Some(transparent_tcp) = requirements.transparent_tcp {
+            config.transparent_tcp = transparent_tcp;
+        }
         if let Some(allow_upstream_proxy) = requirements.allow_upstream_proxy {
             config.allow_upstream_proxy = allow_upstream_proxy;
             constraints.allow_upstream_proxy = Some(allow_upstream_proxy);
@@ -606,7 +608,20 @@ impl NetworkProxySpec {
             .domains
             .as_ref()
             .and_then(codex_config::NetworkDomainPermissionsToml::denied_domains);
-        if let Some(managed_denied_domains) = managed_denied_domains {
+        if let Some(mut managed_denied_domains) = managed_denied_domains {
+            // The managed allowlist can contain a shadowed spelling of a denied
+            // selector. Explicitly deny that spelling for text-based executors.
+            let denied: HashSet<_> = managed_denied_domains
+                .iter()
+                .filter_map(|pattern| codex_network_proxy::canonical_deny_pattern(pattern).ok())
+                .collect();
+            for pattern in constraints.allowed_domains.iter().flatten() {
+                if codex_network_proxy::canonical_review_pattern(pattern)
+                    .is_ok_and(|selector| denied.contains(&selector))
+                {
+                    managed_denied_domains.push(pattern.clone());
+                }
+            }
             let effective_denied_domains = if denylist_expansion_enabled {
                 Self::merge_domain_lists(
                     managed_denied_domains.clone(),

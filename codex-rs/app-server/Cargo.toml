@@ -25,6 +25,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+codex-app-server-remote-client = { workspace = true }
 codex-agent-message-board-host = { workspace = true }
 codex-utils-process = { workspace = true }
 anyhow = { workspace = true }
@@ -134,6 +135,7 @@ codex-windows-sandbox = { workspace = true }
 
 [dev-dependencies]
 codex-message-board = { workspace = true }
+codex-message-board-mcp = { workspace = true }
 zip = { workspace = true }
 codex-uds = { workspace = true }
 app_test_support = { workspace = true }
@@ -143,6 +145,7 @@ axum = { workspace = true, default-features = false, features = [
     "tokio",
 ] }
 base64 = { workspace = true }
+codex-rollout-trace = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 core_test_support = { workspace = true }
 flate2 = { workspace = true }

@@ -24,8 +24,17 @@ impl App {
         {
             return pending.guide(&self.keymap.chords, |_| true);
         }
-        let side = self.sidebar_has_focus();
-        let can_switch = self.chooser_focus().is_some() || self.switchable_side_child().is_some();
+        let center = self.workspace_center_owns_input();
+        let center_open = self.agents_overview.workspace.is_open();
+        let side = !center && self.sidebar_has_focus();
+        let panel_open = self.panel_focus().is_some();
+        let can_switch = panel_open || self.switchable_side_child().is_some();
+        let can_step = self.sidebar().is_some_and(|pane| {
+            pane.adjacent_tab(/*step*/ 1).is_some_and(|next| {
+                self.chooser_focus().is_some()
+                    || Some(next) != pane.recent_tab(/*excluding*/ None)
+            })
+        });
         let can_size = super::side_pane::split_layout(self, tui, area).is_some();
         let can_resize = can_size && side && self.zoomed_thread.is_none();
         let mut groups = [
@@ -35,10 +44,11 @@ impl App {
         ];
         for (action, keys) in pending.actions(&self.keymap.chords) {
             let (group, label) = match action.action {
-                "focus_command_center" => (0, "Command Center"),
+                "open_agents" => (0, "Command Center"),
                 "focus_main_composer" => (0, "Main composer"),
                 "focus_sidebar_tabs" => (0, "Open in sidebar"),
                 "focus_sidebar_content" if side => (0, "Hide sidebar"),
+                "focus_sidebar_content" if self.sidebar_is_hidden() => (0, "Restore sidebar"),
                 "focus_sidebar_content" => (0, "Sidebar content"),
                 "resize_panes" if can_size => (2, "Resize panes"),
                 "resize_panes" => continue,
@@ -55,24 +65,40 @@ impl App {
                     (2, "Close tab")
                 }
                 "close_sidebar_tab" => continue,
+                "sidebar_up" | "sidebar_down" if !can_step => continue,
                 "sidebar_up" => (1, "Previous tab"),
                 "sidebar_down" => (1, "Next tab"),
                 "hide_pane" if side => (2, "Hide pane"),
-                "focus_pane_left" if side && can_switch => (1, "Pane left"),
-                "focus_pane_right" if !side && can_switch && self.open_pane_focus().is_some() => {
+                "focus_pane_left" if (side && can_switch) || (!center && !side && center_open) => {
+                    (1, "Pane left")
+                }
+                "focus_pane_right"
+                    if center
+                        || (!side
+                            && (panel_open
+                                || (can_switch && self.open_pane_focus().is_some()))) =>
+                {
                     (1, "Pane right")
                 }
                 "hide_pane" | "focus_pane_left" | "focus_pane_right" => continue,
+                "choose_cloud_environment" => (2, "Choose environment"),
                 "open_presets" => (2, "Presets ›"),
                 "find_transcript" => (2, "Find text"),
                 "select_transcript" => (2, "Select transcript"),
+                "mark_markdown" => (2, "Mark Markdown block"),
                 "focus_conversation_composer" => (2, "Composer"),
                 other => (2, other),
             };
             let key = keys.join(" / ").fg(crate::style::accent_color());
             groups[group].1.push((key, label.replace('_', " ")));
         }
-        let origin = if side { "Sidebar" } else { "Conversation" };
+        let origin = if center {
+            "Command Center"
+        } else if side {
+            "Sidebar"
+        } else {
+            "Conversation"
+        };
         Some(ShortcutHud::leader(
             format!("{} · {origin}", pending.prefix.display_label()),
             groups

@@ -29,6 +29,7 @@ pub(in crate::keymap) fn register(
     use KeyCode::Char;
     use KeymapContext::Chat;
     use KeymapContext::Global;
+    use KeymapContext::Pager;
     for (context, name, completion, spec) in [
         (Global, "change_host", Char('b'), "b"),
         (Global, "select_transcript", Char('['), "["),
@@ -55,6 +56,9 @@ pub(in crate::keymap) fn register(
         (Global, "sidebar_up", Char('k'), "k"),
         (Global, "sidebar_down", KeyCode::Down, "down"),
         (Global, "sidebar_down", Char('j'), "j"),
+        (Pager, "mark_markdown", Char('v'), "v"),
+        (Global, "choose_cloud_environment", Char('e'), "e"),
+        (Global, "open_agents", Char('a'), "a"),
     ] {
         if remaining == 0 {
             break;
@@ -63,7 +67,8 @@ pub(in crate::keymap) fn register(
             context,
             action: name,
         };
-        if (!workspace && action.is_side_pane())
+        if (!workspace && (action.is_side_pane() || name == "open_agents"))
+            || (name == "mark_markdown" && !resolved.pager.mark_markdown.is_empty())
             || !matches!(
                 super::configured_binding_for_action(keymap, action),
                 Some(None)

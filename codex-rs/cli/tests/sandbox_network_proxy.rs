@@ -17,8 +17,10 @@ const LOOPBACK: &str = "127.0.0.2";
 
 fn sandbox_unavailable(stderr: &str) -> Result<bool> {
     #[cfg(target_os = "linux")]
-    if stderr.contains("bubblewrap is unavailable") {
-        eprintln!("skipping network proxy sandbox test: bubblewrap is unavailable");
+    if stderr.contains("bubblewrap is unavailable")
+        || stderr.contains("bwrap: Failed to make / slave: Permission denied")
+    {
+        eprintln!("skipping network proxy sandbox test: {stderr}");
         return Ok(true);
     }
     #[cfg(target_os = "macos")]
@@ -60,7 +62,7 @@ mode = "full"
     )?;
 
     let url = format!("http://{LOOPBACK}:{port}/");
-    let output = std::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+    let output = std::process::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?)
         .env("LEMEX_HOME", codex_home.path())
         .args([
             "sandbox",

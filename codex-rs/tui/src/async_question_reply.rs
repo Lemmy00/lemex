@@ -27,7 +27,7 @@ pub(crate) fn parse(text: &str) -> Option<Vec<AsyncQuestionReply>> {
     let text = if text.starts_with("# Context from my IDE setup:\n") {
         [
             "\n## My request for Lemex:\n",
-            "\n## My request for Codex:\n",
+            "\n## My request for Lemex:\n",
         ]
         .into_iter()
         .filter_map(|delimiter| {

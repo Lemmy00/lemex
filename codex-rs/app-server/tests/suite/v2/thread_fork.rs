@@ -115,6 +115,7 @@ async fn list_threads(mcp: &mut TestAppServer) -> Result<ThreadListResponse> {
         .send_thread_list_request(ThreadListParams {
             include_attached_threads: false,
             current_account_only: false,
+            included_thread_ids: None,
             excluded_thread_ids: None,
             attached_to_thread_id: None,
             originators: None,
@@ -2057,7 +2058,7 @@ async fn thread_fork_freezes_active_paginated_turn_as_interrupted(
         [
             RolloutLine { item: RolloutItem::SessionMeta(_), .. },
             RolloutLine {
-                item: RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(_)),
+                item: RolloutItem::EventMsg { event: EventMsg::ThreadSettingsApplied(_), .. },
                 ..
             },
             RolloutLine {
@@ -2065,7 +2066,7 @@ async fn thread_fork_freezes_active_paginated_turn_as_interrupted(
                 ..
             },
             RolloutLine {
-                item: RolloutItem::EventMsg(EventMsg::TurnAborted(aborted)),
+                item: RolloutItem::EventMsg { event: EventMsg::TurnAborted(aborted), .. },
                 ..
             },
         ] if matches!(
@@ -2426,6 +2427,8 @@ async fn thread_fork_surfaces_cloud_config_bundle_load_errors() -> Result<()> {
     let refresh_token_url = format!("{}/oauth/token", server.uri());
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
+        // Startup falls back to defaults after the 401 and ignores config.toml.
+        .with_args(&["-c", &format!("chatgpt_base_url={chatgpt_base_url:?}")])
         .without_auto_env()
         .with_env_overrides(&[
             ("LEMEX_API_KEY", None),
@@ -3073,10 +3076,7 @@ async fn fork_option_disables_mcp_servers(
     )?;
     MockResponsesConfig::new(&server.uri())
         .with_model("gpt-5.4")
-        .with_root_config(&format!(
-            "model_catalog_json = {}\nfeatures.incremental_tools = {incremental_tools}",
-            serde_json::to_string(&catalog)?
-        ))
+        .with_root_config(&format!("features.incremental_tools = {incremental_tools}"))
         .with_extra_config(&format!(
             "[mcp_servers.fixture]\nurl = \"{}/mcp\"\nrequired = true\n",
             mcp_server.uri()
@@ -3089,6 +3089,8 @@ async fn fork_option_disables_mcp_servers(
     let parent = app
         .start_thread(ThreadStartParams {
             history_mode: Some(history_mode),
+            // Only the parent catalog advertises the capability used by the prediction fork.
+            config: Some([("model_catalog_json".into(), json!(catalog))].into()),
             ..Default::default()
         })
         .await?;

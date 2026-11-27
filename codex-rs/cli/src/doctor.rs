@@ -585,7 +585,7 @@ fn config_load_failure(err: &anyhow::Error) -> DoctorCheck {
         CheckStatus::Fail,
         "config could not be loaded",
     )
-    .remediation("Fix the reported config error, then rerun codex doctor.");
+    .remediation("Fix the reported config error, then rerun lemex doctor.");
     // Error messages can echo config values. Report only typed metadata,
     // including errors wrapped by io::Error, whose source skips the wrapper.
     let config_error = err.chain().find_map(|cause| {
@@ -633,6 +633,7 @@ async fn load_config(
         &root_config_overrides,
         LoaderOverrides::default(),
         overrides,
+        /*resolution*/ None,
     )
     .await?
     .build()
@@ -1932,6 +1933,7 @@ fn terminal_name(info: &TerminalInfo) -> &'static str {
         TerminalName::AppleTerminal => "Apple Terminal",
         TerminalName::Ghostty => "Ghostty",
         TerminalName::Rex => "Rex",
+        TerminalName::Orca => "Orca",
         TerminalName::Iterm2 => "iTerm2",
         TerminalName::WarpTerminal => "Warp",
         TerminalName::VsCode => "VS Code",
@@ -2535,7 +2537,9 @@ fn websocket_error_detail(err: &ApiError) -> String {
         }
         // These variants format fixed text; retry metadata is typed and never printed.
         ApiError::ContentFilter
+        | ApiError::WebsocketMessageTooLarge
         | ApiError::ContextWindowExceeded
+        | ApiError::SpendLimitExceeded(_)
         | ApiError::QuotaExceeded
         | ApiError::UsageNotIncluded
         | ApiError::SessionBudgetExceeded

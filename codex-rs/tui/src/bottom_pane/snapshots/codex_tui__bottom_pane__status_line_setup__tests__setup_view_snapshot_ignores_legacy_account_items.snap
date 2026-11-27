@@ -1,0 +1,21 @@
+---
+source: tui/src/bottom_pane/status_line_setup.rs
+assertion_line: 749
+expression: "render_lines(&view, 100)"
+---
+                                                                                                    
+  Configure Status Line                                                                             
+  Select which items to display in the status line.                                                 
+                                                                                                    
+  Type to search                                                                                    
+                                                                                                    
+› [x] Use theme colors      Apply colors from the active /theme                                     
+  ───────────────────────                                                                           
+  [ ] model                 Current model name                                                      
+  [ ] model-with-reasoning  Current model name with reasoning level                                 
+  [ ] reasoning             Current reasoning level                                                 
+  [ ] current-dir           Current working directory                                               
+  [ ] project-name          Project name (omitted when unavailable)                                 
+  [ ] hostname              Current machine hostname (omitted when unavailable)                     
+↓                                                                                                   
+  space toggle · ←/→ reorder · enter save · esc cancel

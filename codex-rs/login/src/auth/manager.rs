@@ -1345,7 +1345,9 @@ impl AuthConfig {
             .await
     }
 
-    async fn load_auth_with_modes(
+    /// Applies the mode filter to the selected source before hydrating its credentials.
+    /// A disallowed stored login or `CODEX_ACCESS_TOKEN` returns no credentials.
+    pub async fn load_auth_with_modes(
         &self,
         enable_codex_api_key_env: bool,
         allowed_auth_modes: Option<&[AuthMode]>,
@@ -2307,6 +2309,11 @@ pub struct AuthRuntimeConfig {
     pub auth_route_config: AuthRouteConfig,
 }
 
+enum NetworkPolicyOwnership {
+    Primary,
+    Shared,
+}
+
 impl Debug for AuthManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthManager")
@@ -2702,6 +2709,12 @@ impl AuthManager {
                 .as_ref()
                 == Some(tokens)
         }))
+    }
+
+    /// Whether cached auth needs a proactive refresh.
+    pub fn needs_proactive_refresh(&self) -> bool {
+        self.auth_cached()
+            .is_some_and(|auth| Self::proactive_refresh_reason(&auth).is_some())
     }
 
     /// Current cached auth (clone). May be `None` if not logged in or load failed.
@@ -3126,7 +3139,15 @@ impl AuthManager {
             .map_err(RefreshTokenError::Transient)
     }
 
-    async fn try_load_managed_auth(
+    // Keep managed credential loading out of each caller's async state machine.
+    fn try_load_managed_auth<'a>(
+        &'a self,
+        cached_auth: Option<&'a CodexAuth>,
+    ) -> Pin<Box<dyn Future<Output = std::io::Result<Option<CodexAuth>>> + Send + 'a>> {
+        Box::pin(self.try_load_managed_auth_impl(cached_auth))
+    }
+
+    async fn try_load_managed_auth_impl(
         &self,
         cached_auth: Option<&CodexAuth>,
     ) -> std::io::Result<Option<CodexAuth>> {
@@ -3242,6 +3263,19 @@ impl AuthManager {
             ));
         }
         self.install_external_auth(external_auth).await
+    }
+
+    async fn with_initial_external_auth(
+        mut self,
+        external_auth: Arc<dyn ExternalAuth>,
+    ) -> Result<Self, RefreshTokenError> {
+        // Hydrate startup credentials before this manager is shared. Initial WIF
+        // selection must not revoke policy composed for those credentials.
+        let owns_network_policy = self.owns_network_policy;
+        self.owns_network_policy = false;
+        self.install_external_auth(external_auth).await?;
+        self.owns_network_policy = owns_network_policy;
+        Ok(self)
     }
 
     async fn install_external_auth(
@@ -3380,6 +3414,21 @@ impl AuthManager {
             auth_config,
             enable_codex_api_key_env,
             /*allowed_auth_modes*/ None,
+            NetworkPolicyOwnership::Primary,
+        )
+        .await
+    }
+
+    /// Loads local credentials without taking ownership of application network policy.
+    /// The primary account owner must invalidate and republish policy on account changes.
+    pub async fn shared_for_auxiliary_client(
+        auth_config: AuthConfig,
+    ) -> Result<Arc<Self>, AuthManagerInitializationError> {
+        Self::shared_from_auth_config_with_modes(
+            auth_config,
+            /*enable_codex_api_key_env*/ false,
+            /*allowed_auth_modes*/ None,
+            NetworkPolicyOwnership::Shared,
         )
         .await
     }
@@ -3408,6 +3457,7 @@ impl AuthManager {
             auth_config,
             enable_codex_api_key_env,
             Some(allowed_auth_modes),
+            NetworkPolicyOwnership::Primary,
         )
         .await
     }
@@ -3416,19 +3466,21 @@ impl AuthManager {
         auth_config: AuthConfig,
         enable_codex_api_key_env: bool,
         allowed_auth_modes: Option<Vec<AuthMode>>,
+        network_policy_ownership: NetworkPolicyOwnership,
     ) -> Result<Arc<Self>, AuthManagerInitializationError> {
         let external_auth = WorkloadIdentityExternalAuth::from_process_config(&auth_config)?;
         let mut manager =
             Self::new_from_auth_config(auth_config, enable_codex_api_key_env, allowed_auth_modes)
                 .await;
+        manager.owns_network_policy =
+            matches!(network_policy_ownership, NetworkPolicyOwnership::Primary);
         manager.workload_identity_selected = external_auth.is_some();
-        let manager = Arc::new(manager);
         if let Some(external_auth) = external_auth {
-            manager
-                .install_external_auth(Arc::new(external_auth))
+            manager = manager
+                .with_initial_external_auth(Arc::new(external_auth))
                 .await?;
         }
-        Ok(manager)
+        Ok(Arc::new(manager))
     }
 
     pub fn unauthorized_recovery(self: &Arc<Self>) -> UnauthorizedRecovery {
@@ -3574,12 +3626,8 @@ impl AuthManager {
                             "Token data is not available.",
                         ))
                     })?;
-                    Box::pin(self.refresh_and_persist_chatgpt_token(
-                        chatgpt_auth,
-                        token_data,
-                        reason,
-                    ))
-                    .await
+                    self.refresh_and_persist_chatgpt_token(chatgpt_auth, token_data, reason)
+                        .await
                 }
                 Some(
                     CodexAuth::ApiKey(_)
@@ -3747,9 +3795,19 @@ impl AuthManager {
         .map_err(|error| external_auth.classify_error(std::io::Error::other(error)))
     }
 
+    // Erase the future's type so callers share the code that polls it.
+    fn refresh_and_persist_chatgpt_token<'a>(
+        &'a self,
+        auth: &'a ChatgptAuth,
+        tokens: TokenData,
+        reason: RefreshReason,
+    ) -> Pin<Box<dyn Future<Output = Result<(), RefreshTokenError>> + Send + 'a>> {
+        Box::pin(self.refresh_and_persist_chatgpt_token_impl(auth, tokens, reason))
+    }
+
     // Refreshes ChatGPT OAuth tokens, persists the updated auth state, and
     // reloads the in-memory cache so callers immediately observe new tokens.
-    async fn refresh_and_persist_chatgpt_token(
+    async fn refresh_and_persist_chatgpt_token_impl(
         &self,
         auth: &ChatgptAuth,
         tokens: TokenData,

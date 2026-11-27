@@ -28,15 +28,14 @@ use crate::config_requirements::RequirementSource;
 use crate::config_requirements::SandboxModeRequirement;
 use crate::config_toml::ConfigToml;
 use crate::config_toml::ProjectConfig;
-use crate::diagnostics::ConfigError;
 use crate::diagnostics::config_error_from_toml;
-use crate::diagnostics::first_layer_config_error_from_entries as typed_first_layer_config_error_from_entries;
+use crate::diagnostics::first_layer_config_error_from_entries;
+use crate::diagnostics::first_layer_shell_environment_filter_error;
 use crate::diagnostics::io_error_from_config_error;
 use crate::merge::merge_toml_values;
 use crate::overrides::build_cli_overrides_layer;
 use crate::project_root_markers::default_project_root_markers;
 use crate::project_root_markers::project_root_markers_from_config;
-use crate::shell_environment_policy::ShellEnvironmentPolicyFilterConfigToml;
 use crate::state::ConfigLayerEntry;
 use crate::state::ConfigLayerStack;
 use crate::state::ConfigLoadOptions;
@@ -45,6 +44,7 @@ use crate::state::validate_enabled_config_layers;
 use crate::strict_config::config_error_from_ignored_toml_value_fields;
 use crate::strict_config::ignored_config_warning;
 use crate::strict_config::ignored_toml_value_fields;
+use crate::strict_config::status_line_provider_warning;
 use crate::strict_config::unknown_feature_toml_value_field;
 use crate::strict_config::unknown_tui_toml_value_path;
 use crate::thread_config::ThreadConfigContext;
@@ -71,7 +71,21 @@ pub use local::LocalConfigLayers;
 pub use local::LocalTomlLayer;
 pub use local::LocalTomlLayerStack;
 pub use local::load_local_config_layers;
+pub use managed_requirements::load_guardian_policy_snapshot;
 pub use managed_requirements::load_managed_requirements_state;
+
+/// Refreshes local managed preferences before enforcing policy in a long-lived process.
+pub async fn refresh_managed_preferences(overrides: &LoaderOverrides) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    if overrides.macos_managed_config_requirements_base64.is_none() {
+        tokio::task::spawn_blocking(macos::synchronize_managed_preferences)
+            .await
+            .map_err(std::io::Error::other)??;
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = overrides;
+    Ok(())
+}
 #[cfg(windows)]
 pub use windows::WindowsSystemConfigNamespaceProbe;
 #[cfg(windows)]
@@ -101,10 +115,6 @@ const PROJECT_LOCAL_CONFIG_DENYLIST: &[&str] = &[
     "experimental_realtime_ws_base_url",
     "otel",
 ];
-
-async fn first_layer_config_error_from_entries(layers: &[ConfigLayerEntry]) -> Option<ConfigError> {
-    typed_first_layer_config_error_from_entries::<ConfigToml>(layers, CONFIG_TOML_FILE).await
-}
 
 /// To build up the set of admin-enforced constraints, requirements layers are
 /// collected in ascending precedence order, matching config layers, and then
@@ -502,11 +512,7 @@ pub async fn load_config_layers_state(
     }
 
     if let Err(err) = validate_enabled_config_layers(&layers) {
-        if let Some(config_error) = typed_first_layer_config_error_from_entries::<
-            ShellEnvironmentPolicyFilterConfigToml,
-        >(&layers, CONFIG_TOML_FILE)
-        .await
-        {
+        if let Some(config_error) = first_layer_shell_environment_filter_error(&layers).await {
             return Err(io_error_from_config_error(
                 io::ErrorKind::InvalidData,
                 config_error,
@@ -525,6 +531,10 @@ pub async fn load_config_layers_state(
             );
     config_layer_stack.is_projectless = is_projectless;
     config_layer_stack.project_trust = project_trust;
+    startup_warnings.extend(status_line_provider_warning(
+        &config_layer_stack,
+        strict_config,
+    )?);
     if config_layer_stack.layers_low_to_high().any(|layer| {
         matches!(
             layer.name,
@@ -1365,6 +1375,40 @@ fn sanitize_project_config(
         {
             ignored_keys.push("features.shell_snapshot".to_string());
         }
+        // Serde also accepts positional arrays for these structs. Project overrides
+        // must use named settings so the user-only fields below can be filtered.
+        if features.get("guardianv3").is_some_and(TomlValue::is_array) {
+            features.remove("guardianv3");
+            ignored_keys.push("features.guardianv3".to_string());
+        }
+        if let Some(guardian) = features
+            .get_mut("guardianv3")
+            .and_then(TomlValue::as_table_mut)
+        {
+            for key in [
+                "max_instruction_tokens",
+                "shadow_board_limit_mib",
+                "shadow_enabled",
+            ] {
+                if guardian.remove(key).is_some() {
+                    ignored_keys.push(format!("features.guardianv3.{key}"));
+                }
+            }
+            for (section, key) in [
+                ("housekeeper", "routing_instructions"),
+                ("reviewer", "retrieval_instructions"),
+            ] {
+                if guardian.get(section).is_some_and(TomlValue::is_array) {
+                    guardian.remove(section);
+                    ignored_keys.push(format!("features.guardianv3.{section}"));
+                } else if let Some(settings) =
+                    guardian.get_mut(section).and_then(TomlValue::as_table_mut)
+                    && settings.remove(key).is_some()
+                {
+                    ignored_keys.push(format!("features.guardianv3.{section}.{key}"));
+                }
+            }
+        }
         if let Some(multi_agent) = features
             .get_mut("multi_agent_v2")
             .and_then(TomlValue::as_table_mut)
@@ -1376,6 +1420,8 @@ fn sanitize_project_config(
             "respect_system_proxy",
             "system_proxy_fallback",
             "credential_masking",
+            // A quoted dotted key is a literal feature name, outside the table above.
+            "guardianv3.shadow_enabled",
         ] {
             if features.remove(key).is_some() {
                 ignored_keys.push(format!("features.{key}"));
@@ -1653,7 +1699,11 @@ pub fn resolve_relative_paths_in_config_toml(
     }
     // The typed round trip resolves AbsolutePathBuf fields against this layer's directory.
     let _guard = AbsolutePathBufGuard::new(base_dir);
-    let Ok(resolved) = ConfigToml::try_from(value_from_config_toml.clone()) else {
+    // Provider identities contain no paths. An ignored malformed identity must not
+    // prevent an unrelated path in this layer from being resolved against its directory.
+    let path_input =
+        crate::config_layer_source::without_status_line_provider(&value_from_config_toml);
+    let Ok(resolved) = ConfigToml::try_from(path_input.into_owned()) else {
         return Ok(value_from_config_toml);
     };
     drop(_guard);
@@ -2044,7 +2094,12 @@ async fn load_root_checkout_project_config(
                 };
                 parsed
             }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                ) =>
+            {
                 TomlValue::Table(toml::map::Map::new())
             }
             Err(err) => {

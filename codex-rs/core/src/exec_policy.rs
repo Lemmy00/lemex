@@ -9,12 +9,12 @@ use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
 use codex_execpolicy::AmendError;
 use codex_execpolicy::Decision;
-use codex_execpolicy::Error as ExecPolicyRuleError;
 use codex_execpolicy::Evaluation;
 use codex_execpolicy::MatchOptions;
 use codex_execpolicy::Policy;
 use codex_execpolicy::PolicyParser;
 use codex_execpolicy::RequirementsExecPolicy;
+use codex_execpolicy::RuleError as ExecPolicyRuleError;
 use codex_execpolicy::RuleMatch;
 use codex_execpolicy::blocking_append_allow_prefix_rule;
 use codex_execpolicy::blocking_append_network_rule;
@@ -276,10 +276,13 @@ pub enum ExecPolicyUpdateError {
     JoinBlockingTask { source: tokio::task::JoinError },
 
     #[error("failed to update in-memory rules: {source}")]
-    AddRule {
-        #[from]
-        source: ExecPolicyRuleError,
-    },
+    AddRule { source: ExecPolicyRuleError },
+}
+
+impl From<ExecPolicyRuleError> for ExecPolicyUpdateError {
+    fn from(source: ExecPolicyRuleError) -> Self {
+        Self::AddRule { source }
+    }
 }
 
 pub(crate) struct ExecPolicyManager {

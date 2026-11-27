@@ -74,6 +74,54 @@ pub(super) fn text(buffer: &Buffer) -> String {
 }
 
 #[test]
+fn document_scroll_indicators_use_visible_rows_without_laying_out_the_tail() {
+    let tail_renders = Arc::<AtomicUsize>::default();
+    let cells = vec![
+        cell("first\nsecond\nthird\nfourth\nfifth"),
+        Arc::new(TestCell {
+            text: "last line wraps across several rows".into(),
+            renders: Arc::clone(&tail_renders),
+        }) as Arc<dyn HistoryCell>,
+    ];
+    let mut view = TranscriptView::default();
+    view.jump_to_offset(&cells, /*offset*/ 0);
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 12, /*height*/ 3,
+    );
+    let viewport = Rect { width: 11, ..area };
+    let mut buffer = Buffer::empty(area);
+    for _ in 0..3 {
+        view.render_document(viewport, &mut buffer, &cells, &[], /*target*/ None);
+        view.paint_document_scroll_indicators(area, &mut buffer, &cells);
+        assert_eq!(
+            [buffer[(11, 0)].symbol(), buffer[(11, 2)].symbol()],
+            [" ", "↓"]
+        );
+    }
+    assert_eq!(tail_renders.load(Ordering::Relaxed), 0);
+
+    // The first chunk ends exactly at the viewport edge, but another chunk follows.
+    view.jump_to_offset(&cells, "first\nsecond\n".len());
+    buffer.reset();
+    view.render_document(viewport, &mut buffer, &cells, &[], /*target*/ None);
+    view.paint_document_scroll_indicators(area, &mut buffer, &cells);
+    assert_eq!(
+        [buffer[(11, 0)].symbol(), buffer[(11, 2)].symbol()],
+        ["↑", "↓"]
+    );
+    assert_eq!(tail_renders.load(Ordering::Relaxed), 0);
+
+    view.jump_to_latest();
+    buffer.reset();
+    view.render_document(viewport, &mut buffer, &cells, &[], /*target*/ None);
+    view.paint_document_scroll_indicators(area, &mut buffer, &cells);
+    assert_eq!(
+        [buffer[(11, 0)].symbol(), buffer[(11, 2)].symbol()],
+        ["↑", " "]
+    );
+}
+
+#[test]
 fn consecutive_user_prompts_share_one_background_block() {
     use crate::history_cell::AgentMessageCell;
     use crate::history_cell::new_spoken_user_prompt;
@@ -984,6 +1032,23 @@ impl HistoryCell for MutableHistoryCell {
 }
 
 #[test]
+fn cached_mutable_history_prevents_reusing_painted_geometry() {
+    let mutable: Arc<dyn HistoryCell> = Arc::new(MutableHistoryCell {
+        version: Arc::new(AtomicUsize::new(/*v*/ 1)),
+        renders: Arc::default(),
+    });
+    let cells = vec![mutable, cell("static tail")];
+    let mut view = TranscriptView::default();
+    render(&mut view, &cells, /*width*/ 24, /*height*/ 16);
+    assert!(!view.can_scroll_without_refresh(&cells, /*live_key*/ None));
+    drop(cells);
+
+    let cells = vec![cell("static tail")];
+    render(&mut view, &cells, /*width*/ 24, /*height*/ 16);
+    assert!(view.can_scroll_without_refresh(&cells, /*live_key*/ None));
+}
+
+#[test]
 fn mutable_history_formats_once_per_frame_and_refreshes_the_next_frame() {
     let version = Arc::new(AtomicUsize::new(/*v*/ 1));
     let renders = Arc::new(AtomicUsize::new(/*v*/ 0));
@@ -1419,6 +1484,172 @@ fn assistant_message(
         )
         .with_phase(phase),
     )
+}
+
+#[test]
+fn collapsing_tool_group_refills_viewport() {
+    let mut cells = vec![
+        prompt("Check the field notes"),
+        cell("Opened the field notes\nChecking dates and locations\nChecking names and totals"),
+    ];
+    for id in 1..=6 {
+        cells.push(Arc::new(crate::history_cell::new_web_search_call(
+            format!("lookup-{id}"),
+            format!("field note {id}"),
+            codex_app_server_protocol::WebSearchAction::Other,
+        )));
+    }
+    cells.push(cell("Checking the last source"));
+    let mut view = TranscriptView::default();
+    view.sync_turn_details(&cells, /*enabled*/ true, /*active*/ None);
+    let screen = |view: &mut TranscriptView| {
+        text(&render(view, &cells, /*width*/ 52, /*height*/ 8))
+    };
+    let initial = screen(&mut view);
+    view.handle_key(KeyCode::F(4).into(), &cells);
+    view.handle_key(KeyCode::Enter.into(), &cells);
+    screen(&mut view);
+    // Read down to the expanded group's details, then close it in place.
+    view.scroll(&cells, /*rows*/ 2);
+    let expanded = screen(&mut view);
+    assert!(expanded.contains("▾ 6 tool calls"), "{expanded}");
+    view.handle_key(KeyCode::Enter.into(), &cells);
+    let collapsed = screen(&mut view);
+    assert_eq!(collapsed, initial);
+    assert!(view.is_activity_focused());
+    assert!(!view.is_following());
+    assert_eq!(screen(&mut view), collapsed);
+    insta::assert_snapshot!(collapsed);
+}
+
+#[test]
+fn hidden_reasoning_keeps_the_next_command_in_the_same_tool_group() {
+    let [mut first, next] = ["lint", "test"].map(|id| {
+        crate::exec_cell::new_active_exec_command(
+            id.into(),
+            vec!["just".into(), id.into()],
+            Vec::new(),
+            codex_app_server_protocol::CommandExecutionSource::Agent,
+            /*interaction_input*/ None,
+            /*animations_enabled*/ false,
+        )
+    });
+    first.complete_call(
+        "lint",
+        crate::exec_cell::CommandOutput::new(/*exit_code*/ 0, String::new()),
+        std::time::Duration::ZERO,
+    );
+    let reasoning = crate::history_cell::new_reasoning_summary_block(
+        vec!["**Checking tests**".into()],
+        std::path::Path::new("."),
+    );
+    let cells: &[Arc<dyn HistoryCell>] = &[Arc::new(first), Arc::new(*reasoning)];
+    let screen = parked_screen(&mut TranscriptView::default(), cells, Some(&next));
+    insta::assert_snapshot!(screen, @"    ▸ 2 tool calls · Running just test");
+}
+
+#[test]
+fn late_command_completion_keeps_tool_groups_independent() {
+    use codex_app_server_protocol::CommandExecutionSource;
+    use codex_protocol::models::MessagePhase::Commentary;
+
+    let command = || {
+        crate::exec_cell::new_active_exec_command(
+            "background".into(),
+            vec!["check".into()],
+            Vec::new(),
+            CommandExecutionSource::Agent,
+            /*interaction_input*/ None,
+            /*animations_enabled*/ false,
+        )
+    };
+    let mut view = TranscriptView::default();
+    let running = command();
+    let mut cells: Vec<Arc<dyn HistoryCell>> = Vec::new();
+    parked_screen(&mut view, &cells, Some(&running));
+    assert!(view.toggle_disclosure_at(&cells, /*column*/ 4, /*row*/ 0));
+
+    // The running cell is already in history when the result arrives after commentary.
+    cells.push(Arc::new(running));
+    cells.push(assistant_message("Checking the result.", Some(Commentary)));
+    let mut completed = command();
+    completed.complete_call(
+        "background",
+        crate::exec_cell::CommandOutput::new(/*exit_code*/ 0, String::new()),
+        std::time::Duration::ZERO,
+    );
+    view.jump_to_latest();
+    let live_result = parked_screen(&mut view, &cells, Some(&completed));
+    cells.push(Arc::new(completed));
+    let independent = parked_screen(&mut view, &cells, /*active*/ None);
+    assert!(
+        live_result.contains("▾ Running check") && live_result.contains("▸ Ran check"),
+        "{live_result}"
+    );
+    insta::assert_snapshot!(independent, @r"
+        ▾ Running check
+          Running check
+
+    • Checking the result.
+        ▸ Ran check
+    ");
+
+    let row = independent
+        .lines()
+        .position(|line| line.contains("Ran check"))
+        .unwrap() as u16;
+    assert!(view.toggle_disclosure_at(&cells, /*column*/ 4, row));
+    let both = parked_screen(&mut view, &cells, /*active*/ None);
+    assert!(
+        both.contains("▾ Running check") && both.contains("▾ Ran check"),
+        "{both}"
+    );
+    view.handle_key(KeyCode::Enter.into(), &cells);
+    assert_eq!(
+        parked_screen(&mut view, &cells, /*active*/ None),
+        independent
+    );
+    assert!(view.toggle_disclosure_at(&cells, /*column*/ 4, /*row*/ 0));
+    let closed = parked_screen(&mut view, &cells, /*active*/ None);
+    assert!(
+        closed.contains("▸ Running check") && closed.contains("▸ Ran check"),
+        "{closed}"
+    );
+}
+
+#[test]
+fn late_tool_result_stays_independent_across_turns() {
+    let tool = || {
+        crate::history_cell::new_active_mcp_tool_call(
+            "lookup".into(),
+            crate::history_cell::McpInvocation {
+                environment_id: None,
+                server: "docs".into(),
+                tool: "search".into(),
+                arguments: None,
+            },
+            /*animations_enabled*/ false,
+        )
+    };
+    let mut cells = vec![prompt("Start a lookup"), Arc::new(tool())];
+    let mut view = TranscriptView::default();
+    view.sync_turn_details(&cells, /*enabled*/ true, /*active*/ None);
+    turn_screen(&mut view, &cells);
+    view.handle_key(KeyCode::F(4).into(), &cells);
+    view.handle_key(KeyCode::Enter.into(), &cells);
+
+    cells.push(prompt("Continue"));
+    view.sync_turn_details(&cells, /*enabled*/ true, /*active*/ None);
+    let mut result = tool();
+    result.complete(std::time::Duration::ZERO, Err("Offline".into()));
+    cells.push(Arc::new(result));
+    view.sync_turn_details(&cells, /*enabled*/ true, /*active*/ None);
+    view.jump_to_latest();
+    let screen = turn_screen(&mut view, &cells);
+    assert!(
+        screen.contains("▾ Calling") && screen.contains("▸ Failed"),
+        "{screen}"
+    );
 }
 
 #[test]

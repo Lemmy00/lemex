@@ -1,7 +1,14 @@
 //! Contributor integration tests use the normal catalog-backed lifecycle setup.
 
+use crate::async_scorer::conversation::ConversationBackend;
+
 use super::*;
 use crate::async_scorer::authorization::ScoreAuthorization;
+use codex_context_fragments::AnnotatedContent;
+use codex_context_fragments::message_from_parts;
+use codex_guardian_context::MANUAL_APPROVAL_CONTENT_KIND;
+use codex_protocol::models::ContentItemKind;
+use codex_protocol::models::ContentItemMetadata;
 use codex_protocol::models::ImageReference;
 use pretty_assertions::assert_eq;
 
@@ -153,17 +160,14 @@ async fn assert_catalog_budget(evidence: BudgetEvidence) -> Result<()> {
         let mut history = checkpoint.iter().cloned().collect::<Vec<_>>();
         history.push(user);
         if matches!(evidence, BudgetEvidence::UserInstructions) {
-            history.push(ResponseItem::Message {
-                status: None,
-                encrypted_content: None,
-                id: None,
-                role: "developer".to_owned(),
-                content: vec![ContentItem::InputText {
-                    text: approval.clone(),
-                }],
-                phase: None,
-                internal_chat_message_metadata_passthrough: None,
-            });
+            history.push(message_from_parts(
+                "developer",
+                vec![AnnotatedContent::text(
+                    &approval,
+                    ContentItemKind(MANUAL_APPROVAL_CONTENT_KIND.to_owned()),
+                    ContentItemMetadata::harness(),
+                )],
+            ));
             history.push(user_instruction(restriction));
         }
         history.extend(commentary.into_iter().map(|text| ResponseItem::Message {
@@ -210,9 +214,13 @@ async fn assert_catalog_budget(evidence: BudgetEvidence) -> Result<()> {
                     sampled_at: None,
                 },
             );
-            let progress = thread_store.get::<GuardianV2ScoreProgress>().unwrap();
+            let progress = ConversationBackend::for_turn(thread_store, thread_store)
+                .map(|cache| Arc::clone(&cache.progress))
+                .unwrap();
             let authorization =
-                ScoreAuthorization::current(&fixture.test.codex, &Default::default()).await;
+                ScoreAuthorization::current(&fixture.test.codex, &Default::default())
+                    .await
+                    .expect("read Guardian authorization");
             seed_cached_score(&progress, thread_store, /*index*/ 0, authorization);
             assert_eq!(
                 cached_approval(
@@ -232,7 +240,9 @@ async fn assert_catalog_budget(evidence: BudgetEvidence) -> Result<()> {
         };
         fixture.registry.tool_lifecycle_contributors()[0]
             .on_tool_start(ToolStartInput {
+                sampling_model: "gpt-5.5",
                 serving_assessment: None,
+                guardian_probe: None,
                 permissions: Box::pin(async { Some(Default::default()) }),
                 session_store: &fixture.session_store,
                 thread_store,
@@ -253,7 +263,7 @@ async fn assert_catalog_budget(evidence: BudgetEvidence) -> Result<()> {
                 // Raw injection supplies no live checkpoint provenance, regardless of the sample.
                 "incompatible_compaction"
             } else {
-                "elevated_risk"
+                "scoring_failure"
             };
             fixture.assert_fails_closed(reason).await?;
             assert!(
@@ -267,7 +277,9 @@ async fn assert_catalog_budget(evidence: BudgetEvidence) -> Result<()> {
             fixture.test.codex.shutdown_and_wait().await?;
             continue;
         }
-        let progress = thread_store.get::<GuardianV2ScoreProgress>().unwrap();
+        let progress = ConversationBackend::for_turn(thread_store, thread_store)
+            .map(|cache| Arc::clone(&cache.progress))
+            .unwrap();
         tokio::time::timeout(ASYNC_TEST_TIMEOUT, async {
             while progress.inspect(/*call_id*/ None).lag > 0 {
                 tokio::task::yield_now().await;

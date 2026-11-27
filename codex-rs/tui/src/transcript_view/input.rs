@@ -18,6 +18,8 @@ use crossterm::event::MouseEventKind;
 use ratatui::layout::Position as ScreenPosition;
 
 use super::*;
+use crate::markdown_render::FileLink;
+use crate::terminal_hyperlinks::ReaderLink;
 
 pub(crate) enum ViewAction {
     Changed,
@@ -26,7 +28,19 @@ pub(crate) enum ViewAction {
     CopyOnSelect(String),
     PrimarySelection(String),
     CopyAndFollow(String),
+    OpenAgent(ThreadId),
     OpenLink(String),
+    OpenDocument(FileLink),
+}
+
+impl From<ReaderLink> for ViewAction {
+    fn from(link: ReaderLink) -> Self {
+        match link {
+            ReaderLink::Agent(id) => Self::OpenAgent(id),
+            ReaderLink::External(url) => Self::OpenLink(url),
+            ReaderLink::Document(link) => Self::OpenDocument(link),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -106,17 +120,94 @@ impl TranscriptView {
             | ViewAction::ExitSelectMode
             | ViewAction::Copy(_)
             | ViewAction::CopyAndFollow(_)
+            | ViewAction::OpenAgent(_)
+            | ViewAction::OpenDocument(_)
             | ViewAction::OpenLink(_) => SelectionCopy::EXPLICIT,
         }
     }
 
-    /// Resolve links in the last rendered transcript, sharing geometry with click activation.
+    #[cfg(test)]
     pub(crate) fn link_at(&self, column: u16, row: u16) -> Option<String> {
-        if !self.area.contains(ScreenPosition::new(column, row)) {
+        self.reader_link_at(column, row)
+            .map(ReaderLink::into_destination)
+    }
+
+    /// Resolve links in the last rendered transcript, sharing geometry with click activation.
+    pub(crate) fn reader_link_at(&self, column: u16, row: u16) -> Option<ReaderLink> {
+        let (_, link) = self.raw_link_at(ScreenPosition::new(column, row))?;
+        if self.agent_links.is_some()
+            && let Some(agent) = link.agent_id()
+        {
+            return Some(ReaderLink::Agent(agent));
+        }
+        link.reader_destination(self.document_links)
+            .or_else(|| link.interaction_destination().map(ReaderLink::External))
+    }
+
+    pub(crate) fn cycle_document_link(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        selected: Option<usize>,
+        forward: bool,
+    ) -> Option<usize> {
+        let layout = self.layout(cells, /*index*/ 0)?;
+        let links = layout.document_links();
+        let count = links.len();
+        if count == 0 {
             return None;
         }
-        let visible = self.visible.get(usize::from(row - self.area.y))?;
-        visible.layout.link_at(visible.row, column - self.area.x)
+        let index = match selected {
+            Some(index) if forward => (index + 1) % count,
+            Some(index) => (index + count - 1) % count,
+            None if forward => 0,
+            None => count - 1,
+        };
+        let offset = links[index].0.first()?.start;
+        let row = layout.row_for_offset(offset);
+        if !self
+            .visible
+            .iter()
+            .any(|visible| visible.index == 0 && visible.row == row)
+        {
+            self.jump_to_offset(cells, offset);
+        }
+        Some(index)
+    }
+
+    pub(crate) fn document_link(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        index: usize,
+    ) -> Option<ReaderLink> {
+        self.layout(cells, /*index*/ 0)?
+            .document_links()
+            .into_iter()
+            .nth(index)
+            .map(|(_, link)| link)
+    }
+
+    pub(crate) fn paint_document_link(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        index: usize,
+        buf: &mut ratatui::buffer::Buffer,
+    ) {
+        let Some(layout) = self.layout(cells, /*index*/ 0) else {
+            return;
+        };
+        let Some((ranges, _)) = layout.document_links().into_iter().nth(index) else {
+            return;
+        };
+        for (y, visible) in (self.area.top()..self.area.bottom()).zip(&self.visible) {
+            if visible.index == 0 {
+                let area = Rect::new(self.area.x, y, self.area.width, /*height*/ 1);
+                for range in &ranges {
+                    visible
+                        .layout
+                        .highlight(range.clone(), area, buf, visible.row);
+                }
+            }
+        }
     }
 
     pub(crate) fn navigate_pager(
@@ -166,7 +257,7 @@ impl TranscriptView {
         if self.copy_mode.is_some() {
             return true;
         }
-        if self.select_mode.is_some() {
+        if self.is_select_mode() {
             return true;
         }
         if self.selection.is_some() {
@@ -202,7 +293,7 @@ impl TranscriptView {
         if let Some(action) = self.handle_copy_mode_key(key, cells) {
             return Some(action);
         }
-        if self.select_mode.is_some() {
+        if self.is_select_mode() {
             if self.is_search_editing() {
                 let (code, modifiers) =
                     crate::key_hint::normalize_key_parts(key.code, key.modifiers);
@@ -213,7 +304,7 @@ impl TranscriptView {
                     if accepting && self.search.is_reading() {
                         self.accept_search_into_select_mode(cells);
                     } else if cancelling {
-                        self.restore_select_search_origin();
+                        self.restore_select_search_origin(cells);
                     }
                     return Some(ViewAction::Changed);
                 }
@@ -235,6 +326,15 @@ impl TranscriptView {
         if modifiers == KeyModifiers::CONTROL && code == KeyCode::Char(' ') {
             self.begin_selection(cells, self.area.x, self.area.y, /*clicks*/ 1);
             if let Some(selection) = &mut self.selection {
+                // Ctrl+Space extends a half-open source range with the arrow keys.
+                // Start at the logical boundary even if the leftmost glyph is RTL.
+                if let Some(first) = self.visible.first()
+                    && first.layout.visual_hit(first.row, /*column*/ 0).is_some()
+                {
+                    let mut anchor = selection.start;
+                    anchor.offset = first.layout.position_at(first.row, /*column*/ 0);
+                    selection.set_keyboard_range(anchor, anchor);
+                }
                 selection.dragging = false;
                 selection.resume_on_empty = false;
             }
@@ -270,16 +370,26 @@ impl TranscriptView {
                 | MouseEventKind::Drag(MouseButton::Left)
                 | MouseEventKind::Up(MouseButton::Left)
         );
-        let before = self
-            .selection
-            .as_ref()
-            .map(|selection| (selection.start, selection.end, selection.unit()));
+        let before = self.selection.as_ref().map(|selection| {
+            (
+                selection.start,
+                selection.end,
+                selection.unit(),
+                selection.has_table_scope(),
+                selection.mouse_endpoints,
+            )
+        });
         let action =
             self.handle_mouse_with_mode(event, cells, MouseMode::Selection(patch_approval));
-        let after = self
-            .selection
-            .as_ref()
-            .map(|selection| (selection.start, selection.end, selection.unit()));
+        let after = self.selection.as_ref().map(|selection| {
+            (
+                selection.start,
+                selection.end,
+                selection.unit(),
+                selection.has_table_scope(),
+                selection.mouse_endpoints,
+            )
+        });
         if endpoint_changed && before != after {
             if self.has_selection_range() {
                 self.disclosure.resume_after_approval = None;
@@ -329,7 +439,7 @@ impl TranscriptView {
                 .hyperlinks
                 .iter()
                 .find(|link| link.columns.contains(&column))?
-                .terminal_destination()
+                .interaction_destination()
                 .map(ViewAction::OpenLink);
         }
         let inside = self.area.contains(point);
@@ -380,6 +490,8 @@ impl TranscriptView {
                 return self.pointer_down(event, cells, mode);
             }
             MouseEventKind::Drag(MouseButton::Left) if dragging => {
+                // A drag ends the click sequence even when the next press is at the same spot.
+                self.last_click = None;
                 self.extend_selection(event.column, event.row);
             }
             MouseEventKind::Up(MouseButton::Left) if dragging => {
@@ -399,7 +511,7 @@ impl TranscriptView {
                     None
                 };
                 let link = link.filter(|destination| {
-                    self.link_at(event.column, event.row).as_ref() == Some(destination)
+                    self.reader_link_at(event.column, event.row).as_ref() == Some(destination)
                 });
                 if self
                     .selection
@@ -414,7 +526,7 @@ impl TranscriptView {
                     self.end_selection(cells);
                 }
                 if let Some(link) = link {
-                    return Some(ViewAction::OpenLink(link));
+                    return Some(link.into());
                 }
                 if let Some(text) = selected.filter(|text| !text.is_empty()) {
                     if self.copy_on_select {
@@ -507,10 +619,7 @@ impl TranscriptView {
         mode: MouseMode<'_>,
     ) -> Option<ViewAction> {
         let was_following = self.is_following();
-        if !self.is_select_mode()
-            && event.modifiers.is_empty()
-            && self.toggle_disclosure_at(cells, event.column, event.row)
-        {
+        if event.modifiers.is_empty() && self.toggle_disclosure_at(cells, event.column, event.row) {
             // Keep the patch anchored for inspection, then follow again when the prompt closes.
             if was_following && let MouseMode::Selection(Some((thread_id, id))) = mode {
                 self.disclosure.resume_after_approval = Some((thread_id, id.to_owned()));
@@ -527,8 +636,8 @@ impl TranscriptView {
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
         {
             return self
-                .link_at(event.column, event.row)
-                .map(ViewAction::OpenLink);
+                .reader_link_at(event.column, event.row)
+                .map(ViewAction::from);
         }
         if event.modifiers == KeyModifiers::SHIFT && self.has_selection_range() {
             self.last_click = None;
@@ -541,16 +650,21 @@ impl TranscriptView {
         }
         let clicks =
             crate::text_selection::click_count(&mut self.last_click, event.column, event.row);
-        if clicks >= 2
-            && visible
-                .layout
-                .position_at(visible.row, event.column.saturating_sub(self.area.x))
-                == visible.layout.position_at(visible.row, u16::MAX)
-        {
-            return None;
+        if clicks >= 2 {
+            let column = event.column.saturating_sub(self.area.x);
+            let layout = &visible.layout;
+            let offset = layout.position_at(visible.row, column);
+            let at_row_end = offset == layout.position_at(visible.row, u16::MAX);
+            let can_select_from_padding = at_row_end
+                && clicks == 3
+                && !self.is_select_mode()
+                && layout.table_cell_at(visible.row, column, offset).is_some();
+            if at_row_end && !can_select_from_padding {
+                return None;
+            }
         }
         let link = (mode == MouseMode::Interactive && clicks == 1 && event.modifiers.is_empty())
-            .then(|| self.link_at(event.column, event.row))
+            .then(|| self.reader_link_at(event.column, event.row))
             .flatten();
         self.begin_selection(cells, event.column, event.row, clicks);
         if let Some(selection) = &mut self.selection {

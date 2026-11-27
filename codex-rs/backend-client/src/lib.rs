@@ -1,7 +1,6 @@
 mod client;
 pub(crate) mod types;
 
-pub use client::AddCreditsNudgeCreditType;
 pub use client::ChatgptThreadTurnCosts;
 pub use client::ChatgptTurnCost;
 pub use client::Client;
@@ -32,7 +31,6 @@ pub use types::RateLimitResetCreditsDetails;
 pub use types::RateLimitResetCreditsSummary;
 pub use types::RateLimitsWithResetCredits;
 pub use types::TaskListItem;
-pub use types::TokenUsageProfile;
-pub use types::TokenUsageProfileDailyBucket;
-pub use types::TokenUsageProfileStats;
 pub use types::TurnAttemptsSiblingTurnsResponse;
+pub use types::VoiceOption;
+pub use types::VoiceSettings;

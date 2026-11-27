@@ -251,6 +251,11 @@ impl TestAppServer {
         })
     }
 
+    /// Waits for a substring in the child's captured stderr, including plain-text warnings.
+    pub async fn wait_for_stderr_line(&self, text: &str, timeout: Duration) -> anyhow::Result<()> {
+        self.json_logs.wait_for_stderr_line(text, timeout).await
+    }
+
     /// Waits up to `timeout` for a JSON stderr event whose structured `event.name` field matches.
     pub async fn wait_for_json_log_event(
         &self,
@@ -319,7 +324,7 @@ impl TestAppServer {
                 .is_err_and(|error| error.kind() == std::io::ErrorKind::ExecutableFileBusy)
                 || retries == 2
             {
-                break process.context("codex app-server proc should start")?;
+                break process.context("lemex app-server proc should start")?;
             }
             retries += 1;
             tokio::time::sleep(Duration::from_millis(10)).await;

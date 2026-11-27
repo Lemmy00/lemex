@@ -6,12 +6,69 @@
 //! answer fields.
 //! Provisional startup input, search queries, and shell input remain literal.
 //! Paste classification and insertion share one textarea edit target, including selection replacement.
+//! Pasted image files are copied into private temporary attachments while the client can read them.
 
 use super::*;
 use crate::bottom_pane::paste_burst::FlushResult;
 use crate::bottom_pane::textarea::EditTarget;
+use crate::clipboard_paste::normalize_pasted_path;
+use crate::clipboard_paste::pasted_image_format;
 
 impl ChatComposer {
+    fn copy_pasted_image_path(pasted: &str) -> std::io::Result<Option<PathBuf>> {
+        use std::io::Seek;
+        #[cfg(unix)]
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let Some(path_buf) = normalize_pasted_path(pasted) else {
+            return Ok(None);
+        };
+        // Opening a serial device or FIFO can block the input loop.
+        if !path_buf.is_file() {
+            return Ok(None);
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        options.custom_flags(libc::O_NONBLOCK);
+        let Ok(mut file) = options.open(&path_buf) else {
+            return Ok(None);
+        };
+        let Ok(metadata) = file.metadata() else {
+            return Ok(None);
+        };
+        if !metadata.is_file() {
+            return Ok(None);
+        }
+        let Ok(image_format) = image::ImageFormat::from_path(&path_buf) else {
+            return Ok(None);
+        };
+        let dimensions =
+            image::ImageReader::with_format(std::io::BufReader::new(&mut file), image_format)
+                .into_dimensions();
+        match dimensions {
+            Ok((width, height)) => {
+                tracing::info!("OK: {pasted}");
+                tracing::debug!("image dimensions={}x{}", width, height);
+                let format = pasted_image_format(&path_buf);
+                tracing::debug!("attached image format={}", format.label());
+                let suffix = path_buf
+                    .extension()
+                    .map(|extension| format!(".{}", extension.to_string_lossy()))
+                    .unwrap_or_default();
+                if metadata.len() > crate::clipboard_paste::MAX_PASTED_IMAGE_BYTES {
+                    return Err(std::io::Error::other("image exceeds the 1 GiB input limit"));
+                }
+                file.rewind()?;
+                crate::clipboard_paste::persist_pasted_image(file, &suffix).map(Some)
+            }
+            Err(err) => {
+                tracing::trace!("ERR: {err}");
+                Ok(None)
+            }
+        }
+    }
+
     pub(crate) fn insert_str(&mut self, text: &str) {
         self.insert_str_at_target(
             self.draft.textarea.edit_target(),
@@ -30,7 +87,7 @@ impl ChatComposer {
         if !text.is_empty() && self.sparkle.draft.get() == sparkle::SparkleDraft::Untouched {
             self.dismiss_sparkle();
         }
-        let started_vim_edit = self.begin_direct_vim_edit();
+        let started_edit = self.begin_direct_edit();
         let elements_before = target
             .replaces_text()
             .then(|| self.draft.textarea.element_payloads());
@@ -45,8 +102,8 @@ impl ChatComposer {
             self.sync_bash_mode_from_text();
         }
         self.sync_popups();
-        if started_vim_edit {
-            self.finish_vim_edit();
+        if started_edit {
+            self.finish_edit();
         }
     }
 
@@ -92,6 +149,9 @@ impl ChatComposer {
     /// Classify an explicit paste before integrating text shared with the buffered key path.
     pub fn handle_paste(&mut self, pasted: String) -> bool {
         self.flush_pending_paste_burst();
+        if !self.draft.textarea.is_vim_enabled() {
+            self.finish_edit();
+        }
         self.note_sparkle_paste(&pasted);
         self.apply_paste(pasted)
     }
@@ -109,14 +169,12 @@ impl ChatComposer {
         self.draft.paste_burst.handoff_deadline()
     }
 
-    /// Display flushed text without losing the window for its trailing paste keys.
-    pub(in crate::bottom_pane) fn flush_handoff_paste(&mut self, now: Instant) -> bool {
-        let deadline = self.paste_handoff_deadline();
-        let flushed = self.handle_paste_burst_flush(now);
-        if flushed && let Some(deadline) = deadline.filter(|deadline| *deadline >= now) {
-            self.draft.paste_burst.preserve_window_until(deadline);
-        }
-        flushed
+    pub(in crate::bottom_pane) fn has_paste_window(&self, now: Instant) -> bool {
+        // Short IME prefixes are inserted directly. Require multiple rapid characters
+        // before intercepting submit so Enter after a lone IME commit still submits.
+        let burst = &self.draft.paste_burst;
+        !self.draft.disable_paste_burst
+            && (burst.in_burst_window(now) || burst.recent_plain_char_count(now) >= 2)
     }
 
     /// Enable or disable paste-burst handling.
@@ -149,7 +207,7 @@ impl ChatComposer {
     /// Applies any due `PasteBurst` flush at time `now`.
     ///
     /// Converts [`PasteBurst::flush_if_due`] results into concrete textarea mutations.
-    /// Buffered keys have already been classified; paste results use [`Self::apply_paste`].
+    /// Buffered keys have already been classified. Keep their Enter suppression deadline.
     ///
     /// Callers:
     ///
@@ -159,23 +217,33 @@ impl ChatComposer {
     pub(super) fn handle_paste_burst_flush(&mut self, now: Instant) -> bool {
         match self.draft.paste_burst.flush_if_due(now) {
             FlushResult::Paste(pasted) => {
-                self.apply_paste(pasted);
+                // A trailing Enter may still belong to this unmarked paste.
+                self.apply_paste_with_shell_prefix(pasted, ShellPrefixHandling::Interpret);
+                if !self.draft.textarea.is_vim_enabled() {
+                    self.finish_edit();
+                }
                 true
             }
             FlushResult::Typed(ch) => {
                 let completion_space = self.draft.skill_completion_space_for_char(ch);
-                let started_vim_edit = completion_space.is_some() && self.begin_direct_vim_edit();
+                let started_edit = completion_space.is_some() && self.begin_direct_edit();
                 if let Some(space) = completion_space {
                     self.draft.textarea.replace_range(space..space + 1, "");
                 }
                 self.insert_str(ch.to_string().as_str());
-                if started_vim_edit {
-                    self.finish_vim_edit();
+                if started_edit || !self.draft.textarea.is_vim_enabled() {
+                    self.finish_edit();
                 }
                 true
             }
             FlushResult::None => false,
         }
+    }
+
+    /// An explicit paste or a forced flush ends the previous burst.
+    pub(super) fn apply_paste(&mut self, pasted: String) -> bool {
+        self.draft.paste_burst.clear_after_explicit_paste();
+        self.apply_paste_with_shell_prefix(pasted, ShellPrefixHandling::Interpret)
     }
 
     /// Integrate pasted text into the composer.
@@ -195,50 +263,60 @@ impl ChatComposer {
     /// - Otherwise, if the paste looks like an image path, attaches the image and inserts a
     ///   trailing space so the user can keep typing naturally.
     /// - Otherwise, inserts the pasted text directly into the textarea.
-    ///
-    /// Composer edits clear paste-burst Enter suppression and sync popups.
-    pub(super) fn apply_paste(&mut self, pasted: String) -> bool {
-        self.apply_paste_with_shell_prefix(pasted, ShellPrefixHandling::Interpret)
-    }
-
     pub(super) fn apply_paste_with_shell_prefix(
         &mut self,
         pasted: String,
         shell_prefix: ShellPrefixHandling,
     ) -> bool {
-        self.draft.skill_completion_space = None;
         let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
         let pasted = sanitize_user_text(pasted.into());
         if self.history_search.is_some() {
+            self.draft.skill_completion_space = None;
             if !pasted.is_empty() {
                 self.update_history_search_query(|query| query.push_str(&pasted));
             }
             return true;
         }
         if let Some(query) = self.draft.textarea.vim_query_mut() {
+            self.draft.skill_completion_space = None;
             query.editor.insert_str(&pasted);
             return true;
         }
-        self.draft.textarea_state.get_mut().follow_cursor();
-        let started_vim_edit = self.begin_direct_vim_edit();
-        let elements_before = self.draft.textarea.element_payloads();
         let target = self.draft.textarea.edit_target();
         let before_cursor = &self.draft.textarea.text()[..target.start()];
         let current_line = before_cursor.rsplit('\n').next().unwrap_or_default();
         let is_blockquote = self.config.blockquote_paste_enabled
             && !self.is_bang_shell_command()
             && current_line.starts_with("> ")
-            && pasted.contains('\n');
+            && pasted.contains('\n')
+            && pasted.contains(|ch: char| !matches!(ch, '\n' | '\t'));
         let pasted = if is_blockquote {
-            let pasted = pasted
-                .strip_suffix('\n')
-                .filter(|pasted| !pasted.is_empty())
-                .unwrap_or(pasted.as_ref());
+            let pasted = pasted.strip_suffix('\n').unwrap_or(pasted.as_ref());
             std::borrow::Cow::Owned(pasted.replace('\n', "\n> "))
         } else {
             pasted
         };
         let char_count = pasted.chars().count();
+        let image = if (2..=LARGE_PASTE_CHAR_THRESHOLD).contains(&char_count)
+            && self.image_paste_enabled()
+        {
+            match Self::copy_pasted_image_path(&pasted) {
+                Ok(image) => image,
+                Err(error) => {
+                    self.draft.paste_burst.clear_after_explicit_paste();
+                    self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        history_cell::new_error_event(format!("Failed to paste image: {error}")),
+                    )));
+                    return true;
+                }
+            }
+        } else {
+            None
+        };
+        self.draft.skill_completion_space = None;
+        self.draft.textarea_state.get_mut().follow_cursor();
+        let started_edit = self.begin_direct_edit();
+        let elements_before = self.draft.textarea.element_payloads();
         if char_count > LARGE_PASTE_CHAR_THRESHOLD {
             let placeholder = self.next_large_paste_placeholder(char_count);
             self.draft
@@ -247,10 +325,8 @@ impl ChatComposer {
             self.draft
                 .pending_pastes
                 .push((placeholder, pasted.into_owned()));
-        } else if char_count > 1
-            && self.image_paste_enabled()
-            && self.handle_paste_image_path(&pasted)
-        {
+        } else if let Some(image) = image {
+            self.attach_image(image);
             let cursor = self.draft.textarea.cursor();
             self.draft.textarea.insert_str_at(cursor, " ");
         } else {
@@ -260,11 +336,10 @@ impl ChatComposer {
             let textarea = &mut self.draft.textarea;
             textarea.insert_str_at(textarea.cursor(), "\n\n");
         }
-        self.draft.paste_burst.clear_after_explicit_paste();
         self.reconcile_deleted_elements(elements_before);
         self.sync_popups();
-        if started_vim_edit {
-            self.finish_vim_edit();
+        if started_edit {
+            self.finish_edit();
         }
         true
     }
@@ -286,15 +361,23 @@ impl ChatComposer {
             .paste_burst
             .append_control_char_if_active(separator, now)
         {
+            self.begin_promoted_paste_edit();
             return true;
         }
 
-        // Short non-ASCII prefixes are inserted directly, without a held first character.
-        if self
-            .draft
-            .paste_burst
-            .direct_insert_newline_should_insert(now)
-        {
+        // A trailing pasted newline starts a new buffer so indentation stays with it.
+        // Tab on its own resumes its shortcut after a flush unless a handoff owns the draft.
+        let continues_paste =
+            if self.popups.restricted_input_mode == Some(RestrictedInputMode::DraftHandoff) {
+                self.draft
+                    .paste_burst
+                    .direct_insert_newline_should_insert(now)
+            } else if separator == '\n' {
+                self.has_paste_window(now)
+            } else {
+                self.draft.paste_burst.recent_plain_char_count(now) > 0
+            };
+        if continues_paste {
             self.draft
                 .paste_burst
                 .begin_with_retro_grabbed(String::new(), now);

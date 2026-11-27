@@ -16,7 +16,7 @@ use wiremock::MockServer;
 pub const PROBE_SERVER: &str = "CODEX_RUNTIME_AUTH_TEST_SERVER";
 
 /// Run one test in an isolated subprocess with first-party HTTP routed to the mock server.
-/// An optional Realtime target receives chatgpt.com Realtime WebSocket upgrades.
+/// An optional Realtime target receives public and synthetic private observer upgrades.
 pub async fn run_harness_through_proxy(
     server: &MockServer,
     test_name: &str,
@@ -32,6 +32,52 @@ pub async fn run_harness_through_proxy_with_env(
     realtime_target: Option<std::net::SocketAddr>,
     environment: &[(&str, Option<&str>)],
 ) -> Result<()> {
+    run_harness_through_proxy_until(
+        server,
+        test_name,
+        realtime_target,
+        environment,
+        std::future::ready(Ok(())),
+    )
+    .await
+}
+
+/// Keeps active proxy connections alive while checking the observer after the child exits.
+pub async fn run_harness_through_proxy_until(
+    server: &MockServer,
+    test_name: &str,
+    realtime_target: Option<std::net::SocketAddr>,
+    environment: &[(&str, Option<&str>)],
+    observer_completion: impl Future<Output = Result<()>>,
+) -> Result<()> {
+    with_harness_proxy(server, realtime_target, async |mut command| {
+        command
+            .args(["--exact", test_name, "--nocapture"])
+            .kill_on_drop(true);
+        for (key, value) in environment {
+            match value {
+                Some(value) => command.env(key, value),
+                None => command.env_remove(key),
+            };
+        }
+        let output = tokio::time::timeout(Duration::from_secs(90), command.output()).await??;
+        assert!(
+            output.status.success(),
+            "harness subprocess failed\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        observer_completion.await
+    })
+    .await
+}
+
+/// Supplies a test subprocess command with HTTPS routed to the mock server.
+pub async fn with_harness_proxy(
+    server: &MockServer,
+    realtime_target: Option<std::net::SocketAddr>,
+    run: impl AsyncFnOnce(Command) -> Result<()>,
+) -> Result<()> {
     // The production destination check stays intact. A test-only CA and CONNECT proxy route
     // the real host names to wiremock, only inside this isolated test subprocess.
     codex_utils_rustls_provider::ensure_rustls_crypto_provider();
@@ -44,6 +90,8 @@ pub async fn run_harness_through_proxy_with_env(
         "chatgpt-staging.com".into(),
         "us.chatgpt-staging.com".into(),
         "auth.api.openai.org".into(),
+        "observer.internal.api.openai.org".into(),
+        "ab.chatgpt.com".into(),
     ])?;
     let ca_dir = tempfile::tempdir()?;
     let ca_path = ca_dir.path().join("ca.pem");
@@ -56,7 +104,9 @@ pub async fn run_harness_through_proxy_with_env(
     let proxy = TcpListener::bind("127.0.0.1:0").await?;
     let proxy_url = format!("http://{}", proxy.local_addr()?);
     let target = *server.address();
-    let proxy_task = tokio::spawn(async move {
+    // Dropping the task set also closes the proxy if the test fails or is cancelled.
+    let mut proxy_tasks = JoinSet::new();
+    proxy_tasks.spawn(async move {
         let mut connections = JoinSet::new();
         loop {
             let (mut stream, _) = proxy.accept().await?;
@@ -79,6 +129,8 @@ pub async fn run_harness_through_proxy_with_env(
                                 | "CONNECT chatgpt-staging.com:443 HTTP/1.1"
                                 | "CONNECT us.chatgpt-staging.com:443 HTTP/1.1"
                                 | "CONNECT auth.api.openai.org:443 HTTP/1.1"
+                                | "CONNECT observer.internal.api.openai.org:443 HTTP/1.1"
+                                | "CONNECT ab.chatgpt.com:443 HTTP/1.1"
                         )
                     ),
                     "unexpected proxy destination"
@@ -86,7 +138,8 @@ pub async fn run_harness_through_proxy_with_env(
                 stream
                     .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                     .await?;
-                let realtime_host = headers.starts_with("CONNECT chatgpt.com:443 ");
+                let realtime_host = headers.starts_with("CONNECT chatgpt.com:443 ")
+                    || headers.starts_with("CONNECT observer.internal.api.openai.org:443 ");
                 let mut stream = acceptor.accept(stream).await?;
                 let mut prefix = Vec::new();
                 let mut destination = target;
@@ -125,9 +178,8 @@ pub async fn run_harness_through_proxy_with_env(
         Ok::<_, anyhow::Error>(())
     });
     let mut command = Command::new(std::env::current_exe()?);
-    command
-        .args(["--exact", test_name, "--nocapture"])
-        .kill_on_drop(true);
+    // Materialize inherited variables so launchers that take an env map can use get_envs().
+    command.env_clear().envs(std::env::vars_os());
     for &key in codex_network_proxy::PROXY_ENV_KEYS {
         command.env_remove(key);
     }
@@ -136,21 +188,7 @@ pub async fn run_harness_through_proxy_with_env(
         .env("HTTPS_PROXY", proxy_url)
         .env("NO_PROXY", codex_network_proxy::DEFAULT_NO_PROXY_VALUE)
         .env("CODEX_CA_CERTIFICATE", ca_path);
-    for (key, value) in environment {
-        match value {
-            Some(value) => command.env(key, value),
-            None => command.env_remove(key),
-        };
-    }
-    let output = tokio::time::timeout(Duration::from_secs(90), command.output()).await;
-    proxy_task.abort();
-    let output = output??;
-    assert!(
-        output.status.success(),
-        "harness subprocess failed\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    Ok(())
+    let result = run(command).await;
+    proxy_tasks.shutdown().await;
+    result
 }

@@ -19,7 +19,7 @@ use wiremock::matchers::body_string_contains;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn picker_side_worktree_fork_and_cd_run_on_the_production_stack() -> Result<()> {
-    let start = if codex_utils_cargo_bin::cargo_bin("codex").is_ok() {
+    let start = if codex_utils_cargo_bin::cargo_bin("lemex").is_ok() {
         PtyCodex::start_cli
     } else {
         PtyCodex::start
@@ -112,11 +112,32 @@ async fn picker_side_worktree_fork_and_cd_run_on_the_production_stack() -> Resul
     terminal.wait_for_screen("Worked for")?;
     terminal.wait_for_screen("Ask Lemex to do anything")?;
 
+    // A second rewind gesture is already buffered when the first is confirmed.
+    // A trailing bare Escape must not consume the first character of the fresh edit.
+    terminal.write_input(b"\x1b[27u\x1b[27u\r\x1b[27u\x1b[27u\r\x1b")?;
+    terminal.wait_for_screen("Conversation reverted to this point")?;
+    // Leave the leading space unmarked to exercise Escape, then explicitly
+    // end the paste so the next Enter is an unambiguous submit.
+    terminal.write_input(b" \x1b[200~Revised.\x1b[201~")?;
+    terminal.wait_for_screen("Reply with the marker requested by this test. Revised.")?;
+    let _edited_reply = responses::mount_sse_once_match(
+        &server,
+        body_string_contains("Reply with the marker requested by this test. Revised."),
+        responses::sse(vec![
+            responses::ev_assistant_message("edited", "STACK_SAVED_HISTORY_EDITED"),
+            responses::ev_completed("edited-response"),
+        ]),
+    )
+    .await;
+    terminal.write_input(b"\r")?;
+    terminal.wait_for_screen("STACK_SAVED_HISTORY_EDITED")?;
+    terminal.wait_for_screen("Worked for")?;
+
     // Starting and closing a side conversation both rebuild the displayed chat widget.
     // Repeat through the real event loop, whose dev-build frames share the production stack.
     for attempt in 1..=3 {
         submit(&mut terminal, "/side")?;
-        terminal.wait_for_screen("Side from main thread")?;
+        terminal.wait_for_screen("from main thread")?;
         terminal.ensure_running()?;
         terminal.write_input(b"\x03")?;
         terminal.wait_for_screen("STACK_SAVED_HISTORY")?;

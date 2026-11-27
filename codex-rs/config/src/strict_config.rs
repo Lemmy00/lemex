@@ -5,6 +5,7 @@ use crate::ConfigLayerStack;
 use crate::ConfigRequirementsToml;
 use crate::NetworkRequirementsToml;
 use crate::RequirementsLayerEntry;
+use crate::config_layer_source::status_line_provider_is_valid;
 use crate::config_toml::ConfigToml;
 use crate::diagnostics::ConfigDiagnosticSource;
 use crate::diagnostics::ConfigError;
@@ -22,6 +23,7 @@ use serde::de::DeserializeOwned;
 use std::any::TypeId;
 use std::collections::BTreeSet;
 use std::fmt::Write;
+use std::io;
 use std::path::Path;
 use toml::Value as TomlValue;
 
@@ -122,7 +124,19 @@ pub(crate) fn ignored_toml_value_fields<T: DeserializeOwned>(
     value: TomlValue,
 ) -> Result<Vec<Vec<String>>, serde_path_to_error::Error<toml::de::Error>> {
     let mut ignored_paths = Vec::new();
+    validate_toml_value::<T>(value, Some(&mut ignored_paths))?;
+    Ok(ignored_paths)
+}
+
+/// Keep the same deserializer type whether or not the caller needs ignored field paths.
+pub(crate) fn validate_toml_value<T: DeserializeOwned>(
+    value: TomlValue,
+    mut ignored_paths: Option<&mut Vec<Vec<String>>>,
+) -> Result<(), serde_path_to_error::Error<toml::de::Error>> {
     let mut record_path = |path: serde_ignored::Path<'_>| {
+        let Some(ignored_paths) = &mut ignored_paths else {
+            return;
+        };
         let segments = ignored_path_segments(&path);
         if !segments.is_empty() {
             ignored_paths.push(segments);
@@ -130,7 +144,7 @@ pub(crate) fn ignored_toml_value_fields<T: DeserializeOwned>(
     };
     let deserializer = serde_ignored::Deserializer::new(value, &mut record_path);
     serde_path_to_error::deserialize::<_, T>(deserializer)?;
-    Ok(ignored_paths)
+    Ok(())
 }
 
 pub(crate) fn unknown_feature_toml_value_field(value: &TomlValue) -> Option<String> {
@@ -224,6 +238,31 @@ fn push_ignored_path_segments(path: &serde_ignored::Path<'_>, segments: &mut Vec
             push_ignored_path_segments(parent, segments);
         }
     }
+}
+
+pub(crate) fn status_line_provider_warning(
+    config: &ConfigLayerStack,
+    strict_config: bool,
+) -> io::Result<Option<String>> {
+    let mut providers = config
+        .layers_high_to_low()
+        .filter(|layer| strict_config || layer.name.allows_status_line_provider())
+        .filter_map(|layer| Some((&layer.name, status_line_provider_is_valid(&layer.config)?)));
+    // Normal mode warns about the winning selection. Strict mode checks every source.
+    let selection = if strict_config {
+        providers.find(|(_, valid)| !valid)
+    } else {
+        providers.next()
+    };
+    let Some((source, false)) = selection else {
+        return Ok(None);
+    };
+    let source = bounded_label(&format_config_layer_source(source, CONFIG_TOML_FILE));
+    let message = format!("Invalid `tui.status_line_provider` in {source}.");
+    if strict_config {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, message));
+    }
+    Ok(Some(format!("{message} Using the built-in status line.")))
 }
 
 pub(crate) fn ignored_config_warning(

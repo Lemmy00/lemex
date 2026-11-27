@@ -3,6 +3,7 @@
 use super::*;
 use codex_protocol::models::ContentItemKind;
 use codex_protocol::models::InternalChatMessageMetadataPassthrough;
+use codex_thread_context_ids_test_support::thread_context_ids;
 use pretty_assertions::assert_eq;
 
 fn file_audio(file_id: &str) -> ContentItem {
@@ -61,7 +62,7 @@ fn previously_accepted_file_only_disambiguates_clip_specific_errors() {
         &codex_history::RetainedContextEvent::AcceptedFileAudio {
             evidence: evidence.into(),
         },
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     assert!(
         context
@@ -109,6 +110,38 @@ fn tool_output_audio_makes_an_invalid_audio_error_ambiguous() {
 }
 
 #[test]
+fn only_file_backed_tool_audio_competes_with_a_user_upload_for_an_unknown_file_error() {
+    use serde_json::json;
+    for kind in ["function_call_output", "custom_tool_call_output"] {
+        for (part, expected) in [
+            (
+                json!({"type":"input_audio","file_id":"expired_tool_clip"}),
+                None,
+            ),
+            (
+                json!({"type":"input_audio","audio_url":"data:audio/wav;base64,AA=="}),
+                Some("valid_upload"),
+            ),
+        ] {
+            let output =
+                serde_json::from_value(json!({"type":kind, "call_id":"call", "output":[part]}))
+                    .unwrap();
+            let items = [message(vec![file_audio("valid_upload")]), output];
+            assert_eq!(
+                rejected_file_audio_id(&unknown_file_error(), &items).as_deref(),
+                expected,
+                "{kind}"
+            );
+            assert_eq!(
+                rejected_file_audio_id(&audio_error(), &items),
+                None,
+                "{kind}"
+            );
+        }
+    }
+}
+
+#[test]
 fn attributes_audio_error_only_to_one_visible_file_audio() {
     let error = audio_error();
     assert_eq!(
@@ -145,9 +178,8 @@ fn attributes_audio_error_only_to_one_visible_file_audio() {
     );
 }
 
-#[test]
-fn unknown_file_error_counts_the_submitted_projection_not_raw_history() {
-    let error = CodexErrorDetails::UnexpectedStatus(codex_protocol::error::UnexpectedResponseError {
+fn unknown_file_error() -> CodexErrorDetails {
+    CodexErrorDetails::UnexpectedStatus(codex_protocol::error::UnexpectedResponseError {
         status: http::StatusCode::NOT_FOUND,
         body: serde_json::json!({"error": {"message": "Invalid input: Unknown `file_id` in input content."}}).to_string(),
         url: None,
@@ -156,7 +188,12 @@ fn unknown_file_error_counts_the_submitted_projection_not_raw_history() {
         request_id: None,
         identity_authorization_error: None,
         identity_error_code: None,
-    });
+    })
+}
+
+#[test]
+fn unknown_file_error_counts_the_submitted_projection_not_raw_history() {
+    let error = unknown_file_error();
     let unavailable_image_projection = message(vec![
         ContentItem::InputText {
             text: "[Image unavailable]".to_string(),

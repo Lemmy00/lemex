@@ -56,10 +56,7 @@ impl ToolExecutor<ToolInvocation> for SendMessageToUserAsyncHandler {
         })
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(async move {
             let ToolInvocation {
                 session,
@@ -83,7 +80,7 @@ impl ToolExecutor<ToolInvocation> for SendMessageToUserAsyncHandler {
 
             let item = TurnItem::AgentMessage(AgentMessageItem {
                 moderation: None,
-                id: call_id,
+                id: call_id.into(),
                 content: vec![AgentMessageContent::Text {
                     text: message.to_string(),
                 }],

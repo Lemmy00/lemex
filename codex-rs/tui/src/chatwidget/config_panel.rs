@@ -33,6 +33,17 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(crate::app_event::AppEvent::Provider(event));
             }
+            ConfigEditor::ReasoningSummary => {
+                let Some((backend, summary)) = self.config_panel_reasoning_summary else {
+                    self.config_editor_open_failed("Reasoning summary is unavailable.".into());
+                    return;
+                };
+                let keymap = self.bottom_pane.list_keymap();
+                self.bottom_pane
+                    .show_selection_view(crate::config_panel::reasoning_summary(
+                        summary, backend, &keymap,
+                    ));
+            }
             ConfigEditor::Theme => self.open_theme_picker(),
             ConfigEditor::Effects => {
                 let keymap = self.bottom_pane.list_keymap();
@@ -42,6 +53,12 @@ impl ChatWidget {
             ConfigEditor::StatusLine => self.open_status_line_setup(),
             ConfigEditor::TerminalTitle => self.open_terminal_title_setup(),
             ConfigEditor::Keyboard => self.open_keymap_picker(),
+            ConfigEditor::MouseScrollSpeed => {
+                let keymap = self.bottom_pane.list_keymap();
+                let params =
+                    crate::config_panel::mouse_scroll_speed(&self.config_panel_tui, &keymap);
+                self.bottom_pane.show_selection_view(params);
+            }
             ConfigEditor::SessionPickerLayout => {
                 let keymap = self.bottom_pane.list_keymap();
                 let params =
@@ -201,14 +218,16 @@ impl ChatWidget {
     fn config_panel_status(&self) -> ConfigPanelStatus {
         ConfigPanelStatus {
             transcript_mode: self.local_settings.transcript_mode,
-            copy_on_select: self
-                .local_settings
-                .copy_on_select(&codex_terminal_detection::terminal_info()),
+            copy_on_select: self.local_settings.copy_on_select(),
             right_click_paste: crate::app::PasteEnvironment::detect().status(
                 self.local_settings.tui.right_click_paste,
                 self.local_settings.transcript_mode,
             ),
             custom_notification_filters: self.local_settings.custom_notification_filters,
+            reasoning_summary: self
+                .config_panel_reasoning_summary
+                .map(|(_, summary)| summary)
+                .ok_or("Reconnect or update the connected server to change this setting"),
         }
     }
 

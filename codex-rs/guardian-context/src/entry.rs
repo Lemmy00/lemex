@@ -9,6 +9,8 @@
 pub enum ConversationTranscriptEntryKind {
     /// Actual parent-thread user message.
     User,
+    /// Transcribed text from a recording supplied on a user turn.
+    UserAudioTranscript(String),
     /// Explicit developer message preserving a user-approved action.
     Developer,
     /// Assistant commentary or an inter-agent message.
@@ -17,8 +19,14 @@ pub enum ConversationTranscriptEntryKind {
     ProtectedAssistant,
     /// Named tool invocation, including shell and web-search calls.
     ToolCall(String),
+    /// The textual tool call verified by the host to enclose the current approval.
+    EnclosingToolCall(String),
     /// Tool result with a call-derived, explicit, or generic fallback label.
     ToolOutput(String),
+    /// Transcribed text from a recording returned by a tool call.
+    ToolAudioTranscript(String),
+    /// Whole Code Mode exec output selected by its host-recorded nested tool calls.
+    SelectedExecOutput,
     /// Result from a Node REPL-backed tool that may receive a larger sync cap.
     NodeReplToolOutput(String),
     /// Plaintext model reasoning that the async consumer explicitly enables.
@@ -32,9 +40,13 @@ impl ConversationTranscriptEntryKind {
             Self::User => "user",
             Self::Developer => "developer",
             Self::Assistant | Self::ProtectedAssistant => "assistant",
-            Self::ToolCall(role) | Self::ToolOutput(role) | Self::NodeReplToolOutput(role) => {
-                role.as_str()
-            }
+            Self::UserAudioTranscript(role)
+            | Self::ToolCall(role)
+            | Self::EnclosingToolCall(role)
+            | Self::ToolOutput(role)
+            | Self::ToolAudioTranscript(role)
+            | Self::NodeReplToolOutput(role) => role.as_str(),
+            Self::SelectedExecOutput => "tool exec result",
             Self::Reasoning => "reasoning",
         }
     }

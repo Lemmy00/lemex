@@ -1,3 +1,4 @@
+use codex_mcp::McpServerKey;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -115,14 +116,14 @@ impl codex_extension_api::ToolContributor for ExtensionEchoContributor {
         &self,
         _session_store: &ExtensionData,
         _thread_store: &ExtensionData,
-    ) -> Vec<Arc<dyn for<'call> ToolExecutor<ExtensionToolCall<'call>>>> {
+    ) -> Vec<Arc<dyn ToolExecutor>> {
         vec![Arc::new(ExtensionEchoExecutor)]
     }
 }
 
 struct ExtensionEchoExecutor;
 
-impl<'call> ToolExecutor<ExtensionToolCall<'call>> for ExtensionEchoExecutor {
+impl ToolExecutor for ExtensionEchoExecutor {
     fn tool_name(&self) -> ToolName {
         ToolName::namespaced("extension/", "echo")
     }
@@ -150,10 +151,7 @@ impl<'call> ToolExecutor<ExtensionToolCall<'call>> for ExtensionEchoExecutor {
         })
     }
 
-    fn handle<'a>(&'a self, call: ExtensionToolCall<'call>) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        'call: 'a,
-    {
+    fn handle<'a>(&'a self, call: ExtensionToolCall<'a>) -> codex_tools::ToolExecutorFuture<'a> {
         Box::pin(self.handle_call(call))
     }
 }
@@ -183,9 +181,7 @@ fn extension_tool_test_registry() -> Arc<ExtensionRegistry<Config>> {
 fn test_tool_router(
     step_context: &StepContext,
     mcp_tools: Vec<RegisteredTool>,
-    extension_tool_executors: impl IntoIterator<
-        Item = Arc<dyn for<'call> ToolExecutor<ExtensionToolCall<'call>>>,
-    >,
+    extension_tool_executors: impl IntoIterator<Item = Arc<dyn ToolExecutor>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRouter {
     let mut registry = build_core_tool_registry(
@@ -230,7 +226,7 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
         .find(|name| {
             router.tool_supports_parallel(&ToolCall {
                 tool_name: ToolName::plain(*name),
-                call_id: "call-parallel-tool".to_string(),
+                call_id: "call-parallel-tool".into(),
                 payload: ToolPayload::Function {
                     arguments: "{}".to_string(),
                 },
@@ -249,7 +245,7 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
 
     assert!(!router.tool_supports_parallel(&ToolCall {
         tool_name: ToolName::namespaced("mcp__server__", parallel_tool_name),
-        call_id: "call-namespaced-tool".to_string(),
+        call_id: "call-namespaced-tool".into(),
         payload: ToolPayload::Function {
             arguments: "{}".to_string(),
         },
@@ -286,7 +282,7 @@ async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()
         call.tool_name,
         ToolName::namespaced("mcp__codex_apps__calendar", tool_name)
     );
-    assert_eq!(call.call_id, "call-namespace");
+    assert_eq!(call.call_id.as_str(), "call-namespace");
     assert_eq!(call.encrypted_function_args, Some(Vec::new()));
     assert_eq!(call.direct_source(), ToolCallSource::Direct);
     match call.payload {
@@ -324,7 +320,7 @@ async fn build_custom_tool_call_uses_namespace_for_registry_name() -> anyhow::Re
         call,
         ToolCall {
             tool_name: ToolName::namespaced("mcp__python", tool_name),
-            call_id: "call-namespace".to_string(),
+            call_id: "call-namespace".into(),
             payload: ToolPayload::Custom {
                 input: "print('hello')".to_string(),
             },
@@ -431,7 +427,7 @@ async fn mcp_parallel_support_uses_handler_data() -> anyhow::Result<()> {
 
     let call = ToolCall {
         tool_name: ToolName::namespaced("mcp__echo__", "query_with_delay"),
-        call_id: "call-handler".to_string(),
+        call_id: "call-handler".into(),
         payload: ToolPayload::Function {
             arguments: "{}".to_string(),
         },
@@ -448,7 +444,7 @@ async fn mcp_parallel_support_uses_handler_data() -> anyhow::Result<()> {
 
     let different_server_call = ToolCall {
         tool_name: ToolName::namespaced("mcp__hello_echo__", "query_with_delay"),
-        call_id: "call-other-server".to_string(),
+        call_id: "call-other-server".into(),
         payload: ToolPayload::Function {
             arguments: "{}".to_string(),
         },
@@ -465,7 +461,7 @@ async fn mcp_parallel_support_uses_handler_data() -> anyhow::Result<()> {
 
     let hidden_call = ToolCall {
         tool_name: ToolName::namespaced("mcp__hidden_echo__", "query_with_delay"),
-        call_id: "call-hidden".to_string(),
+        call_id: "call-hidden".into(),
         payload: ToolPayload::Function {
             arguments: "{}".to_string(),
         },
@@ -477,7 +473,7 @@ async fn mcp_parallel_support_uses_handler_data() -> anyhow::Result<()> {
 
     let nested_only_call = ToolCall {
         tool_name: ToolName::namespaced("mcp__nested_echo__", "query_with_delay"),
-        call_id: "call-nested-only-server".to_string(),
+        call_id: "call-nested-only-server".into(),
         payload: ToolPayload::Function {
             arguments: "{}".to_string(),
         },
@@ -503,7 +499,7 @@ async fn tools_without_handlers_do_not_support_parallel() -> anyhow::Result<()> 
 
     assert!(!router.tool_supports_parallel(&ToolCall {
         tool_name: ToolName::plain("web_search"),
-        call_id: "call-web-search".to_string(),
+        call_id: "call-web-search".into(),
         payload: ToolPayload::Function {
             arguments: "{}".to_string(),
         },
@@ -581,7 +577,7 @@ fn mcp_tool_info(
     tool_name: &str,
 ) -> codex_mcp::ToolInfo {
     codex_mcp::ToolInfo {
-        server_name: server_name.to_string(),
+        server_key: McpServerKey::unscoped(server_name),
         supports_parallel_tool_calls,
         server_origin: None,
         callable_name: tool_name.to_string(),
@@ -608,6 +604,7 @@ fn mcp_runtime(tool_info: codex_mcp::ToolInfo) -> RegisteredTool {
         exposure: runtime.exposure(),
         native_review: Default::default(),
         runtime,
+        is_trusted: false,
         model_spec: None,
     }
 }
@@ -691,7 +688,7 @@ async fn extension_tool_executors_are_model_visible_and_dispatchable() -> anyhow
         )
         .await?;
 
-    let response = result.into_response().item;
+    let response = result.into_response(/*file_backed_tool_audio*/ false).item;
     match response {
         ResponseItem::FunctionCallOutput {
             call_id, output, ..

@@ -93,7 +93,6 @@ fn skills_extensions() -> Arc<ExtensionRegistry<Config>> {
         max_context_tokens: config.skill_max_context_tokens,
         bundled_skills_enabled: config.bundled_skills_enabled(),
         cloud_skill_enabled: config.cloud_skill_enabled,
-        shadow_selection_enabled: config.features.enabled(Feature::SkillSearch),
     });
     Arc::new(extensions.build())
 }
@@ -133,7 +132,7 @@ fn write_sample_plugin_manifest_and_config_at_root(
     plugin_root
 }
 
-fn write_remote_plugin_script_and_config(home: &TempDir) -> std::path::PathBuf {
+pub(super) fn write_remote_plugin_script_and_config(home: &TempDir) -> std::path::PathBuf {
     let plugin_id = PluginId::parse(REMOTE_PLUGIN_CONFIG_NAME).expect("plugin id");
     let store = PluginStore::new(home.path().to_path_buf());
     let plugin_root = store.plugin_root(&plugin_id, "1.2.3");
@@ -783,7 +782,13 @@ async fn thread_disabled_plugins_filter_skills_and_tools_without_changing_shared
             // Saving pending settings must not change the admitted runtime.
             for (server_name, tool, arguments) in &tool_calls {
                 test.codex
-                    .call_mcp_tool(server_name, tool, arguments.clone(), /*meta*/ None)
+                    .call_mcp_tool(
+                        server_name,
+                        /*environment_id*/ None,
+                        tool,
+                        arguments.clone(),
+                        /*meta*/ None,
+                    )
                     .await?;
             }
         }
@@ -861,7 +866,13 @@ async fn thread_disabled_plugins_filter_skills_and_tools_without_changing_shared
         for (server_name, tool, arguments) in &tool_calls {
             let result = test
                 .codex
-                .call_mcp_tool(server_name, tool, arguments.clone(), /*meta*/ None)
+                .call_mcp_tool(
+                    server_name,
+                    /*environment_id*/ None,
+                    tool,
+                    arguments.clone(),
+                    /*meta*/ None,
+                )
                 .await;
             assert_eq!(
                 result.is_ok(),

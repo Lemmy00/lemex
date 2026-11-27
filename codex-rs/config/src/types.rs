@@ -21,6 +21,7 @@ pub use codex_protocol::config_types::AltScreenMode;
 pub use codex_protocol::config_types::ApprovalsReviewer;
 pub use codex_protocol::config_types::ModeKind;
 pub use codex_protocol::config_types::Personality;
+pub use codex_protocol::config_types::PluginsDefaultConfig;
 use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 pub use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::ToolExposureSurface;
@@ -29,6 +30,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fmt;
+use std::num::NonZeroU64;
 
 use codex_utils_redacted_string::RedactedString;
 use schemars::JsonSchema;
@@ -67,6 +69,18 @@ const MAX_MEMORIES_MAX_ROLLOUTS_PER_STARTUP: usize = 128;
 
 const fn default_enabled() -> bool {
     true
+}
+
+/// Resolved per-thread settings for the standalone image generation tool.
+pub struct ImageGenerationSettings {
+    pub provider: codex_model_provider_info::ModelProviderInfo,
+    pub http_client_factory: codex_http_client::HttpClientFactory,
+    pub gif_enabled: bool,
+    pub deferred: bool,
+}
+
+impl ImageGenerationSettings {
+    pub const NAMESPACE: &str = "image_gen";
 }
 
 /// Last selected grouping in Agent Command Center.
@@ -498,6 +512,10 @@ pub struct AppToolConfig {
     /// Approval mode for this tool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_mode: Option<AppToolApproval>,
+
+    /// Reviewer for this tool's approval prompts, overriding link-level and app-level settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approvals_reviewer: Option<ApprovalsReviewer>,
 }
 
 /// Tool settings for a single app.
@@ -507,6 +525,15 @@ pub struct AppToolsConfig {
     /// Per-tool overrides keyed by tool name (for example `repos/list`).
     #[serde(default, flatten)]
     pub tools: HashMap<String, AppToolConfig>,
+}
+
+impl AppToolsConfig {
+    /// Match a tool by its raw name first and use its title as a fallback.
+    pub fn for_tool(&self, name: &str, title: Option<&str>) -> Option<&AppToolConfig> {
+        self.tools
+            .get(name)
+            .or_else(|| title.and_then(|title| self.tools.get(title)))
+    }
 }
 
 /// Approval settings for a connected account within an app.
@@ -638,6 +665,11 @@ pub enum OtelExporterKind {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct OtelConfigToml {
+    /// Command that prints a JSON object of HTTP headers for explicit OTLP HTTP exporters.
+    /// Runs from CODEX_HOME. Repository-local configuration cannot set OTel options.
+    pub headers_helper: Option<String>,
+    /// Interval between helper executions in milliseconds. Defaults to 29 minutes.
+    pub headers_helper_refresh_interval_ms: Option<NonZeroU64>,
     /// Byte limit for tool-result log output; independent of model-visible output.
     pub tool_result: Option<codex_protocol::config_types::ToolResultLogConfig>,
     /// Log successful SSE events whose kind ends in `.delta`. Defaults to true.
@@ -675,6 +707,8 @@ pub struct OtelConfigToml {
 /// Effective OTEL settings after defaults are applied.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OtelConfig {
+    pub headers_helper: Option<String>,
+    pub headers_helper_refresh_interval_ms: Option<NonZeroU64>,
     pub tool_result: codex_protocol::config_types::ToolResultLogConfig,
     pub log_sse_deltas: bool,
     pub log_user_prompt: bool,
@@ -691,6 +725,8 @@ pub struct OtelConfig {
 impl Default for OtelConfig {
     fn default() -> Self {
         OtelConfig {
+            headers_helper: None,
+            headers_helper_refresh_interval_ms: None,
             tool_result: Default::default(),
             log_sse_deltas: true,
             log_user_prompt: false,
@@ -871,6 +907,28 @@ impl QuickDial {
     }
 }
 
+/// The configured MCP server and advertised tool name identify a status line provider.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StatusLineProviderId {
+    pub server: String,
+    pub tool: String,
+}
+
+/// An explicit default overrides an MCP provider from a lower configuration layer.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(untagged)]
+pub enum StatusLineSelection {
+    Builtin(BuiltinStatusLine),
+    Mcp(StatusLineProviderId),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum BuiltinStatusLine {
+    Default,
+}
+
 /// Collection of settings that are specific to the TUI.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -939,8 +997,8 @@ pub struct Tui {
     #[serde(default = "default_true")]
     pub fullscreen_transcript: bool,
 
-    /// Summarize tool calls and collapse completed turns in the full-screen transcript. Defaults to `false`.
-    #[serde(default)]
+    /// Summarize tool calls and collapse completed turns in the full-screen transcript. Defaults to `true`.
+    #[serde(default = "default_true")]
     pub collapse_turn_details: bool,
 
     /// Preferred docked sidebar width as a percentage of the terminal. Defaults to one third.
@@ -987,6 +1045,9 @@ pub struct Tui {
     /// When unset, the TUI defaults to: `model-with-reasoning`, `current-dir`, and `thread-name`.
     #[serde(default)]
     pub status_line: Option<Vec<String>>,
+
+    /// Local status line selection. Set to "default" for built-in items or specify an MCP server and tool.
+    pub status_line_provider: Option<Box<StatusLineSelection>>,
 
     /// Color status line items with colors derived from the active syntax theme.
     /// Defaults to `true`.
@@ -1109,14 +1170,6 @@ pub use crate::skills_config::BundledSkillsConfig;
 pub use crate::skills_config::SkillConfig;
 pub use crate::skills_config::SkillsConfig;
 
-/// Default activation settings for installed plugins.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
-#[schemars(deny_unknown_fields)]
-pub struct PluginsDefaultConfig {
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-}
-
 /// Plugin activation and capability settings loaded from configuration layers.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -1133,16 +1186,13 @@ pub struct PluginsConfigToml {
 
 impl PluginsConfigToml {
     /// Whether configuration permits a source-enabled plugin to remain active.
-    /// Without `_default`, preserve legacy source and account enablement.
-    /// Otherwise, an explicit enablement setting overrides the configured default.
+    /// Only plugins without an explicit `enabled` setting inherit `_default`.
     pub fn allows_plugin(&self, plugin_id: &str) -> bool {
-        let Some(default) = &self.default else {
-            return true;
-        };
         self.plugins
             .get(plugin_id)
             .and_then(|plugin| plugin.enabled)
-            .unwrap_or(default.enabled)
+            .or(self.default.as_ref().map(|default| default.enabled))
+            .unwrap_or(true)
     }
 }
 
@@ -1244,6 +1294,9 @@ where
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct MarketplaceConfig {
+    /// Check for updates to installed Git plugins from this marketplace when plugins are listed.
+    #[serde(default)]
+    pub auto_update: bool,
     /// Last time Lemex successfully added or refreshed this marketplace.
     #[serde(default)]
     pub last_updated: Option<String>,

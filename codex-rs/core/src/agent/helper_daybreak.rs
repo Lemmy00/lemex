@@ -1,5 +1,6 @@
-//! Native helpers inherit the spawning turn's saved Daybreak choice.
+//! Account-bound Daybreak intent for native helpers and live goals.
 
+pub(crate) mod goal;
 pub(crate) mod turn;
 
 use crate::session::session::Session;
@@ -15,6 +16,9 @@ pub(crate) enum Enrollment {
     Root,
     NativeHelper,
 }
+
+/// Request that a speculative root opt out of the propagation experiment.
+pub(crate) struct PreventRootEnrollment;
 
 /// The saved choice and the account under which the choice was observed.
 #[derive(Clone, Debug)]

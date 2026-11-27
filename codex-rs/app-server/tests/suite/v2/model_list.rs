@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use super::https_mock::https_mock_server;
 use anyhow::Error;
 use anyhow::Result;
 use app_test_support::ChatGptAuthFixture;
@@ -37,6 +38,7 @@ use wiremock::ResponseTemplate;
 use wiremock::matchers::header;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
+use wiremock::matchers::query_param;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
@@ -259,6 +261,87 @@ fn expected_visible_models() -> Vec<Model> {
 }
 
 #[tokio::test]
+async fn model_list_discovers_https_gateway_preserves_picker_without_catalog() -> Result<()> {
+    let bundled: Vec<_> = expected_visible_models()
+        .into_iter()
+        .map(|model| model.id)
+        .collect();
+    for response in [
+        ResponseTemplate::new(200).set_body_json(json!({
+            "object": "list",
+            "data": [
+                {"id": "gateway-coder", "object": "model", "created": 1, "owned_by": "gateway"},
+                {"id": "gateway-image-only", "object": "model", "created": 1, "owned_by": "gateway"}
+            ]
+        })),
+        ResponseTemplate::new(403),
+    ] {
+        assert_eq!(https_gateway_picker_ids(response).await?, bundled);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_list_discovers_https_gateway_uses_codex_catalog() -> Result<()> {
+    let model = ModelInfo {
+        visibility: codex_protocol::openai_models::ModelVisibility::List,
+        ..codex_models_manager::model_info::model_info_from_slug("gateway-coder")
+    };
+    let picker =
+        https_gateway_picker_ids(ResponseTemplate::new(200).set_body_json(ModelsResponse {
+            models: vec![model],
+        }))
+        .await?;
+    assert_eq!(picker, ["gateway-coder"]);
+    Ok(())
+}
+
+async fn https_gateway_picker_ids(response: ResponseTemplate) -> Result<Vec<String>> {
+    let home = TempDir::new()?;
+    let gateway = MockServer::start().await;
+    let (origin, ca, _tls) = https_mock_server(home.path(), &gateway).await?;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(query_param(
+            "client_version",
+            codex_models_manager::client_version_to_whole(),
+        ))
+        .and(header("authorization", "Bearer gateway-test-key"))
+        .respond_with(response)
+        .expect(1..)
+        .mount(&gateway)
+        .await;
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"model_provider = "gateway"
+[model_providers.gateway]
+name = "Test Gateway"
+base_url = "{origin}/v1"
+env_key = "GATEWAY_TEST_KEY"
+"#
+        ),
+    )?;
+    let mut app = TestAppServer::builder()
+        .with_codex_home(home.path())
+        .without_auto_env()
+        .with_env_overrides(&[
+            ("CODEX_CA_CERTIFICATE", ca.to_str()),
+            ("GATEWAY_TEST_KEY", Some("gateway-test-key")),
+            ("NO_PROXY", Some("127.0.0.1")),
+        ])
+        .build_initialized()
+        .await?;
+    let result: ModelListResponse = app
+        .request(|request_id| ClientRequest::ModelList {
+            request_id,
+            params: ModelListParams::default(),
+        })
+        .await?;
+    Ok(result.data.into_iter().map(|model| model.id).collect())
+}
+
+#[tokio::test]
 async fn list_models_returns_all_models_with_large_limit() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_models_cache(codex_home.path()).await?;
@@ -329,9 +412,30 @@ async fn list_models_uses_remote_catalog_as_source_of_truth(
     let remote_models = [
         (
             json!("2030-01-01T00:00:00Z"),
-            json!({ "cyber": ["standard", "daybreak_blue"] }),
+            json!({
+                "cyber": ["standard", "daybreak_blue"],
+                "daybreak_availability": "available",
+            }),
         ),
-        (json!(null), json!({ "cyber": ["daybreak_red"] })),
+        (
+            json!(null),
+            json!({
+                "cyber": ["daybreak_red"],
+                "daybreak_availability": "available",
+            }),
+        ),
+        (
+            json!(null),
+            json!({ "cyber": [], "daybreak_availability": "unavailable_for_model" }),
+        ),
+        (
+            json!(null),
+            json!({ "cyber": ["standard"], "daybreak_availability": "future_status" }),
+        ),
+        (
+            json!(null),
+            json!({ "cyber": ["standard"], "daybreak_availability": "enrollment_required" }),
+        ),
         (json!(null), json!({ "cyber": [] })),
         (json!(null), json!(null)),
     ]
@@ -454,9 +558,18 @@ model_catalog_url = "{server_uri}/v1/models"
             .map(|model| model["availableAccessPrograms"].clone())
             .collect::<Vec<_>>(),
         vec![
-            json!({ "cyber": ["standard", "daybreakBlue"] }),
-            json!({ "cyber": ["daybreakRed"] }),
-            json!({ "cyber": [] }),
+            json!({
+                "cyber": ["standard", "daybreakBlue"],
+                "daybreakAvailability": "available",
+            }),
+            json!({
+                "cyber": ["daybreakRed"],
+                "daybreakAvailability": "available",
+            }),
+            json!({ "cyber": [], "daybreakAvailability": "unavailableForModel" }),
+            json!({ "cyber": ["standard"], "daybreakAvailability": "default" }),
+            json!({ "cyber": ["standard"], "daybreakAvailability": "enrollmentRequired" }),
+            json!({ "cyber": [], "daybreakAvailability": "default" }),
             json!(null),
         ]
     );

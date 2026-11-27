@@ -145,6 +145,7 @@ impl AgentMessageItem {
                 texts.collect(),
                 Some(crate::protocol::TargetedAnswerModeration {
                     item_id: self.id.clone(),
+                    prompt_wellbeing_results: decision.prompt_wellbeing_results.clone(),
                     moderated: decision.moderated,
                     display: decision.display.clone(),
                 }),
@@ -487,6 +488,7 @@ impl ImageGenerationItem {
             saved_path: self.saved_path.clone(),
             input_images: Vec::new(),
             generation_id: None,
+            image_metadata: Default::default(),
         })
     }
 }
@@ -522,6 +524,7 @@ impl McpToolCallItem {
             turn_id,
             invocation: McpInvocation {
                 server: self.server.clone(),
+                environment_id: self.environment_id.clone(),
                 tool: self.tool.clone(),
                 arguments: (!self.arguments.is_null()).then(|| self.arguments.clone()),
             },
@@ -548,6 +551,7 @@ impl McpToolCallItem {
             turn_id,
             invocation: McpInvocation {
                 server: self.server.clone(),
+                environment_id: self.environment_id.clone(),
                 tool: self.tool.clone(),
                 arguments: (!self.arguments.is_null()).then(|| self.arguments.clone()),
             },

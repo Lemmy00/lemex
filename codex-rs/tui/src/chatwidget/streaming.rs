@@ -13,24 +13,23 @@ fn streamed_message_matches_completed(streamed: &str, completed: &str) -> bool {
     streamed == completed || streamed.strip_suffix('\n') == Some(completed)
 }
 
-fn latest_summary_line(text: &str) -> Option<String> {
-    text.lines().rev().find_map(|line| {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("<!--") {
-            return None;
-        }
-        let line = line.trim_start_matches('#').trim();
-        let line = if let Some(stripped) = line.strip_prefix("**") {
-            let (bold, trailing) = stripped.split_once("**")?;
-            format!("{bold}{trailing}")
-        } else {
-            line.to_string()
-        };
-        (!line.is_empty()).then_some(line)
-    })
-}
-
 impl ChatWidget {
+    /// Finish the visible line and remember the latest one for the next sample.
+    fn refresh_reasoning_heading(&mut self) -> bool {
+        let item_id = self.status_state.reasoning_item_id.as_deref();
+        let part = self.reasoning_summary_parts.len();
+        if let Some(row) = self.bottom_pane.status_widget_mut() {
+            row.extend_reasoning(item_id, part, &self.reasoning_buffer);
+        }
+        if let Some(heading) = StatusHeader::from_summary(item_id, part, &self.reasoning_buffer)
+            && self.reasoning_header.as_ref() != Some(&heading)
+        {
+            self.reasoning_header = Some(heading);
+            return true;
+        }
+        false
+    }
+
     pub(super) fn on_reasoning_item_started(&mut self, id: String) {
         if self.status_state.reasoning_resume_turn_id.take().is_some()
             && self.status_state.reasoning_item_id.as_ref() != Some(&id)
@@ -54,8 +53,7 @@ impl ChatWidget {
         {
             return;
         }
-        self.reasoning_header =
-            latest_summary_line(&self.reasoning_buffer).or(self.reasoning_header.take());
+        self.refresh_reasoning_heading();
         if let Some(header) = self.reasoning_header.clone() {
             self.status_state.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
             self.set_status_header(header);
@@ -102,8 +100,15 @@ impl ChatWidget {
                 .active_streamed_agent_message
                 .take()
                 .filter(|_| completed_message.is_none());
-            if let Some(item) = &interrupted_item {
-                self.transcript.last_flushed_agent_message = Some(item.clone());
+            if let Some((turn, item)) = &interrupted_item {
+                self.transcript.last_flushed_agent_message = interrupted_item.clone();
+                if let Some(seen) = &mut self.transcript.replayed_cloud_text {
+                    self.transcript.response_order += 1;
+                    seen.entry(turn.clone())
+                        .or_default()
+                        .entry(item.clone())
+                        .or_insert((false, self.transcript.response_order));
+                }
             }
             let (cell, streamed_source) = controller.finalize();
             let completed_display = completed_message.map(|source| {
@@ -150,6 +155,7 @@ impl ChatWidget {
                 });
                 self.note_stream_consolidation_queued();
                 self.app_event_tx.send(AppEvent::ConsolidateAgentMessage {
+                    emitted_cells: controller.emitted_cells(),
                     phase,
                     interrupted_item,
                     source,
@@ -184,12 +190,12 @@ impl ChatWidget {
                 .unwrap_or(true)
     }
 
-    /// Restore the status indicator only after commentary completion is pending,
+    /// Restore the status indicator only after message completion is pending,
     /// the turn is still running, and all stream queues have drained.
     ///
     /// This gate prevents flicker while normal output is still actively
     /// streaming, but still restores a visible "working" affordance when a
-    /// commentary block ends before the turn itself has completed.
+    /// message ends before the turn itself has completed.
     pub(super) fn maybe_restore_status_indicator_after_stream_idle(&mut self) {
         if !self.status_state.pending_status_indicator_restore
             || !self.bottom_pane.is_task_running()
@@ -255,6 +261,7 @@ impl ChatWidget {
             });
         let display = CapturedSideDisplay {
             rendered_completion_turn_ids: self.turn_lifecycle.rendered_completion_turn_ids.clone(),
+            generated_images: std::mem::take(&mut self.turn_lifecycle.generated_images),
             active,
             last_completed_agent_message: self.transcript.last_completed_agent_message.clone(),
             auxiliary: self
@@ -266,7 +273,7 @@ impl ChatWidget {
                 draft.set_text_with_elements(&snapshot.text, &snapshot.text_elements);
                 draft
             },
-            status: self.status_line_text(),
+            status_line: self.status_line_content().cloned(),
             work: self
                 .last_turn_id()
                 .filter(|_| self.is_agent_turn_running())
@@ -277,7 +284,7 @@ impl ChatWidget {
                         self.bottom_pane.status_elapsed().unwrap_or_default(),
                     )
                 }),
-            cwd: self.config.cwd.clone(),
+            cwd: self.session_cwd().to_path_buf(),
             visualizations,
         };
         (stream, display)
@@ -288,7 +295,13 @@ impl ChatWidget {
         message: &str,
         phase: Option<MessagePhase>,
     ) {
-        if self.stream_controller.is_none() && !message.is_empty() {
+        if !message.trim().is_empty()
+            && self
+                .stream_controller
+                .as_ref()
+                .is_none_or(|stream| !stream.has_text())
+        {
+            self.stream_controller = None;
             let displayed =
                 parse_assistant_markdown(message, self.config.cwd.as_path()).visible_markdown;
             self.handle_streaming_delta(displayed);
@@ -355,6 +368,7 @@ impl ChatWidget {
             (text.clone(), text)
         };
         if !plan_text.trim().is_empty() {
+            self.transcript.response_order += 1;
             self.transcript
                 .record_agent_markdown(plan_text.clone(), source);
             self.transcript.latest_proposed_plan_markdown = Some(plan_text.clone());
@@ -437,28 +451,28 @@ impl ChatWidget {
             return;
         }
 
-        self.reasoning_header =
-            latest_summary_line(&self.reasoning_buffer).or(self.reasoning_header.take());
-        let Some(header) = self.reasoning_header.as_deref() else {
+        let changed = self.refresh_reasoning_heading();
+        let Some(header) = &self.reasoning_header else {
             // No usable summary has arrived yet.
             return;
         };
 
         let status = &self.status_state.current_status;
-        if self.status_state.terminal_title_status_kind == TerminalTitleStatusKind::Thinking
-            && status.header == header
+        if !changed
+            && self.status_state.terminal_title_status_kind == TerminalTitleStatusKind::Thinking
+            && status.header == header.text
             && status.details.is_none()
             && status.details_max_lines == STATUS_DETAILS_DEFAULT_MAX_LINES
             && self
                 .bottom_pane
                 .status_widget()
-                .is_none_or(|status| status.header() == header)
+                .is_none_or(|status| status.header() == header.text)
         {
             return;
         }
 
         // Update the shimmer header to the extracted reasoning chunk header.
-        let header = header.to_string();
+        let header = header.clone();
         self.status_state.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
         if !self.set_status_header(header) {
             self.request_redraw();
@@ -471,11 +485,13 @@ impl ChatWidget {
             self.reasoning_summary_parts
                 .push(std::mem::take(&mut self.reasoning_buffer));
         }
+        let item_id = self.status_state.reasoning_item_id.as_deref();
         self.reasoning_header = self
             .reasoning_summary_parts
             .iter()
+            .enumerate()
             .rev()
-            .find_map(|part| latest_summary_line(part))
+            .find_map(|(index, part)| StatusHeader::from_summary(item_id, index, part))
             .or(self.reasoning_header.take());
         if !self.reasoning_summary_parts.is_empty() {
             let reasoning_parts = std::mem::take(&mut self.reasoning_summary_parts);
@@ -522,11 +538,34 @@ impl ChatWidget {
         );
     }
 
+    pub(crate) fn reconcile_corrected_cloud_copy(
+        &mut self,
+        item: &(String, String),
+        previous: Option<&dyn history_cell::HistoryCell>,
+    ) {
+        if self.transcript.last_agent_copy_item.as_ref() != Some(item) {
+            return;
+        }
+        let agent = previous.and_then(|cell| {
+            cell.as_any()
+                .downcast_ref::<history_cell::AgentMarkdownCell>()
+        });
+        let source = previous.and_then(history_cell::HistoryCell::copy_source);
+        self.transcript.last_agent_copy_item = agent.and_then(|cell| cell.interrupted_item.clone());
+        self.transcript.last_agent_markdown = source.map(|source| {
+            let markdown = if agent.is_some() {
+                parse_assistant_markdown(source, self.config.cwd.as_path()).visible_markdown
+            } else {
+                source.to_owned()
+            };
+            crate::markdown_render::followup_labels(&markdown).into_owned()
+        });
+        self.transcript.last_agent_source = source.map(str::to_owned);
+    }
+
     /// Handle completion of an `AgentMessage` turn item.
     ///
-    /// Commentary completion sets a deferred restore flag so the status row
-    /// returns once stream queues are idle. Final-answer completion (or absent
-    /// phase for legacy models) clears the flag to preserve historical behavior.
+    /// An unphased message can finish while the turn still has work to do.
     pub(super) fn on_agent_message_item_completed(
         &mut self,
         item: AgentMessageItem,
@@ -539,7 +578,7 @@ impl ChatWidget {
         if self.transcript.has_replayed_cloud_text(turn_id, &item.id) {
             return;
         }
-        self.transcript.last_completed_agent_message = Some((turn_id.to_string(), item.id.clone()));
+        let key = (turn_id.to_owned(), item.id.clone());
         let mut message = String::new();
         for content in &item.content {
             match content {
@@ -548,30 +587,94 @@ impl ChatWidget {
         }
         let parsed = parse_assistant_markdown(&message, self.config.cwd.as_path());
         let questions = item.questions.as_deref().unwrap_or_default();
-        let interrupted = self
+        let cloud = self.transcript.replayed_cloud_text.is_some();
+        let completing = !cloud || !from_replay || self.transcript.recording_finished_cloud_text;
+        self.transcript.response_order += 1;
+        let mut order = self.transcript.response_order;
+        let mut correcting = self.transcript.last_flushed_agent_message.as_ref() == Some(&key);
+        let mut first_observation = false;
+        if (from_replay || completing || !parsed.visible_markdown.is_empty())
+            && let Some(seen) = &mut self.transcript.replayed_cloud_text
+        {
+            let items = seen.entry(turn_id.to_owned()).or_default();
+            let (finished, position) = items.entry(item.id.clone()).or_insert_with(|| {
+                first_observation = true;
+                (completing, order)
+            });
+            correcting |= completing && !*finished;
+            *finished |= completing;
+            order = *position;
+        }
+        if cloud && from_replay && !completing && parsed.visible_markdown.is_empty() {
+            if first_observation {
+                self.prepare_assistant_message();
+                self.add_to_history(history_cell::PendingAgentMessageCell(key));
+            }
+            return;
+        }
+        let owns_stream = self.transcript.active_streamed_agent_message.as_ref() == Some(&key);
+        let unrelated_stream = cloud
+            && self.stream_controller.is_some()
+            && self.transcript.active_streamed_agent_message.is_some()
+            && !owns_stream;
+        let unrelated_activity = unrelated_stream
+            || (cloud && order < 0 && !owns_stream)
+            || (cloud
+                && correcting
+                && self.is_agent_turn_running()
+                && self.last_turn_id().is_some_and(|active| active != turn_id));
+        let latest_copy_order = self
             .transcript
-            .last_flushed_agent_message
-            .take()
-            .filter(|item| Some(item) == self.transcript.last_completed_agent_message.as_ref());
-        if interrupted.is_some() {
+            .last_agent_copy_item
+            .as_ref()
+            .and_then(|(turn, id)| {
+                self.transcript
+                    .replayed_cloud_text
+                    .as_ref()?
+                    .get(turn)?
+                    .get(id)
+                    .map(|(_, position)| *position)
+            })
+            .or_else(|| {
+                self.transcript
+                    .committed_turn_response
+                    .as_ref()
+                    .map(|(position, _)| *position)
+            })
+            .or(self.transcript.historical_copy_order);
+        let current_copy = (!correcting
+            || (cloud
+                && order < 0
+                && (self.transcript.last_agent_copy_item.is_some()
+                    || self.transcript.last_agent_source.is_none()))
+            || self.transcript.last_agent_copy_item.as_ref() == Some(&key)
+            || (!unrelated_activity
+                && self.transcript.last_flushed_agent_message.as_ref() == Some(&key)))
+            && latest_copy_order.is_none_or(|latest| order >= latest);
+        if !unrelated_activity && current_copy && (completing || !cloud) {
+            self.transcript.last_completed_agent_message = Some(key.clone());
+        }
+        if correcting && owns_stream && !unrelated_activity {
             // Commit any resumed stream fragment before replacing all fragments with
             // the authoritative message. Markdown references can span interruptions.
             self.flush_answer_stream_with_separator();
         }
-        if (from_replay || !questions.is_empty() || interrupted.is_some())
-            && self.stream_controller.is_none()
-            && !parsed.visible_markdown.is_empty()
+        if (from_replay || !questions.is_empty() || correcting || unrelated_activity)
+            && (correcting || !owns_stream || self.stream_controller.is_none())
+            && (!parsed.visible_markdown.is_empty() || correcting)
         {
-            self.prepare_assistant_message();
-            self.mark_safety_buffering_agent_message_started();
-            self.bottom_pane.hide_status_indicator();
+            if !unrelated_activity {
+                self.prepare_assistant_message();
+                self.mark_safety_buffering_agent_message_started();
+                self.bottom_pane.hide_status_indicator();
+            }
             let context = self.thread_id.and_then(|thread_id| {
                 crate::inline_visualization::InlineVisualizationContext::from_config(
                     &self.config,
                     thread_id,
                 )
             });
-            let cell = history_cell::AgentMarkdownCell::from_parsed_message(
+            let mut cell = history_cell::AgentMarkdownCell::from_parsed_message(
                 parsed.visible_markdown.clone(),
                 message.clone(),
                 self.config.cwd.as_path(),
@@ -579,29 +682,54 @@ impl ChatWidget {
                 questions,
             )
             .with_phase(item.phase.clone());
-            if let Some(item) = interrupted {
+            if parsed.visible_markdown.is_empty() {
+                cell = cell.with_copy_source(/*source*/ None);
+            }
+            if cloud && (from_replay && !completing || order < 0) {
+                cell.interrupted_item = Some(key.clone());
+            }
+            if correcting {
                 self.app_event_tx
-                    .send(AppEvent::CorrectFlushedAgentMessage { item, cell });
+                    .send(AppEvent::CorrectFlushedAgentMessage {
+                        item: key.clone(),
+                        cell,
+                    });
             } else {
                 self.add_to_history(cell);
             }
-            if self.transcript.recording_finished_cloud_text
-                && let Some(seen) = &mut self.transcript.replayed_cloud_text
-            {
-                seen.entry(turn_id.to_owned())
-                    .or_default()
-                    .insert(item.id.clone());
+            if !unrelated_activity {
+                self.handle_stream_finished();
             }
-            self.handle_stream_finished();
             self.request_redraw();
-        } else {
+        } else if !unrelated_activity {
             self.finalize_completed_assistant_message(&message, item.phase.clone());
         }
-        self.transcript.last_flushed_agent_message = None;
-        if !parsed.visible_markdown.is_empty() {
+        if self.transcript.last_flushed_agent_message.as_ref() == Some(&key) {
+            self.transcript.last_flushed_agent_message = None;
+        }
+        let committed_response = self.transcript.committed_turn_response.take();
+        if !parsed.visible_markdown.is_empty() && current_copy {
             self.transcript
                 .record_agent_markdown(parsed.visible_markdown.clone(), message);
+            self.transcript.last_agent_copy_item = Some(key);
         }
+        let newer = committed_response
+            .as_ref()
+            .is_none_or(|(previous, _)| order >= *previous);
+        self.transcript.committed_turn_response = if completing
+            && !parsed.visible_markdown.is_empty()
+            && newer
+            && self
+                .last_turn_id()
+                .is_none_or(|active_turn| active_turn == turn_id)
+        {
+            Some((
+                order,
+                crate::markdown_render::followup_labels(&parsed.visible_markdown).into_owned(),
+            ))
+        } else {
+            committed_response
+        };
         if !from_replay
             && let Some(cwd) = parsed.last_created_branch_cwd()
             && let Some(thread_id) = self.thread_id
@@ -622,9 +750,14 @@ impl ChatWidget {
                 }
             });
         }
+        if unrelated_activity {
+            return;
+        }
         self.status_state.pending_status_indicator_restore = item.questions.is_some()
             || match item.phase {
-                // Models that don't support preambles only output AgentMessageItems on turn completion.
+                None if self.turn_lifecycle.agent_turn_running && !self.statusline_disconnected => {
+                    true
+                }
                 Some(MessagePhase::FinalAnswer) | None => {
                     !self.input_queue.pending_steers.is_empty()
                 }
@@ -653,7 +786,7 @@ impl ChatWidget {
     ///
     /// `scope` selects paced, catch-up, or replay draining. While lines are actively streaming
     /// we hide the status row to avoid duplicate "in progress" affordances. We only re-show
-    /// the row after commentary completion once stream queues are idle.
+    /// the row after message completion once stream queues are idle.
     pub(crate) fn run_commit_tick_with_scope(&mut self, scope: CommitTickScope) {
         let now = Instant::now();
         let outcome = run_commit_tick(

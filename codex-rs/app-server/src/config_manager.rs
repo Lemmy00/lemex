@@ -3,14 +3,17 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_config::managed_config_bundle_loader;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLayerStack;
+use codex_config::ConfigServerResolution;
 use codex_config::LoaderOverrides;
 use codex_config::ThreadConfigLoader;
 use codex_config::apply_default_gcp_auth;
 use codex_config::loader::load_config_layers_state;
 use codex_config::loader::load_managed_requirements_state;
+use codex_core::GuardianPolicyLoader;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::McpLaunchCwds;
 use codex_exec_server::LOCAL_FS;
 use codex_features::feature_for_key;
 use codex_login::AuthManager;
@@ -23,6 +26,7 @@ use codex_model_provider_info::built_in_model_providers;
 use codex_model_provider_info::merge_configured_model_providers;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_json_to_toml::json_to_toml;
+use futures::future::BoxFuture;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -49,6 +53,7 @@ pub(crate) struct ConfigManager {
     strict_config: bool,
     cloud_config_bundle: Arc<RwLock<CloudConfigBundleLoader>>,
     arg0_paths: Arg0DispatchPaths,
+    mcp_launch_cwds: Arc<McpLaunchCwds>,
     thread_config_loader: Arc<dyn ThreadConfigLoader>,
     network_policy: codex_http_client::NetworkPolicyController,
     local_network_policy: codex_http_client::NetworkPolicyController,
@@ -108,6 +113,7 @@ impl ConfigManager {
             strict_config,
             cloud_config_bundle: Arc::new(RwLock::new(cloud_config_bundle)),
             arg0_paths,
+            mcp_launch_cwds: Arc::default(),
             thread_config_loader,
             network_policy,
             local_network_policy: Default::default(),
@@ -115,6 +121,24 @@ impl ConfigManager {
             network_policy_snapshot: Arc::default(),
             mcp_ema_cancellation: Arc::default(),
         }
+    }
+
+    /// Isolate each startup read from the previous loader's cached auth error and network policy.
+    pub(crate) fn startup_probe(&self) -> Self {
+        Self::new(
+            self.codex_home.clone(),
+            self.current_cli_overrides(),
+            self.loader_overrides.clone(),
+            self.strict_config,
+            CloudConfigBundleLoader::default(),
+            self.arg0_paths.clone(),
+            self.thread_config_loader.clone(),
+        )
+    }
+
+    pub(crate) fn with_mcp_launch_cwds(mut self, cwds: McpLaunchCwds) -> Self {
+        self.mcp_launch_cwds = Arc::new(cwds);
+        self
     }
 
     pub(crate) fn codex_home(&self) -> &Path {
@@ -191,10 +215,24 @@ impl ConfigManager {
         Ok(())
     }
 
-    pub(crate) fn update_managed_config_loader(
+    pub(crate) async fn update_managed_config_loader(
         &self,
         auth_manager: Arc<AuthManager>,
         config: &Config,
+    ) {
+        self.update_managed_config_loader_with_resolution(
+            auth_manager,
+            config,
+            /*previous*/ None,
+        )
+        .await;
+    }
+
+    async fn update_managed_config_loader_with_resolution(
+        &self,
+        auth_manager: Arc<AuthManager>,
+        config: &Config,
+        previous: Option<&ConfigServerResolution>,
     ) {
         // Keep config-server settings and their refresh worker when only
         // ChatGPT/API-key credentials change.
@@ -214,7 +252,9 @@ impl ConfigManager {
                 .http_client_factory()
                 .with_network_policy(self.local_network_policy.policy()),
             config.config_layer_stack.requirements_toml(),
-        );
+            previous,
+        )
+        .await;
         if let Ok(mut guard) = self.cloud_config_bundle.write() {
             guard.retire_ema_policy();
             *guard = loader;
@@ -283,7 +323,7 @@ impl ConfigManager {
         self.check_application_policy_load(&policy_load)?;
         self.apply_network_policy(&mut config);
         self.apply_runtime_feature_enablement(&mut config);
-        self.apply_arg0_paths(&mut config);
+        self.apply_process_settings(&mut config);
         config.config_layer_stack = config
             .config_layer_stack
             .with_mcp_ema_cancellation(mcp_ema_cancellation);
@@ -309,7 +349,7 @@ impl ConfigManager {
         .await?;
         self.apply_network_policy(&mut config);
         self.apply_runtime_feature_enablement(&mut config);
-        self.apply_arg0_paths(&mut config);
+        self.apply_process_settings(&mut config);
         config.config_layer_stack = config
             .config_layer_stack
             .with_mcp_ema_cancellation(mcp_ema_cancellation);
@@ -338,7 +378,7 @@ impl ConfigManager {
         .await?;
         self.apply_network_policy(&mut config);
         self.apply_runtime_feature_enablement(&mut config);
-        self.apply_arg0_paths(&mut config);
+        self.apply_process_settings(&mut config);
         config.config_layer_stack = config
             .config_layer_stack
             .with_mcp_ema_cancellation(mcp_ema_cancellation);
@@ -423,13 +463,15 @@ impl ConfigManager {
     pub(crate) async fn load_managed_startup_config(
         &self,
         cwd: Option<PathBuf>,
+        previous: Option<&ConfigServerResolution>,
     ) -> std::io::Result<CloudStartupConfig> {
         let bootstrap = self.load_startup_config(cwd.clone()).await?.config;
         let auth =
             AuthManager::shared_from_config(&bootstrap, /*enable_codex_api_key_env*/ false)
                 .await
                 .map_err(std::io::Error::other)?;
-        self.update_managed_config_loader(auth, &bootstrap);
+        self.update_managed_config_loader_with_resolution(auth, &bootstrap, previous)
+            .await;
         let config = self.load_latest_config(cwd).await;
         Ok(CloudStartupConfig { bootstrap, config })
     }
@@ -478,7 +520,7 @@ impl ConfigManager {
             .await?;
         self.apply_network_policy(&mut config);
         self.apply_runtime_feature_enablement(&mut config);
-        self.apply_arg0_paths(&mut config);
+        self.apply_process_settings(&mut config);
         config.config_layer_stack = config
             .config_layer_stack
             .with_mcp_ema_cancellation(mcp_ema_cancellation);
@@ -700,7 +742,7 @@ impl ConfigManager {
         self.check_application_policy_load(&policy_load)?;
         self.apply_network_policy(&mut config);
         self.apply_runtime_feature_enablement(&mut config);
-        self.apply_arg0_paths(&mut config);
+        self.apply_process_settings(&mut config);
         config.config_layer_stack = config
             .config_layer_stack
             .with_mcp_ema_cancellation(mcp_ema_cancellation);
@@ -764,9 +806,10 @@ impl ConfigManager {
         );
     }
 
-    fn apply_arg0_paths(&self, config: &mut Config) {
+    fn apply_process_settings(&self, config: &mut Config) {
         config.codex_self_exe = self.arg0_paths.codex_self_exe.clone();
         config.codex_linux_sandbox_exe = self.arg0_paths.codex_linux_sandbox_exe.clone();
+        config.mcp_launch_cwds = Arc::clone(&self.mcp_launch_cwds);
     }
 
     #[cfg(test)]
@@ -795,6 +838,27 @@ impl ConfigManager {
             LoaderOverrides::without_managed_config_for_tests(),
             CloudConfigBundleLoader::default(),
         )
+    }
+}
+
+impl GuardianPolicyLoader for ConfigManager {
+    fn load_guardian_policy_snapshot(
+        &self,
+        revision: u64,
+    ) -> BoxFuture<'_, std::io::Result<codex_config::GuardianPolicySnapshot>> {
+        Box::pin(async move {
+            let policy_load = self.refresh_application_network_policy().await?;
+            let snapshot = codex_config::loader::load_guardian_policy_snapshot(
+                LOCAL_FS.as_ref(),
+                &self.codex_home,
+                &self.loader_overrides,
+                &policy_load.cloud_config,
+                revision,
+            )
+            .await?;
+            self.check_application_policy_load(&policy_load)?;
+            Ok(snapshot)
+        })
     }
 }
 

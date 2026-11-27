@@ -331,10 +331,32 @@ class InstallShTest(unittest.TestCase):
         function = "record_standalone_releases_in_use() {" + function + "\n}\n"
         function = function.replace("/usr/sbin/lsof ", "mock_lsof ")
         matches = "p123\nn/releases/active/bin/codex\n"
+        device = os.stat(tempfile.gettempdir()).st_dev
+        warning = (
+            "lsof: WARNING: can't stat() hfs file system {mount}\n"
+            "      Output information may be incomplete.\n"
+            '      assuming "dev={device}" from mount table\n'
+        )
+        unrelated = warning.format(mount="/Volumes/unrelated", device=f"{device + 1:x}")
         for status, output, error, expected in (
             (0, matches, "", 0),
             (1, "", "", 0),
             (1, matches, "", 0),
+            (1, matches, unrelated, 0),
+            (
+                1,
+                matches,
+                warning.format(mount="/Volumes/unrelated", device=f"00{device:X}"),
+                1,
+            ),
+            (
+                1,
+                matches,
+                warning.format(mount=tempfile.gettempdir(), device=f"{device + 1:x}"),
+                1,
+            ),
+            (1, matches, unrelated.rsplit("\n", 2)[0] + "\n", 1),
+            (1, matches, unrelated + "inspection failed\n", 1),
             (0, matches, "inspection failed\n", 1),
             (1, matches, "inspection failed\n", 1),
             (2, "", "", 1),
@@ -345,7 +367,7 @@ class InstallShTest(unittest.TestCase):
                     script = (
                         "set -eu\n"
                         "os=macos\n"
-                        "releases=/releases\n"
+                        f"releases={shlex.quote(temp_dir)}\n"
                         f"tmp_dir={shlex.quote(temp_dir)}\n"
                         # Avoid depending on other processes on the test host.
                         'ps() { printf "%s codex\\n" "$(id -u)"; }\n'
@@ -996,6 +1018,7 @@ def run_installer_in(
     release: str,
     *,
     installer_path: Path = INSTALL_SCRIPT,
+    install_dir: Path | None = None,
     metadata_failure: bool = False,
     metadata_json: str | None = None,
     releases_metadata_json: str | None = None,
@@ -1011,6 +1034,7 @@ def run_installer_in(
     fail_ps: bool = False,
     daemon_only: bool = False,
     manual_update: bool = False,
+    install_dir_on_path: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = root / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -1138,11 +1162,15 @@ def run_installer_in(
 
     home = root / "home"
     home.mkdir(exist_ok=True)
+    install_dir = install_dir or root / "install-bin"
+    path = f"{bin_dir}:/usr/bin:/bin"
+    if install_dir_on_path:
+        path = f"{bin_dir}:{install_dir}:/usr/bin:/bin"
     env = os.environ.copy()
     env.update(
         {
             "LEMEX_HOME": str(root / "codex-home"),
-            "LEMEX_INSTALL_DIR": str(root / "install-bin"),
+            "LEMEX_INSTALL_DIR": str(install_dir),
             "LEMEX_NON_INTERACTIVE": "1",
             "LEMEX_RELEASE": release,
             "LEMEX_RELEASES_BASE_URL": "https://releases.lemex.test/lemex",
@@ -1167,7 +1195,7 @@ def run_installer_in(
             "CODEX_TEST_RELEASES_MODE": releases_mode,
             "CODEX_TEST_REQUEST_LOG": str(request_log),
             "HOME": str(home),
-            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "PATH": path,
             "SHELL": "/bin/sh",
         }
     )

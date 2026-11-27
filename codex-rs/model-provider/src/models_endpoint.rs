@@ -55,23 +55,28 @@ const MAX_MODEL_CATALOG_BYTES: usize = 1024 * 1024;
 const MAX_RCP_METADATA_BYTES: usize = 4 * 1024 * 1024;
 const FEDRAMP_CODEX_BASE_URL: &str = "https://gov.chatgpt.com/backend-api/codex";
 
-// Catalog requests use the model provider's credentials. Before enabling a fetch
-// with gateway OAuth alone, check that the catalog URL has the same origin as the gateway.
+// Only probe routes owned by the configured gateway. An explicit URL on another
+// origin keeps its existing auth rules; automatic discovery must not widen token delivery.
 fn supports_gateway_catalog(info: &ModelProviderInfo) -> bool {
-    if info.is_openai() || info.gateway_oauth.is_none() {
+    if info.is_openai() {
         return false;
     }
-    let (Some(base), Some(catalog)) = (info.base_url.as_deref(), info.model_catalog_url.as_deref())
+    let Some(base) = info
+        .base_url
+        .as_deref()
+        .and_then(|url| codex_http_client::validate_endpoint_url(url, "base_url").ok())
     else {
         return false;
     };
-    match (
-        codex_http_client::validate_endpoint_url(base, "base_url"),
-        codex_http_client::validate_endpoint_url(catalog, "model_catalog_url"),
-    ) {
-        (Ok(base), Ok(catalog)) => base.origin() == catalog.origin(),
-        _ => false,
+    match info.model_catalog_url.as_deref() {
+        Some(url) => codex_http_client::validate_endpoint_url(url, "model_catalog_url")
+            .is_ok_and(|url| url.origin() == base.origin()),
+        None => base.scheme() == "https" && base.query().is_none(),
     }
+}
+
+fn is_provider_catalog(info: &ModelProviderInfo) -> bool {
+    info.model_catalog_url.is_some() || supports_gateway_catalog(info)
 }
 
 /// Provider-owned OpenAI-compatible `/models` endpoint.
@@ -235,6 +240,7 @@ impl OpenAiModelsEndpoint {
         } else {
             None
         };
+        let provider_catalog = is_provider_catalog(&self.provider_info);
         let request_telemetry: Arc<dyn RequestTelemetry> = Arc::new(ModelsRequestTelemetry {
             include_response_debug: false,
             auth_mode: auth_mode.map(|mode| TelemetryAuthMode::from(mode).to_string()),
@@ -370,6 +376,14 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
             .as_ref()
             .and_then(|manager| manager.auth_cached());
         crate::models_identity::identity(&self.provider_info, auth.as_ref()).ok()
+    }
+
+    fn auth_requires_resolution(&self) -> bool {
+        self.has_command_auth()
+            || self
+                .auth_manager
+                .as_ref()
+                .is_some_and(|auth| auth.needs_proactive_refresh())
     }
 
     fn has_command_auth(&self) -> bool {

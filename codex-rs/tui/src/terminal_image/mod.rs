@@ -3,10 +3,12 @@ mod image_protocol;
 mod sixel;
 pub(crate) use image_protocol::ImageProtocol;
 pub(crate) use image_protocol::ImageSupport;
+#[cfg(test)]
 pub(crate) use image_protocol::ImageUnsupportedReason;
 pub(crate) use image_protocol::KittyPlacement;
 pub(crate) use image_protocol::detect_image_support;
 pub(crate) use image_protocol::kitty_delete_image;
+pub(crate) use image_protocol::kitty_move_image;
 pub(crate) use image_protocol::kitty_transmit_png_file_with_id;
 pub(crate) use image_protocol::kitty_transmit_png_with_id;
 pub(crate) use sixel::encode_rgba;

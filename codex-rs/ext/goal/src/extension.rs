@@ -14,7 +14,6 @@ use codex_extension_api::ThreadResumeInput;
 use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ThreadStopInput;
 use codex_extension_api::TokenUsageContributor;
-use codex_extension_api::ToolCall;
 use codex_extension_api::ToolCallOutcome;
 use codex_extension_api::ToolContributor;
 use codex_extension_api::ToolExecutor;
@@ -29,7 +28,6 @@ use codex_extension_api::TurnStopInput;
 use codex_otel::MetricsClient;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem;
-use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::ThreadGoalStatus;
@@ -420,13 +418,14 @@ where
                 return;
             };
 
-            let reason = match input.error {
-                CodexErrorInfo::UsageLimitExceeded => ActiveGoalStopReason::UsageLimit,
+            let reason = if input.error.is_usage_limit() {
+                ActiveGoalStopReason::UsageLimit
+            } else {
                 // The turn has ended because the error was non-retryable or its
                 // retries were exhausted. Block the goal to prevent automatic
                 // continuation from looping and consuming tokens, as can happen
                 // with compaction errors.
-                _ => ActiveGoalStopReason::TurnError,
+                ActiveGoalStopReason::TurnError
             };
             if let Err(err) = runtime
                 .stop_active_goal_for_turn(input.turn_id, reason)
@@ -554,9 +553,7 @@ where
         &self,
         _session_store: &ExtensionData,
         thread_store: &ExtensionData,
-    ) -> Vec<
-        Arc<dyn for<'call> codex_extension_api::ToolExecutor<codex_extension_api::ToolCall<'call>>>,
-    > {
+    ) -> Vec<Arc<dyn ToolExecutor>> {
         let Some(runtime) = goal_runtime_handle(thread_store) else {
             return Vec::new();
         };
@@ -577,7 +574,6 @@ where
             ),
             GoalToolExecutor::create(
                 &runtime,
-                self.thread_manager.clone(),
                 Arc::clone(&self.state_dbs),
                 runtime.accounting_state(),
                 self.event_emitter.clone(),
@@ -596,7 +592,7 @@ where
             .into_iter()
             .map(|mut tool| {
                 tool.execution_allowed = runtime.tools_available();
-                Arc::new(tool) as Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>
+                Arc::new(tool) as Arc<dyn ToolExecutor>
             })
             .collect()
     }

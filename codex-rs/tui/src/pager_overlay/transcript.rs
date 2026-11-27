@@ -24,12 +24,22 @@ pub(crate) struct TranscriptOverlay {
     content_area: Rect,
     cursor: Option<(u16, u16)>,
     notice: Option<String>,
+    pending_notice_id: Option<u64>,
+    pub(crate) pending_thread_link: Option<codex_protocol::ThreadId>,
     pub(crate) browsing_footer: Option<Line<'static>>,
     find_transcript: Vec<crate::key_hint::KeyBinding>,
     select_transcript: Vec<crate::key_hint::KeyBinding>,
     pub(super) pending_follow_close: Option<(u64, bool)>,
     pending_select_mode: bool,
     is_done: bool,
+}
+
+impl Overlay {
+    pub(crate) fn set_keymap_bindings(&mut self, keymap: &RuntimeKeymap) {
+        if let Self::Transcript(view) = self {
+            view.set_keymap_bindings(keymap);
+        }
+    }
 }
 
 impl TranscriptOverlay {
@@ -64,6 +74,8 @@ impl TranscriptOverlay {
             content_area: Rect::default(),
             cursor: None,
             notice: None,
+            pending_notice_id: None,
+            pending_thread_link: None,
             browsing_footer: None,
             find_transcript: Vec::new(),
             select_transcript: Vec::new(),
@@ -213,6 +225,7 @@ impl TranscriptOverlay {
                     mouse.column = self.content_area.x;
                     mouse.row = self.content_area.bottom().saturating_sub(1);
                 }
+                self.view.primary_selection = tui.primary_selection_available();
                 self.view.handle_mouse(mouse, &self.cells)
             }
             TuiEvent::Paste(text) => {
@@ -250,6 +263,7 @@ impl TranscriptOverlay {
     }
 
     pub(crate) fn set_keymap_bindings(&mut self, keymap: &RuntimeKeymap) {
+        self.keymap.clone_from(&keymap.pager);
         self.find_transcript.clone_from(&keymap.app.find_transcript);
         self.select_transcript
             .clone_from(&keymap.app.select_transcript);
@@ -339,6 +353,11 @@ impl TranscriptOverlay {
             .iter()
             .rposition(|cell| is_session_history_prefix_cell(cell.as_ref()))
             .map_or(/*default*/ 0, |index| index + 1);
+        self.insert_history_page(index, cells);
+        index
+    }
+
+    pub(crate) fn insert_history_page(&mut self, index: usize, cells: Vec<Arc<dyn HistoryCell>>) {
         let added = cells.len();
         self.cells.splice(index..index, cells);
         for highlight in [&mut self.highlight_cell, &mut self.pending_highlight] {
@@ -348,7 +367,6 @@ impl TranscriptOverlay {
         }
         self.view.set_highlight(self.highlight_cell);
         self.view.history_loaded(&self.cells, index..index + added);
-        index
     }
 
     pub(crate) fn replace_cells(&mut self, cells: Vec<Arc<dyn HistoryCell>>) {
@@ -362,6 +380,21 @@ impl TranscriptOverlay {
             .pending_highlight
             .filter(|index| *index < self.cells.len());
         self.view.set_highlight(self.highlight_cell);
+    }
+
+    pub(crate) fn regroup_answer(
+        &mut self,
+        start: usize,
+        ordered: &[Arc<dyn HistoryCell>],
+        fragments: usize,
+        consolidated: Arc<dyn HistoryCell>,
+    ) {
+        if fragments < ordered.len() {
+            let range = start..start + ordered.len();
+            self.view.retain_before_regroup(&self.cells, range.clone());
+            self.cells[range].clone_from_slice(ordered);
+        }
+        self.regroup_cells(start..start + fragments, consolidated);
     }
 
     /// Grouping may change compact previews; retain the reader's revision before replacing cells.
@@ -508,6 +541,7 @@ impl TranscriptOverlay {
 
     fn apply_action(&mut self, tui: &mut tui::Tui, action: ViewAction) {
         self.notice = None;
+        self.pending_notice_id = None;
         let resume_following = matches!(action, ViewAction::CopyAndFollow(_));
         let close_overlay = self.view.is_select_mode() || self.browsing_footer.is_some();
         if matches!(action, ViewAction::ExitSelectMode) {
@@ -534,15 +568,25 @@ impl TranscriptOverlay {
                     | Err(_) => {}
                 }
             }
-            self.notice = Some(match result {
-                Ok(status) => status.message("selection"),
-                Err(error) => error,
-            });
-        } else if let ViewAction::OpenLink(url) = action
-            && let Err(error) = webbrowser::open(&url)
-        {
-            self.notice = Some(format!("Could not open link: {error}"));
+            self.show_copy_notice(result);
+        } else if let ViewAction::OpenLink(url) = action {
+            if let Some(thread_id) = crate::thread_links::thread_id(&url) {
+                self.pending_thread_link = Some(thread_id);
+            } else if let Err(error) = webbrowser::open(&url) {
+                self.notice = Some(format!("Could not open link: {error}"));
+            }
         }
+    }
+
+    pub(super) fn show_copy_notice(&mut self, result: crate::clipboard_copy::worker::CopyResult) {
+        self.pending_notice_id = match &result {
+            Ok(crate::clipboard_copy::CopyStatus::Pending(id)) => Some(*id),
+            _ => None,
+        };
+        self.notice = Some(match result {
+            Ok(status) => status.message("selection"),
+            Err(error) => error,
+        });
     }
 
     pub(super) fn finish_pending_copy(
@@ -560,17 +604,26 @@ impl TranscriptOverlay {
             }
             _ => None,
         };
-        if let Some(follow) = self
+        let follow = self
             .view
-            .finish_copy(&self.cells, completion, /*current*/ true)
-        {
-            self.notice = Some(match &completion.1 {
-                Ok(status) => status.message("selection"),
-                Err(error) => format!("Copy failed: {error}"),
-            });
-            if follow {
-                self.finish_select_follow(close_overlay.unwrap_or(false));
+            .finish_copy(&self.cells, completion, /*current*/ true);
+        // Whole-message copies have no selection ticket. Only the request that owns
+        // the displayed notice may replace it, even if the selection has moved.
+        if let Some(id) = self.pending_notice_id {
+            if id == completion.0 {
+                self.show_copy_notice(
+                    completion
+                        .1
+                        .clone()
+                        .map_err(|error| format!("Copy failed: {error}")),
+                );
+            } else if id < completion.0 {
+                self.pending_notice_id = None;
+                self.notice = None;
             }
+        }
+        if follow == Some(true) {
+            self.finish_select_follow(close_overlay.unwrap_or(false));
         }
     }
 

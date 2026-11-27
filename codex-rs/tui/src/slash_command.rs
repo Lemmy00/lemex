@@ -55,6 +55,8 @@ pub enum SlashCommand {
     Mention,
     Status,
     Daemon,
+    #[strum(to_string = "rc", serialize = "remote")]
+    Rc,
     Warnings,
     Cd,
     #[strum(to_string = "pwd", serialize = "cwd")]
@@ -114,6 +116,7 @@ impl SlashCommand {
             SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Daemon => "Manage the local background server",
+            SlashCommand::Rc => "manage remote control for the local background server",
             SlashCommand::Warnings => "view retained warnings and diagnostic details",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Cd => "change the current working directory",
@@ -146,7 +149,9 @@ impl SlashCommand {
             SlashCommand::Experimental => "toggle experimental features",
             SlashCommand::AutoReview => "approve one retry of a recent auto-review denial",
             SlashCommand::Memories => "configure memory use and generation",
-            SlashCommand::Mcp => "list MCP tools; use /mcp verbose or /mcp login <name>",
+            SlashCommand::Mcp => {
+                "list MCP tools; /mcp verbose or /mcp login <name> [--environment <id>]"
+            }
             SlashCommand::Plugins => "browse plugins",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
@@ -187,6 +192,7 @@ impl SlashCommand {
                 | SlashCommand::Btw
                 | SlashCommand::Resume
                 | SlashCommand::History
+                | SlashCommand::Rc
         )
     }
 
@@ -202,6 +208,7 @@ impl SlashCommand {
                 | SlashCommand::Mention
                 | SlashCommand::Status
                 | SlashCommand::Daemon
+                | SlashCommand::Rc
                 | SlashCommand::Warnings
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
@@ -214,6 +221,14 @@ impl SlashCommand {
     /// The composer must defer busy-state rejection and draft clearing for these commands.
     pub(crate) fn requires_dispatch_validation(self) -> bool {
         matches!(self, SlashCommand::Fork | SlashCommand::Review)
+    }
+
+    /// Commands the TUI can handle locally while disconnected from its app server.
+    pub(crate) fn available_when_disconnected(self) -> bool {
+        matches!(
+            self,
+            Self::Warnings | Self::Config | Self::Rc | Self::Feedback | Self::Quit | Self::Exit
+        )
     }
 
     /// Commands that do not require a writable current thread. The server must still be connected.
@@ -229,6 +244,7 @@ impl SlashCommand {
                 | SlashCommand::Quit
                 | SlashCommand::Exit
                 | SlashCommand::Status
+                | SlashCommand::Rc
                 | SlashCommand::Warnings
                 | SlashCommand::DebugConfig
                 | SlashCommand::Pwd
@@ -278,6 +294,7 @@ impl SlashCommand {
             | SlashCommand::Hooks
             | SlashCommand::Status
             | SlashCommand::Daemon
+            | SlashCommand::Rc
             | SlashCommand::Warnings
             | SlashCommand::Pwd
             | SlashCommand::Usage
@@ -343,6 +360,8 @@ mod tests {
             SlashCommand::Voice,
             SlashCommand::Mcp,
             SlashCommand::Status,
+            SlashCommand::History,
+            SlashCommand::Resume,
             SlashCommand::Diff,
             SlashCommand::Review,
         ] {

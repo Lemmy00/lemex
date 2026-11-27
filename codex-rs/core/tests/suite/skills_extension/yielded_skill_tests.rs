@@ -40,7 +40,6 @@ async fn yielded_skill_read_keeps_originating_turn_metadata() -> Result<()> {
             max_context_tokens: config.skill_max_context_tokens,
             bundled_skills_enabled: false,
             cloud_skill_enabled: true,
-            shadow_selection_enabled: false,
         },
     );
     let chatgpt_base_url = server.uri();
@@ -58,7 +57,7 @@ async fn yielded_skill_read_keeps_originating_turn_metadata() -> Result<()> {
             config.features.enable(Feature::CodeMode).unwrap();
             config.features.enable(Feature::CodeModeHost).unwrap();
         })
-        .with_code_mode_host_program(codex_utils_cargo_bin::cargo_bin("codex-code-mode-host")?);
+        .with_code_mode_host_program(codex_utils_cargo_bin::cargo_bin("lemex-code-mode-host")?);
     let test = builder.build_with_auto_env(&server).await?;
     // A cannot read its skill until B has become the active turn.
     let read_after_barrier = format!(

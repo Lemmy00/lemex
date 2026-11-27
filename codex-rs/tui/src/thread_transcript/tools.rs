@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCell;
+use crate::exec_cell::command_output_line;
 use crate::exec_cell::new_active_exec_command;
+use crate::exec_cell::plain_output_text;
 use crate::history_cell::McpInvocation;
 use crate::history_cell::McpToolCallCell;
 use crate::history_cell::PlainHistoryCell;
@@ -67,16 +69,16 @@ pub(crate) fn historical_tool_fallback(
                 status_line.dim().into(),
             ];
             if let Some(output) = aggregated_output {
-                lines.extend(
-                    output
-                        .lines()
-                        .map(|line| vec!["  ".dim(), line.trim_end().to_string().dim()].into()),
-                );
+                lines.extend(output.lines().map(|raw| {
+                    let text = plain_output_text(command_output_line(raw).into_owned());
+                    vec!["  ".dim(), text.dim()].into()
+                }));
             }
             lines
         }
         ThreadItemPayload::McpToolCall {
             server,
+            environment_id,
             tool,
             status,
             result,
@@ -88,6 +90,10 @@ pub(crate) fn historical_tool_fallback(
                 McpToolCallStatus::Completed => "Completed · result unavailable",
                 McpToolCallStatus::Failed => "Failed · result unavailable",
             };
+            let server = crate::app_server_approval_conversions::mcp_server_label(
+                server,
+                environment_id.as_deref(),
+            );
             vec![format!("mcp tool: {server}/{tool} · {status}").dim().into()]
         }
         ThreadItemPayload::CollabAgentToolCall {
@@ -207,6 +213,7 @@ impl McpHistory {
         let ThreadItemPayload::McpToolCall {
             id,
             server,
+            environment_id,
             tool,
             status,
             arguments,
@@ -238,6 +245,7 @@ impl McpHistory {
             id,
             invocation: McpInvocation {
                 server,
+                environment_id,
                 tool,
                 arguments: Some(arguments),
             },

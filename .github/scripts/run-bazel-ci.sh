@@ -53,11 +53,11 @@ fi
 
 run_bazel() {
   if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
-    MSYS2_ARG_CONV_EXCL='*' "$(dirname "${BASH_SOURCE[0]}")/run_bazel_with_buildbuddy.py" "$@"
+    MSYS2_ARG_CONV_EXCL='*' "$(dirname "${BASH_SOURCE[0]}")/run_bazel.py" "$@"
     return
   fi
 
-  "$(dirname "${BASH_SOURCE[0]}")/run_bazel_with_buildbuddy.py" "$@"
+  "$(dirname "${BASH_SOURCE[0]}")/run_bazel.py" "$@"
 }
 
 run_bazel_with_startup_args() {
@@ -352,7 +352,10 @@ bazel_run_args=(
   "${bazel_args[@]}"
 )
 if [[ "${bazel_args[0]}" == "test" ]]; then
-  bazel_run_args+=("--test_env=INSTA_UPDATE=no")
+  bazel_run_args+=(
+    "--test_env=INSTA_UPDATE=no"
+    "--@rules_rust//rust/settings:extra_rustc_env=CODEX_BUNDLED_STATSIG_CLIENT_KEY=client-launch-fixture"
+  )
 fi
 if (( ${#post_config_bazel_args[@]} > 0 )); then
   bazel_run_args+=("${post_config_bazel_args[@]}")

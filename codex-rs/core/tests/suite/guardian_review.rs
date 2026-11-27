@@ -1,5 +1,8 @@
 #![cfg(not(target_os = "windows"))]
 
+#[path = "guardian_automation_metrics_tests.rs"]
+mod automation_metrics;
+
 use anyhow::Context;
 use anyhow::Result;
 use chrono::DateTime;
@@ -8,7 +11,6 @@ use chrono::Utc;
 use codex_config::types::McpServerConfig;
 use codex_config::types::OtelExporterKind;
 use codex_core::SleepFuture;
-use codex_core::TimeFuture;
 use codex_core::TimeProvider;
 use codex_core::TurnInputRequest;
 use codex_core::config::Config;
@@ -128,15 +130,14 @@ impl ToolLifecycleContributor for RecordingToolLifecycleContributor {
 }
 
 impl TimeProvider for RecordingTimeProvider {
-    fn current_time(&self, thread_id: ThreadId) -> TimeFuture<'_> {
+    fn current_time(&self, thread_id: ThreadId) -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
         self.thread_ids
             .lock()
             .expect("time-provider thread ids lock should not be poisoned")
             .push(thread_id);
-        Box::pin(async {
-            Ok(DateTime::<Utc>::from_timestamp(CURRENT_TIME_AT, 0)
-                .expect("test timestamp should be valid"))
-        })
+
+        Ok(DateTime::<Utc>::from_timestamp(CURRENT_TIME_AT, 0)
+            .expect("test timestamp should be valid"))
     }
 
     fn sleep(&self, _thread_id: ThreadId, _duration: Duration) -> SleepFuture<'_> {
@@ -314,6 +315,65 @@ async fn guardian_session_inherits_parent_http_fallback(
     );
     test.codex.shutdown_and_wait().await?;
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicit_guardian_does_not_inherit_actor_inline_catalog_with_same_provider_info()
+-> Result<()> {
+    skip_if_no_network!(Ok(()));
+    const MODEL: &str = "gpt-5.6-luna";
+    let server = wiremock::MockServer::start().await;
+    let mut actor_model = codex_models_manager::model_info::model_info_from_slug(MODEL);
+    actor_model.context_window = Some(11_000);
+    let mut guardian_model = actor_model.clone();
+    guardian_model.context_window = Some(73_000);
+    let catalog = mount_models_once(
+        &server,
+        ModelsResponse {
+            models: vec![guardian_model],
+        },
+    )
+    .await;
+    let url = format!("{}/v1/models", server.uri());
+    let test = test_codex()
+        .with_model(MODEL)
+        .with_config(move |config| {
+            config
+                .features
+                .enable(Feature::ApiKeyModelDiscovery)
+                .expect("enable discovery");
+            config.model_provider.model_catalog_url = Some(url.into());
+            config.model_catalog = Some(ModelsResponse {
+                models: vec![actor_model],
+            });
+            let info = config.model_provider.clone();
+            config.guardian_model_provider =
+                Some(Arc::new(codex_core::config::GuardianInferenceProvider {
+                    id: "host-guardian".to_owned(),
+                    info,
+                }));
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    let guardian = test
+        .codex
+        .thread_extension_data()
+        .get::<codex_core::GuardianInferenceContext>()
+        .context("host Guardian route installed at thread start")?;
+    guardian
+        .models_manager
+        .ensure_initialized(guardian.http_client_factory.clone())
+        .await;
+    let model = guardian
+        .models_manager
+        .get_model_info(MODEL, &Default::default())
+        .await;
+    assert_eq!(
+        (model.origin, model.context_window, catalog.requests().len()),
+        (ModelOrigin::Provider, Some(73_000), 1),
+        "Guardian should use the provider catalog even when it shares the actor endpoint",
+    );
     Ok(())
 }
 
@@ -567,13 +627,15 @@ for (const phase of ["before", "after"]) {
     Ok(())
 }
 
-#[test_case(false, &[]; "without parent checkpoint")]
-#[test_case(true, &[]; "reuse parent checkpoint and newer authorization")]
-#[test_case(false, &["rate_limit_exceeded", "rate_limit_exceeded"]; "failed compaction preserves pending evidence")]
+#[test_case(false, &[], true; "without parent checkpoint")]
+#[test_case(false, &[], false; "without native agent review")]
+#[test_case(true, &[], false; "reuse parent checkpoint and newer authorization")]
+#[test_case(false, &["rate_limit_exceeded", "rate_limit_exceeded"], false; "failed compaction preserves pending evidence")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn guardian_review_recovers_after_compaction(
     with_parent_checkpoint: bool,
     compaction_errors: &[&str],
+    review_agent_calls: bool,
 ) -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_wine_exec!(
@@ -583,6 +645,7 @@ async fn guardian_review_recovers_after_compaction(
 
     let server = start_mock_server().await;
     let summary = "Guardian retained the user's standing authorization.";
+    let with_child_reply = !with_parent_checkpoint && compaction_errors.is_empty();
     let store = Arc::new(codex_thread_store::InMemoryThreadStore::default());
     let mut builder = test_codex()
         .with_thread_store(store.clone())
@@ -598,13 +661,24 @@ async fn guardian_review_recovers_after_compaction(
                 enabled: !with_parent_checkpoint,
                 use_history_notes_extension: true,
                 reminder_threshold_tokens: 6_144,
-                reminder_message_template: "{n_remaining} tokens remain.".to_string(),
-                guidance_message: "Save state before resetting context.".to_string(),
-                auto_compact_fallback_prompt: "Save important state.".to_string(),
+                reminder_message_template: "{n_remaining} tokens remain.".into(),
+                guidance_message: "Save state before resetting context.".into(),
+                auto_compact_fallback_prompt: "Save important state.".into(),
                 auto_compact_fallback_buffer_tokens: 16_384,
             });
         })
         .with_config(move |config| {
+            if with_child_reply {
+                config.update_plan_enabled = true;
+                config
+                    .features
+                    .enable(Feature::MultiAgentV2)
+                    .expect("enable MAv2");
+                config
+                    .features
+                    .set_enabled(Feature::GuardianNativeMultiAgentHistory, review_agent_calls)
+                    .expect("set native agent review flag");
+            }
             config.model_context_window = Some(100_000);
             config.model_auto_compact_token_limit = Some(50_000);
             config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
@@ -639,7 +713,7 @@ async fn guardian_review_recovers_after_compaction(
         .await;
     }
     let command = json!({
-        "cmd": "true",
+        "cmd": "printf POST_COMPACTION_APPROVED",
         "sandbox_permissions": "require_escalated",
         "justification": "Read the internal samples the user authorized.",
     });
@@ -702,9 +776,38 @@ async fn guardian_review_recovers_after_compaction(
             ev_completed("resp-parent-done"),
         ]),
     ]);
+    if with_child_reply {
+        // Queued progress reaches the parent at the next sampling boundary.
+        response_events.insert(
+            0,
+            sse(vec![
+                ev_function_call(
+                    "plan",
+                    "update_plan",
+                    r#"{"plan":[{"step":"Review the score","status":"in_progress"}]}"#,
+                ),
+                ev_completed("planned"),
+            ]),
+        );
+    }
     let responses = mount_sse_sequence(&server, response_events).await;
 
     let user_authorization = "Read the internal evaluation samples I have authorized.";
+    if with_child_reply {
+        let parent = codex_protocol::AgentPath::root();
+        test.codex
+            .submit(Op::InterAgentCommunication {
+                communication: codex_protocol::protocol::InterAgentCommunication::new_encrypted(
+                    parent.join("scoring").expect("scoring path"),
+                    parent,
+                    Vec::new(),
+                    "opaque-score".into(),
+                    /*trigger_turn*/ false,
+                ),
+                start_options: Default::default(),
+            })
+            .await?;
+    }
     test.submit_text_turn(user_authorization).await?;
 
     assert_eq!(
@@ -722,6 +825,20 @@ async fn guardian_review_recovers_after_compaction(
         })
         .collect::<Vec<_>>();
     assert_eq!(guardian_requests.len(), 3);
+    let verdict_format = json!({
+        "type": "json_schema",
+        "name": "codex_output_schema",
+        "strict": false,
+        "schema": codex_guardian_reviewer::guardian_output_schema(),
+    });
+    assert_eq!(
+        guardian_requests
+            .iter()
+            .map(|request| request.body_json()["text"]["format"].clone())
+            .collect::<Vec<_>>(),
+        vec![verdict_format.clone(); guardian_requests.len()],
+        "reviews before and after compaction must retain the verdict format"
+    );
     assert_eq!(
         guardian_requests[0].body_json()["client_metadata"]["thread_id"]
             == guardian_requests[1].body_json()["client_metadata"]["thread_id"],
@@ -744,6 +861,38 @@ async fn guardian_review_recovers_after_compaction(
         compact_requests.len(),
         usize::from(!with_parent_checkpoint) + compaction_errors.len(),
     );
+    assert_eq!(
+        compact_requests
+            .iter()
+            .map(|request| request.body_json()["text"]["format"].clone())
+            .collect::<Vec<_>>(),
+        vec![verdict_format; compact_requests.len()],
+        "compaction and retries must preserve the verdict format"
+    );
+    if with_child_reply {
+        let replies = |request: &core_test_support::responses::ResponsesRequest| {
+            request
+                .input()
+                .into_iter()
+                .filter(|item| {
+                    item["output"][1]["encrypted_content"] == "opaque-score"
+                        || item["content"][1]["encrypted_content"] == "opaque-score"
+                })
+                .collect::<Vec<_>>()
+        };
+        let original = replies(guardian_requests[0]);
+        assert_eq!(original.len(), 1);
+        assert_eq!(replies(compact_requests[0]), original);
+        let retained = if review_agent_calls {
+            assert_eq!(original[0]["name"], "subagent_reply");
+            original
+        } else {
+            assert_eq!(original[0]["type"], "agent_message");
+            Vec::new()
+        };
+        assert_eq!(replies(guardian_requests[1]), retained);
+        assert_eq!(replies(guardian_requests[2]), retained);
+    }
     if let Some(compact_request) = compact_requests.first() {
         assert!(
             compact_request
@@ -821,6 +970,16 @@ async fn guardian_review_recovers_after_compaction(
             }
         }
     }
+
+    assert!(
+        requests
+            .last()
+            .expect("parent continuation after the reviews")
+            .function_call_output("exec-second")
+            .to_string()
+            .contains("POST_COMPACTION_APPROVED"),
+        "the verdict after compaction must approve execution"
+    );
 
     Ok(())
 }
@@ -1254,7 +1413,10 @@ async fn guardian_session_prewarms_and_is_reused_for_first_review(
     let guardian_context_windows = guardian_rollout
         .into_iter()
         .filter_map(|line| match line.item {
-            RolloutItem::EventMsg(EventMsg::TurnStarted(event)) => Some(event.model_context_window),
+            RolloutItem::EventMsg {
+                event: EventMsg::TurnStarted(event),
+                ..
+            } => Some(event.model_context_window),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -1309,7 +1471,7 @@ async fn guardian_node_repl_policy_follows_production_approval_path(
                 .auto_review = Some(AutoReviewMessages {
                 policy: None,
                 policy_template: None,
-                node_repl_policy: node_repl_policy.map(str::to_string),
+                node_repl_policy: node_repl_policy.map(Into::into),
                 rejection_instructions: None,
                 timeout_instructions: None,
             });
@@ -1324,7 +1486,7 @@ async fn guardian_node_repl_policy_follows_production_approval_path(
                 .auto_review = Some(AutoReviewMessages {
                 policy: None,
                 policy_template: None,
-                node_repl_policy: Some("Acting-model REPL policy.".to_string()),
+                node_repl_policy: Some("Acting-model REPL policy.".into()),
                 rejection_instructions: None,
                 timeout_instructions: None,
             });
@@ -1608,7 +1770,11 @@ async fn guardian_refreshes_missing_default_reviewer_once(
     } else if scenario == "cancel_prewarm" {
         let parent = Arc::clone(&test.codex);
         let prewarm = tokio::spawn(async move {
-            codex_core::guardian_review::prepare_review_prewarm(&parent).await
+            codex_core::guardian_review::prepare_review_prewarm(
+                &parent,
+                codex_core::guardian_review::ReviewRetrieval::ConversationHistory,
+            )
+            .await
         });
         refresh_started.notified().await;
         prewarm.abort();
@@ -1831,8 +1997,8 @@ async fn guardian_reviews_delayed_and_new_actions_after_catalog_refresh() -> Res
         .as_mut()
         .unwrap()
         .auto_review = Some(AutoReviewMessages {
-        policy: Some("refreshed policy".to_string()),
-        policy_template: Some("refreshed template: {{ tenant_policy_config }}".to_string()),
+        policy: Some("refreshed policy".into()),
+        policy_template: Some("refreshed template: {{ tenant_policy_config }}".into()),
         node_repl_policy: None,
         rejection_instructions: None,
         timeout_instructions: None,
@@ -2059,6 +2225,7 @@ async fn guardian_session_is_reused_for_consecutive_tool_reviews_without_prewarm
         windows_sandbox_type: test.config.permissions.windows_sandbox_type,
         use_legacy_landlock: test.config.features.use_legacy_landlock(),
         exec_policy: None,
+        plugins: Default::default(),
         mcp_policy: None,
         network_policy: None,
         selected_capability_roots: Vec::new(),
@@ -2122,7 +2289,12 @@ async fn guardian_session_is_reused_for_consecutive_tool_reviews_without_prewarm
     let permission_section = [
         "\n>>> PARENT TURN PERMISSION CONTEXT START\n".to_string(),
         format!(
-            "The active permission profile for environment \"local\" denies reading these paths/globs. These are policy restrictions; do not approve escalation whose purpose is to read them.\n- path `{}`\n- glob `{}`\n",
+            "The active permission profile for environment \"local\" denies reading these \
+             paths/globs. These are policy restrictions; do not approve escalation whose purpose \
+             is to read them. Approval can grant read and write access across the rest of the \
+             filesystem, including repository metadata. The command stays sandboxed with the same \
+             read denials. A command can encounter a blocked read incidentally and still \
+             complete its intended operation.\n- path `{}`\n- glob `{}`\n",
             fs::canonicalize(&secret_file)?.display(),
             test.config.cwd.join("guardian-*.key").display(),
         ),
@@ -2274,9 +2446,23 @@ async fn interrupted_guardian_review_across_model_change_does_not_execute_the_co
             config.features.enable(Feature::StepModelSwitching).unwrap();
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
             config.approvals_reviewer = ApprovalsReviewer::AutoReview;
+            config.workspace_roots_explicit = false;
+            let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+                &sandbox_policy,
+                config.cwd.as_path(),
+            );
             config
-                .set_legacy_sandbox_policy(sandbox_policy)
-                .expect("set sandbox policy");
+                .permissions
+                .can_set_permission_profile(&permission_profile)
+                .expect("set permission profile");
+            config
+                .permissions
+                .set_workspace_roots(vec![config.cwd.clone()]);
+            config
+                .permissions
+                .set_permission_profile(permission_profile)
+                .expect("set permission profile");
+            config.workspace_roots = config.permissions.workspace_roots().to_vec();
         })
         .build_with_auto_env(&server)
         .await?;
@@ -2434,7 +2620,7 @@ async fn guardian_denial_rejects_tool_call_with_rationale(
                 policy: None,
                 policy_template: None,
                 node_repl_policy: None,
-                rejection_instructions: Some("Reviewer-only rejection instructions.".to_string()),
+                rejection_instructions: Some("Reviewer-only rejection instructions.".into()),
                 timeout_instructions: None,
             });
         })
@@ -2448,7 +2634,7 @@ async fn guardian_denial_rejects_tool_call_with_rationale(
                 policy: None,
                 policy_template: None,
                 node_repl_policy: None,
-                rejection_instructions: rejection_instructions.map(str::to_string),
+                rejection_instructions: rejection_instructions.map(Into::into),
                 timeout_instructions: None,
             });
         })
@@ -2462,9 +2648,23 @@ async fn guardian_denial_rejects_tool_call_with_rationale(
                 tls: None,
             };
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+            config.workspace_roots_explicit = false;
+            let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+                &sandbox_policy_for_config,
+                config.cwd.as_path(),
+            );
             config
-                .set_legacy_sandbox_policy(sandbox_policy_for_config)
-                .expect("set sandbox policy");
+                .permissions
+                .can_set_permission_profile(&permission_profile)
+                .expect("set permission profile");
+            config
+                .permissions
+                .set_workspace_roots(vec![config.cwd.clone()]);
+            config
+                .permissions
+                .set_permission_profile(permission_profile)
+                .expect("set permission profile");
+            config.workspace_roots = config.permissions.workspace_roots().to_vec();
         });
     let test = builder.build_with_auto_env(&server).await?;
 
@@ -2763,7 +2963,7 @@ async fn guardian_timeout_rejects_tool_call_with_acting_model_instructions(
                 policy_template: None,
                 node_repl_policy: None,
                 rejection_instructions: None,
-                timeout_instructions: timeout_instructions.map(str::to_string),
+                timeout_instructions: timeout_instructions.map(Into::into),
             });
         })
         .with_config(|config| {
@@ -2880,9 +3080,23 @@ async fn cyber_model_guardian_denial_interrupts_turn_immediately(
         })
         .with_config(move |config| {
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+            config.workspace_roots_explicit = false;
+            let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+                &sandbox_policy_for_config,
+                config.cwd.as_path(),
+            );
             config
-                .set_legacy_sandbox_policy(sandbox_policy_for_config)
-                .expect("set sandbox policy");
+                .permissions
+                .can_set_permission_profile(&permission_profile)
+                .expect("set permission profile");
+            config
+                .permissions
+                .set_workspace_roots(vec![config.cwd.clone()]);
+            config
+                .permissions
+                .set_permission_profile(permission_profile)
+                .expect("set permission profile");
+            config.workspace_roots = config.permissions.workspace_roots().to_vec();
         });
     let cached_calls = Arc::new(std::sync::atomic::AtomicUsize::new(/*v*/ 0));
     if matches!(approval_path, ApprovalPath::CachedContributor) {
@@ -3038,9 +3252,23 @@ printf '%s\n' "${@: -1}" >> "${payload_path}""#,
     let mut builder = test_codex().with_config(move |config| {
         config.notify = Some(vec![notify_script_str]);
         config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+        config.workspace_roots_explicit = false;
+        let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+            &sandbox_policy_for_config,
+            config.cwd.as_path(),
+        );
         config
-            .set_legacy_sandbox_policy(sandbox_policy_for_config)
-            .expect("set sandbox policy");
+            .permissions
+            .can_set_permission_profile(&permission_profile)
+            .expect("set permission profile");
+        config
+            .permissions
+            .set_workspace_roots(vec![config.cwd.clone()]);
+        config
+            .permissions
+            .set_permission_profile(permission_profile)
+            .expect("set permission profile");
+        config.workspace_roots = config.permissions.workspace_roots().to_vec();
     });
     let test = builder.build(&server).await?;
 

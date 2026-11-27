@@ -15,6 +15,7 @@ use codex_app_server_protocol::Turn;
 use codex_utils_absolute_path::test_support::PathExt;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
+use uuid::Uuid;
 
 #[test]
 fn tui_startup_future_stays_bounded() {
@@ -261,7 +262,7 @@ async fn startup_resume_rejects_guardian_thread() -> color_eyre::Result<()> {
         .expect_err("Guardian resume should be rejected");
     insta::assert_snapshot!(error.to_string(), @"
         Cannot resume a Guardian review thread.
-        Resume its parent session instead: codex resume 00000000-0000-0000-0000-000000000001
+        Resume its parent session instead: lemex resume 00000000-0000-0000-0000-000000000001
         ");
     app_server.shutdown().await?;
     Ok(())
@@ -394,7 +395,7 @@ async fn startup_resume_and_fork_use_configured_or_explicit_cwd() -> color_eyre:
         };
 
         assert!(!session_resume::cwds_differ(
-            started.session.cwd.as_path(),
+            &started.session.cwd.to_path_buf(),
             &expected_cwd,
         ));
         app_server.shutdown().await?;
@@ -507,24 +508,20 @@ async fn startup_session_cwd_without_metadata_is_rejected() -> color_eyre::Resul
 
 #[test]
 fn alternate_screen_respects_terminal_compatibility_and_overrides() {
-    for terminal_app_over_ssh in [false, true] {
+    for prefer_inline_screen in [false, true] {
         for (mode, expected) in [
-            (AltScreenMode::Auto, !terminal_app_over_ssh),
+            (AltScreenMode::Auto, !prefer_inline_screen),
             (AltScreenMode::Always, true),
             (AltScreenMode::Never, false),
         ] {
             assert_eq!(
-                determine_alt_screen_mode(
-                    /*no_alt_screen*/ false,
-                    mode,
-                    terminal_app_over_ssh
-                ),
+                determine_alt_screen_mode(/*no_alt_screen*/ false, mode, prefer_inline_screen),
                 expected,
             );
             assert!(!determine_alt_screen_mode(
                 /*no_alt_screen*/ true,
                 mode,
-                terminal_app_over_ssh
+                prefer_inline_screen
             ));
         }
     }
@@ -542,81 +539,6 @@ fn session_target_display_label_falls_back_to_thread_id() {
     };
 
     assert_eq!(target.display_label(), format!("thread {thread_id}"));
-}
-
-#[test]
-fn resolve_remote_addr_accepts_websocket_url() {
-    assert_eq!(
-        resolve_remote_addr("ws://127.0.0.1:4500").expect("ws URL should normalize"),
-        RemoteAppServerEndpoint::WebSocket {
-            websocket_url: "ws://127.0.0.1:4500/".to_string(),
-            auth_token: None,
-        }
-    );
-}
-
-#[test]
-fn resolve_remote_addr_accepts_secure_websocket_url() {
-    assert_eq!(
-        resolve_remote_addr("wss://example.com:443").expect("wss URL should normalize"),
-        RemoteAppServerEndpoint::WebSocket {
-            websocket_url: "wss://example.com/".to_string(),
-            auth_token: None,
-        }
-    );
-}
-
-#[test]
-fn resolve_remote_addr_accepts_default_socket() -> color_eyre::Result<()> {
-    let codex_home = find_codex_home().wrap_err("failed to resolve LEMEX_HOME")?;
-    assert_eq!(
-        resolve_remote_addr("unix://")?,
-        RemoteAppServerEndpoint::UnixSocket {
-            socket_path: codex_app_server_client::app_server_control_socket_path(&codex_home)?,
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn resolve_remote_addr_accepts_relative_socket_path() -> color_eyre::Result<()> {
-    assert_eq!(
-        resolve_remote_addr("unix://codex.sock")?,
-        RemoteAppServerEndpoint::UnixSocket {
-            socket_path: AbsolutePathBuf::relative_to_current_dir("codex.sock")?,
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn resolve_remote_addr_accepts_absolute_socket_path() -> color_eyre::Result<()> {
-    let temp_dir = TempDir::new()?;
-    let socket_path = temp_dir.path().join("codex.sock");
-    assert_eq!(
-        resolve_remote_addr(&format!("unix://{}", socket_path.display()))?,
-        RemoteAppServerEndpoint::UnixSocket {
-            socket_path: AbsolutePathBuf::from_absolute_path(&socket_path)?,
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn resolve_remote_addr_rejects_invalid_remote_addresses() {
-    for addr in [
-        "ws://127.0.0.1",
-        "wss://example.com",
-        "127.0.0.1:4500",
-        "https://127.0.0.1:4500",
-    ] {
-        let err = resolve_remote_addr(addr).expect_err("invalid remote addresses should fail");
-        assert!(
-            err.to_string().contains(
-                "expected `ws://host:port`, `wss://host:port`, `unix://`, or `unix://PATH`"
-            )
-        );
-    }
 }
 
 #[tokio::test]

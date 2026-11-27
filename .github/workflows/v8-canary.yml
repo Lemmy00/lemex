@@ -13,6 +13,10 @@ concurrency:
   group: ${{ github.workflow }}::${{ github.event.pull_request.number > 0 && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
   cancel-in-progress: ${{ github.ref_name != 'main' }}
 
+env:
+  CODEX_BAZEL_GCS_BUCKET: ${{ secrets.CODEX_BAZEL_GCS_BUCKET }}
+  CODEX_BAZEL_GCS_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.CODEX_BAZEL_GCS_WORKLOAD_IDENTITY_PROVIDER }}
+
 jobs:
   metadata:
     # Lemex uses verified prebuilt V8 artifacts; the upstream source-build
@@ -80,6 +84,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+      id-token: write
       actions: read
     environment:
       name: bazel
@@ -205,7 +210,7 @@ jobs:
             --build_metadata=COMMIT_SHA=$(git rev-parse HEAD)
           )
 
-          ./.github/scripts/run_bazel_with_buildbuddy.py \
+          ./.github/scripts/run_bazel.py \
             --noexperimental_remote_repo_contents_cache \
             "${bazel_args[@]}" \
             "--config=${{ matrix.bazel_config }}"
@@ -400,6 +405,11 @@ jobs:
 
       - name: Build upstream rusty_v8 sandbox release pair
         env:
+          # Stage ICU data for mksnapshot. Code mode registers its own copy at runtime.
+          GN_ARGS: >-
+            icu_use_data_file=true
+            icu_copy_icudata_to_root_build_dir=true
+            v8_depend_on_icu_data_file=true
           SCCACHE_IDLE_TIMEOUT: 0
           TARGET: ${{ matrix.target }}
           V8_FROM_SOURCE: "1"

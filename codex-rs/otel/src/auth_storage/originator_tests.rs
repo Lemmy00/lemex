@@ -9,7 +9,7 @@ use tokio::sync::Barrier;
 async fn concurrent_clients_keep_their_originator_across_awaits_and_blocking_work() {
     let barrier = Arc::new(Barrier::new(/*n*/ 3));
     let mut tasks = Vec::new();
-    for name in ["Codex Desktop", "codex_vscode", "private-client-name"] {
+    for name in ["Lemex Desktop", "codex_vscode", "private-client-name"] {
         let barrier = Arc::clone(&barrier);
         let originator = AuthStorageOriginator::from_client_name(name);
         tasks.push(tokio::spawn(originator.scope(async move {

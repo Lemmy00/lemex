@@ -28,6 +28,7 @@ use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalAction;
 use crate::tools::sandboxing::ExecApprovalRequirement;
 use crate::tools::sandboxing::SandboxAttempt;
+use crate::tools::sandboxing::SandboxOverride;
 use crate::tools::sandboxing::Sandboxable;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
@@ -177,13 +178,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest<'_>, UnifiedExecAttempt> for UnifiedExec
         ctx: &ToolCtx,
     ) -> Option<NetworkApprovalSpec> {
         let prepared = req.prepared;
-        let file_system_sandbox_policy = prepared
-            .turn_environment
-            .permission_profile()
-            .file_system_sandbox_policy();
         let sandbox_permissions = sandbox_permissions_preserving_denied_reads(
             prepared.permissions.sandbox_permissions,
-            &file_system_sandbox_policy,
+            prepared.turn_environment.has_denied_reads(),
         );
         // Explicit full escalation bypasses controller and attachment-owned network proxies.
         // Denied-read restrictions above can still require a sandboxed launch.
@@ -234,7 +231,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest<'_>, UnifiedExecAttempt> for UnifiedExec
         let (file_system_sandbox_policy, _) = attempt.permissions.to_runtime_permissions();
         let launch_sandbox_permissions = sandbox_permissions_preserving_denied_reads(
             prepared.permissions.sandbox_permissions,
-            &file_system_sandbox_policy,
+            file_system_sandbox_policy.has_denied_read_restrictions_for_convention(
+                prepared.turn_environment.executor_path_convention(),
+            ),
         );
         let managed_network = attempt.network_proxy(managed_network_for_sandbox_permissions(
             req.network.as_ref(),
@@ -300,7 +299,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest<'_>, UnifiedExecAttempt> for UnifiedExec
         } else {
             None
         };
-        let (mut env, managed_network_context, network_proxy_launch) = match managed_network {
+        let (mut env, prepared_route, network_proxy_launch) = match managed_network {
             Some(network) if environment_is_remote => {
                 let (mut launch, credential_masking) = remote_network_proxy_launch(
                     &prepared.turn_environment,
@@ -336,7 +335,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest<'_>, UnifiedExecAttempt> for UnifiedExec
                             )
                         })?);
                 }
-                (env, None, launch.proxy.enabled.then_some(launch))
+                (env, None, Some(launch))
             }
             Some(network) => {
                 let child_environment = snapshot_credential_context
@@ -575,12 +574,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest<'_>, UnifiedExecAttempt> for UnifiedExec
             prepared.permissions.additional_permissions.as_ref(),
             internal_permissions.as_ref(),
         );
-        let baseline_file_system = prepared
-            .turn_environment
-            .permission_profile()
-            .file_system_sandbox_policy();
-        let permissions = if baseline_file_system.has_denied_read_restrictions()
-            && attempt.exec_server_permissions.file_system_sandbox_policy() != baseline_file_system
+        let permissions = if attempt.sandbox_override
+            == SandboxOverride::EscalatedSandboxWithRestrictions
+            && attempt.exec_server_permissions != prepared.turn_environment.permission_profile()
         {
             permissions.with_filesystem_escalation()
         } else {
@@ -599,7 +595,8 @@ impl<'a> ToolRuntime<UnifiedExecRequest<'_>, UnifiedExecAttempt> for UnifiedExec
                     command,
                     prepared.cwd.clone(),
                     env,
-                    managed_network_context,
+                    prepared_route.map(|route| route.portable),
+                    network_proxy_launch,
                     additional_permissions.as_ref(),
                     options,
                 )
@@ -610,7 +607,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest<'_>, UnifiedExecAttempt> for UnifiedExec
                 args: args.to_vec(),
                 cwd: prepared.cwd.clone(),
                 env,
-                managed_network: managed_network_context,
+                managed_network: prepared_route,
                 additional_permissions,
             };
             attempt
@@ -630,7 +627,6 @@ impl<'a> ToolRuntime<UnifiedExecRequest<'_>, UnifiedExecAttempt> for UnifiedExec
                 ctx,
                 request,
                 managed_network,
-                network_proxy_launch,
                 req.exec_server_env_config.clone(),
                 req.shell_snapshot.clone(),
                 windows_sandbox_proxy_settings_mode,
@@ -745,6 +741,7 @@ mod tests {
                     ),
                     shell_environment_policy: Default::default(),
                     exec_policy: None,
+                    plugins: Default::default(),
                     mcp_policy: None,
                     network_policy: None,
                     selected_capability_roots: Vec::new(),

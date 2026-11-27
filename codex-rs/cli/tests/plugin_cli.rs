@@ -44,7 +44,7 @@ fn marketplace_list_row(marketplace_name: &str, root: &Path) -> String {
 }
 
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
-    let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+    let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?);
     cmd.env("LEMEX_HOME", codex_home);
     cmd.env("HOME", codex_home);
     Ok(cmd)
@@ -674,7 +674,7 @@ async fn assert_plugin_list_succeeds_when_stdout_closes_early(args: &[&str]) -> 
         .success();
     assert!(complete.get_output().stdout.len() > 1024 * 1024);
 
-    let mut child = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+    let mut child = Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?)
         .env("LEMEX_HOME", codex_home.path())
         .env("HOME", codex_home.path())
         .current_dir(codex_home.path())
@@ -1293,7 +1293,7 @@ impl RemoteMarketplaceFixture {
     }
 
     async fn run(&self, args: &[&str]) -> Result<Output> {
-        Ok(Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+        Ok(Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?)
             .current_dir(self.home.path())
             .env("LEMEX_HOME", self.home.path())
             .env("HOME", self.home.path())
@@ -1356,6 +1356,19 @@ async fn remote_plugin_listing_replaces_local_curated_catalog() -> Result<()> {
     PLUGIN                        STATUS              VERSION  SOURCE
     sample@openai-curated-remote  installed, enabled  1.2.3    b1234567-89ab-4cde-8f01-234567890abc
     ");
+
+    let config_path = fixture.home.path().join(CONFIG_TOML_FILE);
+    let mut config = std::fs::read_to_string(&config_path)?;
+    config.push_str(&format!("\n[plugins.\"{PLUGIN_KEY}\"]\nenabled = false\n"));
+    std::fs::write(config_path, config)?;
+    let mut expected: Value = serde_json::from_str(&listed)?;
+    expected["installed"][0]["enabled"] = json!(false);
+    let disabled = fixture
+        .success(&["plugin", "list", "--available", "--json"])
+        .await?;
+    assert_eq!(serde_json::from_str::<Value>(&disabled)?, expected);
+    let table = fixture.success(&["plugin", "list"]).await?;
+    assert!(table.contains("installed, disabled"), "{table}");
 
     fixture.server.reset().await;
     let listed = fixture

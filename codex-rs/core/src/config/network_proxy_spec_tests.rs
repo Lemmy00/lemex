@@ -28,10 +28,76 @@ fn domain_permissions(
 }
 
 #[tokio::test]
+async fn saved_grant_cannot_open_loopback_under_fixed_allowlist() -> anyhow::Result<()> {
+    let profile = PermissionProfile::workspace_write();
+    let spec = NetworkProxySpec::from_config_and_constraints(
+        NetworkProxyConfig {
+            proxy_url: "http://127.0.0.1:0".into(),
+            enable_socks5: false,
+            allow_upstream_proxy: false,
+            ..Default::default()
+        },
+        Some(NetworkConstraints {
+            enabled: Some(true),
+            managed_allowed_domains_only: Some(true),
+            allow_local_binding: Some(false),
+            domains: Some(domain_permissions([(
+                "127.0.0.1:*",
+                NetworkDomainPermissionToml::Allow,
+            )])),
+            ..Default::default()
+        }),
+        &profile,
+    )?;
+    let mut saved = Policy::empty();
+    saved.add_network_rule(
+        "127.0.0.1",
+        codex_execpolicy::NetworkRuleProtocol::Http,
+        Allow,
+        /*justification*/ None,
+    )?;
+    let spec = spec.with_exec_policy_network_rules(&saved)?;
+    assert_eq!(
+        spec.config.allowed_domains(),
+        Some(vec!["127.0.0.1:*".to_owned()])
+    );
+
+    core_test_support::skip_if_no_network!(Ok(()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let proxy = spec
+        .start_proxy(
+            &profile,
+            ManagedProxyRouting::DedicatedListeners,
+            DefaultFalse,
+            /*policy_decider*/ None,
+            /*blocked_request_observer*/ None,
+            /*enable_network_approval_flow*/ false,
+            NetworkProxyAuditMetadata::default(),
+        )
+        .await?;
+    let request = codex_http_client::HttpClientBuilder::new()
+        .build_direct()?
+        .get(format!("http://{}/", proxy.proxy().http_addr()))
+        .header(http::header::HOST, listener.local_addr()?.to_string())
+        .timeout(std::time::Duration::from_secs(5))
+        .send();
+    tokio::select! {
+        biased;
+        connection = listener.accept() => anyhow::bail!("loopback destination reached: {:?}", connection?.1),
+        response = request => {
+            let response = response?;
+            assert_eq!(response.status(), http::StatusCode::FORBIDDEN);
+            assert_eq!(response.json::<serde_json::Value>().await?["reason"], "not_allowed_local");
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn attachment_socket_grants_respect_configured_restrictions_at_remote_launch()
 -> anyhow::Result<()> {
     let profile = PermissionProfile::workspace_write();
-    let owner = EnvironmentNetworkPolicy::from_config(
+    let owner = environment_policy_from_config(
         &NetworkProxyConfig {
             dangerously_allow_all_unix_sockets: Some(true),
             ..Default::default()
@@ -264,7 +330,7 @@ fn environment_policy_replaces_soft_controller_allowlist_and_preserves_denials()
     owner.dangerously_allow_all_unix_sockets = Some(true);
     owner.allow_local_binding = Some(true);
     let owner_policy =
-        EnvironmentNetworkPolicy::from_config(&owner, /*managed_allowed_domains_only*/ false);
+        environment_policy_from_config(&owner, /*managed_allowed_domains_only*/ false);
     assert_eq!(
         validate_environment_network_policy(&owner_policy, &profile, Platform::Linux),
         Ok(())
@@ -321,7 +387,7 @@ fn environment_policy_replaces_soft_controller_allowlist_and_preserves_denials()
         .insert(0, "controller-review.example".to_string());
     assert_eq!(
         restricted.environment_policy(),
-        EnvironmentNetworkPolicy::from_config(&owner, /*managed_allowed_domains_only*/ false)
+        environment_policy_from_config(&owner, /*managed_allowed_domains_only*/ false)
     );
     let external = PermissionProfile::External {
         network: NetworkSandboxPolicy::Enabled,
@@ -350,7 +416,7 @@ fn environment_policy_replaces_soft_controller_allowlist_and_preserves_denials()
     assert!(compose(Some(&spec), &owner_policy, &external, &empty).is_err());
     owner.set_allowed_domains(vec!["*".to_string()]);
     let wildcard_policy =
-        EnvironmentNetworkPolicy::from_config(&owner, /*managed_allowed_domains_only*/ false);
+        environment_policy_from_config(&owner, /*managed_allowed_domains_only*/ false);
     assert!(compose(Some(&spec), &wildcard_policy, &profile, &empty).is_err());
     assert_eq!(
         validate_environment_network_policy(&wildcard_policy, &profile, Platform::Linux),
@@ -358,7 +424,7 @@ fn environment_policy_replaces_soft_controller_allowlist_and_preserves_denials()
     );
     owner.set_allowed_domains(vec!["[".to_string()]);
     let malformed_policy =
-        EnvironmentNetworkPolicy::from_config(&owner, /*managed_allowed_domains_only*/ false);
+        environment_policy_from_config(&owner, /*managed_allowed_domains_only*/ false);
     assert_eq!(
         validate_environment_network_policy(&malformed_policy, &profile, Platform::Linux),
         Err(EnvironmentNetworkConfigError)
@@ -701,10 +767,10 @@ fn requirements_denied_domains_are_a_baseline_for_default_mode() {
     let mut config = NetworkProxyConfig::default();
     config.set_denied_domains(vec!["blocked.example.com".to_string()]);
     let requirements = NetworkConstraints {
-        domains: Some(domain_permissions([(
-            "managed-blocked.example.com",
-            NetworkDomainPermissionToml::Deny,
-        )])),
+        domains: Some(domain_permissions([
+            ("2001:DB8::1", NetworkDomainPermissionToml::Allow),
+            ("2001:0db8::1", NetworkDomainPermissionToml::Deny),
+        ])),
         ..Default::default()
     };
 
@@ -718,13 +784,14 @@ fn requirements_denied_domains_are_a_baseline_for_default_mode() {
     assert_eq!(
         spec.config.denied_domains(),
         Some(vec![
-            "managed-blocked.example.com".to_string(),
+            "2001:DB8::1".to_string(),
+            "2001:0db8::1".to_string(),
             "blocked.example.com".to_string()
         ])
     );
     assert_eq!(
         spec.constraints.denied_domains,
-        Some(vec!["managed-blocked.example.com".to_string()])
+        Some(vec!["2001:0db8::1".to_string(), "2001:DB8::1".to_string()])
     );
     assert_eq!(spec.constraints.denylist_expansion_enabled, Some(true));
 }
@@ -865,8 +932,7 @@ async fn environment_local_binding_preserves_explicit_denials_and_inherits_omitt
                 ..Default::default()
             };
             owner_config.set_allowed_domains(vec!["example.com".to_string()]);
-            let owner =
-                EnvironmentNetworkPolicy::from_config(&owner_config, name == "managed_omitted");
+            let owner = environment_policy_from_config(&owner_config, name == "managed_omitted");
             let composed = NetworkProxySpec::for_environment(
                 controller.as_ref(),
                 &owner,

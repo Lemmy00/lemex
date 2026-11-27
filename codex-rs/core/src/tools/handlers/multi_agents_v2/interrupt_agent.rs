@@ -1,6 +1,7 @@
 use super::*;
 use crate::agent::api::AgentTarget;
 use crate::tools::handlers::multi_agents_spec::create_interrupt_agent_tool_v2;
+use codex_otel::SubagentStopAction;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_tools::ToolSpec;
 
@@ -15,10 +16,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
         create_interrupt_agent_tool_v2()
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(async move {
             let result = handle_interrupt_agent(invocation).await;
 
@@ -53,6 +51,13 @@ async fn handle_interrupt_agent(
     let agent_path = snapshot.metadata().agent_path.clone().ok_or_else(|| {
         FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
     })?;
+    turn.session_telemetry.record_multi_agent_stop_accepted(
+        session.session_id(),
+        agent_id,
+        &call_id,
+        SubagentStopAction::Interrupt,
+        snapshot.status(),
+    );
     let previous_status = snapshot.status().cloned().unwrap_or(AgentStatus::NotFound);
     emit_sub_agent_activity(
         &session,
@@ -60,7 +65,7 @@ async fn handle_interrupt_agent(
         SubAgentActivityItem {
             model: None,
             reasoning_effort: None,
-            id: call_id,
+            id: call_id.into(),
             agent_thread_id: agent_id,
             agent_path,
             kind: SubAgentActivityKind::Interrupted,
@@ -101,7 +106,7 @@ impl ToolOutput for InterruptAgentResult {
         tool_output_response_item(call_id, payload, self, Some(true), "interrupt_agent")
     }
 
-    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+    fn code_mode_result(&self, _payload: &ToolPayload) -> CodeModeToolResult {
         tool_output_code_mode_result(self, "interrupt_agent")
     }
 }

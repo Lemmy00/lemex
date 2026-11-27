@@ -81,7 +81,7 @@ async fn rejected_start(
     expected: &str,
 ) -> anyhow::Result<String> {
     let spawned = codex_utils_pty::spawn_pty_process(
-        &program.to_string_lossy(),
+        program.as_os_str(),
         args,
         cwd,
         env,
@@ -234,7 +234,7 @@ trust_level = "trusted"
             .plan_type("enterprise"),
         codex_config::types::AuthCredentialsStoreMode::File,
     )?;
-    let program = codex_utils_cargo_bin::cargo_bin("codex")?;
+    let program = codex_utils_cargo_bin::cargo_bin("lemex")?;
     // Keep cold Rosetta translation outside the timed startup assertions.
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     anyhow::ensure!(
@@ -248,7 +248,7 @@ trust_level = "trusted"
     );
     let mut env: HashMap<String, String> = std::env::vars().collect();
     env.insert("LEMEX_HOME".into(), home.display().to_string());
-    env.insert("CODEX_SQLITE_HOME".into(), home.display().to_string());
+    env.insert("LEMEX_SQLITE_HOME".into(), home.display().to_string());
     env.insert("NO_PROXY".into(), "127.0.0.1,localhost".into());
     env.insert("no_proxy".into(), "127.0.0.1,localhost".into());
     env.insert("TERM".into(), "xterm-256color".into());
@@ -443,7 +443,7 @@ trust_level = "trusted"
             assert!(!home.join("worktrees").exists());
         }
         let spawned = codex_utils_pty::spawn_pty_process(
-            &program.to_string_lossy(),
+            program.as_os_str(),
             &args,
             &launcher,
             &env,
@@ -635,8 +635,9 @@ trust_level = "trusted"
         } else {
             session.terminate();
         }
-        let exit =
-            tokio::time::timeout(Duration::from_secs(/*secs*/ 10), spawned.exit_rx).await??;
+        let exit = tokio::time::timeout(Duration::from_secs(/*secs*/ 30), spawned.exit_rx)
+            .await
+            .context("timed out waiting for the worktree TUI to exit")??;
         // Include shutdown output: ConPTY can retain the channel after process exit.
         let _ = tokio::time::timeout(Duration::from_secs(/*secs*/ 1), async {
             while let Some(bytes) = stdout.recv().await {

@@ -330,6 +330,7 @@ impl HistoryCell for UserHistoryCell {
             source.right_reserve = 1;
             source.copy_as_prose |= copy_as_prose;
         }
+        crate::terminal_hyperlinks::bidi::prepare_message(&mut lines);
         lines
     }
 
@@ -522,7 +523,8 @@ impl AgentMessageCell {
         }
     }
 
-    pub(crate) fn new_hyperlink_lines(lines: Vec<HyperlinkLine>, is_first_line: bool) -> Self {
+    pub(crate) fn new_hyperlink_lines(mut lines: Vec<HyperlinkLine>, is_first_line: bool) -> Self {
+        crate::terminal_hyperlinks::bidi::prepare_message(&mut lines);
         Self {
             lines,
             is_first_line,
@@ -570,6 +572,24 @@ impl HistoryCell for AgentMessageCell {
     }
 }
 
+/// An unfinished Cloud reply's position before it has any visible text.
+#[derive(Debug)]
+pub(crate) struct PendingAgentMessageCell(pub(crate) (String, String));
+
+impl HistoryCell for PendingAgentMessageCell {
+    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        Vec::new()
+    }
+
+    fn raw_lines(&self) -> Vec<Line<'static>> {
+        Vec::new()
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        0
+    }
+}
+
 /// A consolidated agent message cell that stores raw markdown source and re-renders from it.
 ///
 /// After a stream finalizes, the `ConsolidateAgentMessage` handler in `App`
@@ -586,7 +606,7 @@ impl HistoryCell for AgentMessageCell {
 /// because resolving their local file links depends on filesystem state that can change later.
 #[derive(Debug)]
 pub(crate) struct AgentMarkdownCell {
-    /// Identifies an interrupted reply that can still receive its authoritative completion.
+    /// Reply identity used for completion replacement and corrected copy ordering.
     pub(crate) interrupted_item: Option<(String, String)>,
     pub(crate) phase: Option<codex_protocol::models::MessagePhase>,
     markdown_source: String,
@@ -743,7 +763,9 @@ impl AgentMarkdownCell {
                     markdown,
                 )
             };
-            normalize_whitespace_only_hyperlink_lines(lines)
+            let mut lines = normalize_whitespace_only_hyperlink_lines(lines);
+            crate::terminal_hyperlinks::bidi::prepare_message(&mut lines);
+            lines
         };
 
         if let Some(rendered_lines) = &self.rendered_lines {
@@ -807,7 +829,8 @@ impl PartialEq for StreamingAgentTailCell {
 }
 
 impl StreamingAgentTailCell {
-    pub(crate) fn new(lines: Vec<HyperlinkLine>, is_first_line: bool) -> Self {
+    pub(crate) fn new(mut lines: Vec<HyperlinkLine>, is_first_line: bool) -> Self {
+        crate::terminal_hyperlinks::bidi::prepare_message(&mut lines);
         Self {
             lines,
             is_first_line,

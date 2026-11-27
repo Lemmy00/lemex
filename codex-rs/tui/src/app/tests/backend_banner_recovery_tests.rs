@@ -107,6 +107,7 @@ async fn backend_banner_account_changes_invalidate_pending_recovery() -> Result<
         codex_app_server_client::AppServerEvent::ServerNotification(Box::new(
             ServerNotification::AccountUpdated(
                 codex_app_server_protocol::AccountUpdatedNotification {
+                    reason: None,
                     auth_mode: None,
                     plan_type: None,
                 },
@@ -167,3 +168,36 @@ fn backend_banner_recovery_coalesces_until_newer_epoch_can_be_read() {
         RateLimitRefreshOutcome::Apply
     );
 }
+
+pub(super) fn mock_account_usage(used: u32) -> Mock {
+    Mock::given(method("GET"))
+        .and(path("/api/codex/usage"))
+        .respond_with(ResponseTemplate::new(/*s*/ 200).set_body_json(json!({
+            "account_id": "workspace-a", "user_id": "user-a", "plan_type": "plus",
+            "rate_limit": {"allowed": true, "limit_reached": false,
+                "primary_window": {"used_percent": used, "limit_window_seconds": 18000,
+                    "reset_after_seconds": 1800, "reset_at": 2000000000}},
+            "rate_limit_reset_credits": {"available_count": 1}
+        })))
+}
+
+pub(super) async fn next_rate_limits_loaded(
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+) -> Result<AppEvent> {
+    Ok(
+        tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 10), async {
+            loop {
+                let event = events.recv().await.expect("app event channel");
+                if matches!(event, AppEvent::RateLimitsLoaded { .. }) {
+                    break event;
+                }
+            }
+        })
+        .await?,
+    )
+}
+
+use wiremock::Mock;
+use wiremock::ResponseTemplate;
+use wiremock::matchers::method;
+use wiremock::matchers::path;

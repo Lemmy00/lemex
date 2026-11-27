@@ -20,7 +20,14 @@ use crate::session::tests::make_session_and_context;
 use crate::tasks::InterruptedTurnHistoryMarker;
 use crate::tasks::interrupted_turn_history_marker;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
+use codex_config::CloudConfigBundleLoader;
+use codex_config::CloudConfigBundlePolicy;
+use codex_config::CloudConfigBundleSnapshot;
 use codex_config::ConfigLayerStack;
+use codex_config::LoaderOverrides;
+use codex_config::loader::load_guardian_policy_snapshot;
+use codex_config::test_support::CloudConfigBundleFixture;
+use codex_exec_server::LOCAL_FS;
 use codex_execpolicy::Decision;
 use codex_execpolicy::NetworkRuleProtocol;
 use codex_extension_api::SessionIsolation;
@@ -57,14 +64,15 @@ use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsage;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
-use codex_protocol::user_input::UserInput;
 use codex_thread_store::InMemoryThreadStore;
+use codex_user_input::ResolvedUserInput;
 use codex_utils_path_uri::PathUri;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::responses::mount_models_once;
 use core_test_support::responses::strip_response_item_ids_from_json;
 use pretty_assertions::assert_eq;
+use std::collections::HashMap;
 use std::time::Duration;
 use tempfile::tempdir;
 use wiremock::MockServer;
@@ -543,7 +551,7 @@ async fn thread_id_generator_applies_to_roots_children_and_forks() {
         .control(root.thread.session.session_id())
         .spawn_agent_with_metadata(
             config.clone(),
-            vec![UserInput::Text {
+            vec![ResolvedUserInput::Text {
                 text: "child task".to_string(),
                 text_elements: Vec::new(),
             }],
@@ -724,6 +732,7 @@ async fn child_session_inherits_resumed_parent_auth(host_child: bool) {
                 control.into(),
                 parent.thread_id,
                 crate::agent::host::PreparedChildInheritance {
+                    spawn_service_tier: None,
                     instructions: parent.thread.session.inherited_instructions().await,
                     exec_policy: None,
                     originator: parent.thread.session.originator().await,
@@ -739,6 +748,7 @@ async fn child_session_inherits_resumed_parent_auth(host_child: bool) {
                 control,
                 Some(parent.thread_id),
                 /*inherited_exec_policy*/ None,
+                /*spawn_service_tier*/ None,
             )
             .await
     }
@@ -890,12 +900,15 @@ fn assistant_msg(text: &str) -> ResponseItem {
 }
 
 fn contextual_user_interrupted_marker() -> ResponseItem {
-    interrupted_turn_history_marker(InterruptedTurnHistoryMarker::ContextualUser)
-        .expect("contextual-user interrupted marker should be enabled")
+    interrupted_turn_history_marker(
+        InterruptedTurnHistoryMarker::ContextualUser,
+        /*cause*/ None,
+    )
+    .expect("contextual-user interrupted marker should be enabled")
 }
 
 fn developer_interrupted_marker() -> ResponseItem {
-    interrupted_turn_history_marker(InterruptedTurnHistoryMarker::Developer)
+    interrupted_turn_history_marker(InterruptedTurnHistoryMarker::Developer, /*cause*/ None)
         .expect("developer interrupted marker should be enabled")
 }
 
@@ -954,7 +967,7 @@ fn effective_originator_prefers_thread_scoped_sources_before_env_originator() {
         assert_eq!(
             effective_originator_value(
                 metrics_service_name,
-                Some("Codex Desktop".to_string()),
+                Some("Lemex Desktop".to_string()),
                 persisted_originator.map(str::to_string),
                 inherited_originator.map(str::to_string),
                 "codex_cli_rs".to_string(),
@@ -1280,6 +1293,11 @@ async fn code_mode_session_provider_is_shared_across_threads() {
 
 #[tokio::test]
 async fn mcp_invalidation_refreshes_threads_that_are_still_starting() {
+    const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
+    const POLICY: &str = "Use the refreshed startup policy.";
+    const LOCAL_POLICY: &str = "Use the latest local requirements.";
+    const REPLACEMENT_POLICY: &str = "Use the current managed bundle.";
+    const CHILD_MODEL: &str = "gpt-5.4";
     struct BlockingThreadStartup {
         entered: tokio::sync::Notify,
         release: tokio::sync::Notify,
@@ -1321,12 +1339,59 @@ async fn mcp_invalidation_refreshes_threads_that_are_still_starting() {
     let temp_dir = tempdir().expect("tempdir");
     let mut config = test_config().await;
     // Resolve the model locally before waiting for the MCP lifecycle hook.
+    config.model = Some("gpt-5.5".to_owned());
     config.model_catalog = Some(
         codex_models_manager::bundled_models_response().expect("bundled model catalog should load"),
     );
     config.codex_home = temp_dir.path().join("codex-home").abs();
     config.cwd = config.codex_home.abs();
     std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let policy = CloudConfigBundlePolicy::default();
+    let mut cloud = CloudConfigBundleSnapshot {
+        bundle: Ok(Some(
+            CloudConfigBundleFixture::enterprise_requirement(format!(
+                "guardian_policy_config = {POLICY:?}\nallowed_approvals_reviewers = ['user']\n[auto_review]\nrequired_on_models = [{CHILD_MODEL:?}]"
+            ))
+            .into_bundle(),
+        )),
+        config_server: None,
+        binding: None,
+    };
+    policy.publish_snapshot(&mut cloud);
+    struct TestPolicyLoader {
+        home: AbsolutePathBuf,
+        overrides: LoaderOverrides,
+        cloud: tokio::sync::watch::Receiver<CloudConfigBundleSnapshot>,
+    }
+    impl GuardianPolicyLoader for TestPolicyLoader {
+        fn load_guardian_policy_snapshot(
+            &self,
+            revision: u64,
+        ) -> BoxFuture<'_, std::io::Result<codex_config::GuardianPolicySnapshot>> {
+            Box::pin(async move {
+                let cloud = CloudConfigBundleLoader::from_snapshot(self.cloud.borrow().clone());
+                load_guardian_policy_snapshot(
+                    LOCAL_FS.as_ref(),
+                    self.home.as_path(),
+                    &self.overrides,
+                    &cloud,
+                    revision,
+                )
+                .await
+            })
+        }
+    }
+    let (cloud_tx, cloud_rx) = tokio::sync::watch::channel(cloud);
+    let requirements = config.codex_home.join("requirements.toml").to_path_buf();
+    let loader = Arc::new(TestPolicyLoader {
+        home: config.codex_home.clone(),
+        overrides: LoaderOverrides {
+            system_requirements_path: Some(requirements.clone()),
+            ..LoaderOverrides::without_managed_config_for_tests()
+        },
+        cloud: cloud_rx,
+    });
 
     let observer = Arc::new(BlockingThreadStartup {
         entered: tokio::sync::Notify::new(),
@@ -1338,7 +1403,7 @@ async fn mcp_invalidation_refreshes_threads_that_are_still_starting() {
     extensions.thread_lifecycle_contributor(observer.clone());
     extensions.mcp_server_contributor(observer.clone());
     let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
-    let manager = Arc::new(ThreadManager::new(
+    let manager = ThreadManager::new(
         &config,
         crate::build_startup_models(
             &config,
@@ -1356,28 +1421,106 @@ async fn mcp_invalidation_refreshes_threads_that_are_still_starting() {
         /*agent_graph_store*/ None,
         /*attestation_provider*/ None,
         /*external_time_provider*/ None,
-    ));
+    );
+    let manager = Arc::new(manager.with_guardian_policy_loader(loader));
     let starting = tokio::spawn({
         let manager = Arc::clone(&manager);
         async move { manager.start_thread(StartThreadOptions::new(config)).await }
     });
 
-    tokio::time::timeout(Duration::from_secs(5), observer.entered.notified())
+    tokio::time::timeout(STARTUP_TIMEOUT, observer.entered.notified())
         .await
         .expect("thread should enter its startup lifecycle");
     assert!(manager.list_thread_ids().await.is_empty());
+    std::fs::write(
+        &requirements,
+        format!("guardian_extra_policy = {LOCAL_POLICY:?}"),
+    )
+    .unwrap();
+    manager
+        .refresh_guardian_policy()
+        .await
+        .expect("publish Guardian policy while startup is paused");
     manager.invalidate_mcp_runtimes().await;
     observer.release.notify_one();
-    starting
+    let started = tokio::time::timeout(STARTUP_TIMEOUT, starting)
         .await
+        .expect("thread startup must terminate")
         .expect("thread startup task should finish")
         .expect("thread should start");
-    tokio::time::timeout(Duration::from_secs(5), observer.refreshed.notified())
+    let inherited = started.thread.config().await;
+    assert_eq!(
+        inherited.guardian_extra_policy.as_deref(),
+        Some(LOCAL_POLICY)
+    );
+    tokio::time::timeout(STARTUP_TIMEOUT, observer.refreshed.notified())
         .await
         .expect("invalidation during startup should refresh the newly published thread");
-    let shutdown = manager
-        .shutdown_all_threads_bounded(Duration::from_secs(5))
-        .await;
+
+    // A starting thread cannot register after its Guardian source changes.
+    let bundle = CloudConfigBundleFixture::enterprise_requirement(format!(
+        "guardian_policy_config = {REPLACEMENT_POLICY:?}\nallowed_sandbox_modes = ['read-only']"
+    ))
+    .into_bundle();
+    let startup_id = ThreadId::new();
+    let parent_id = started.thread_id;
+    let starting = tokio::spawn({
+        let manager = Arc::clone(&manager);
+        let mut options = StartThreadOptions::new(inherited.as_ref().clone());
+        options.reserved_thread_id = Some(startup_id);
+        async move { manager.start_thread(options).await }
+    });
+    tokio::time::timeout(STARTUP_TIMEOUT, observer.entered.notified())
+        .await
+        .expect("thread should pause before registration");
+    policy.observe_remote_bundle(&bundle);
+    observer.release.notify_one();
+    let result = tokio::time::timeout(STARTUP_TIMEOUT, starting)
+        .await
+        .expect("rejected startup must terminate")
+        .expect("startup task should finish");
+    let Err(error) = result else {
+        panic!("startup should reject the changed Guardian source");
+    };
+    assert!(matches!(
+        error.details(),
+        CodexErrorDetails::InvalidRequest(message)
+            if message.contains("Guardian policy changed during startup")
+    ));
+    assert!(!manager.list_thread_ids().await.contains(&startup_id));
+
+    // The child model was blocked by the old policy. Only the background bundle changed.
+    cloud_tx.send_modify(|cloud| {
+        cloud.bundle = Ok(Some(bundle));
+        policy.publish_snapshot(cloud);
+    });
+    let child_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: parent_id,
+        depth: 1,
+        agent_nickname: None,
+        agent_role: None,
+        agent_path: None,
+    });
+    for source in [None, Some(child_source)] {
+        let mut options = StartThreadOptions::new(inherited.as_ref().clone());
+        options.config.model = Some(CHILD_MODEL.to_owned());
+        options.session_source = source;
+        observer.release.notify_one();
+        let recovered = tokio::time::timeout(STARTUP_TIMEOUT, manager.start_thread(options))
+            .await
+            .expect("inherited startup must terminate")
+            .expect("start with current Guardian policy");
+        assert_eq!(
+            recovered
+                .thread
+                .config()
+                .await
+                .guardian_policy_config
+                .as_deref(),
+            Some(REPLACEMENT_POLICY),
+        );
+    }
+    let shutdown = manager.shutdown_all_threads_bounded(STARTUP_TIMEOUT).await;
     assert!(shutdown.timed_out.is_empty());
 }
 
@@ -1574,7 +1717,8 @@ async fn spawn_internal_session_preserves_parent_lineage_without_forking_history
     let mut config = test_config().await;
     config.rollout_budget = Some(RolloutBudgetConfig {
         enforce_limit: true,
-        limit_tokens: 100,
+        limit_budget: 100.0,
+        reminder_at_context_start: true,
         reminder_at_remaining_tokens: vec![75, 50, 25],
         sampling_token_weight: 1.0,
         prefill_token_weight: 1.0,
@@ -1685,6 +1829,7 @@ async fn spawn_internal_session_preserves_parent_lineage_without_forking_history
             exec_policy: Some(codex_execpolicy::RequirementsExecPolicy::new(
                 codex_execpolicy::Policy::empty(),
             )),
+            plugins: Default::default(),
             mcp_policy: None,
             network_policy: None,
             selected_capability_roots: Vec::new(),
@@ -1723,10 +1868,13 @@ async fn spawn_internal_session_preserves_parent_lineage_without_forking_history
         .session
         .services
         .agent_control
-        .record_usage(TokenUsage {
-            output_tokens: 25,
-            ..Default::default()
-        })
+        .record_usage(
+            Some(TokenUsage {
+                output_tokens: 25,
+                ..Default::default()
+            }),
+            /*hook_units*/ 0.0,
+        )
         .await
         .expect("record reviewer usage");
     let reminder = parent
@@ -1737,7 +1885,7 @@ async fn spawn_internal_session_preserves_parent_lineage_without_forking_history
         .pending_budget_reminder(parent.thread_id, "window")
         .await
         .expect("parent budget reminder");
-    assert_eq!(reminder.remaining_tokens, 75);
+    assert_eq!(reminder.remaining_units, 75.0);
     assert_eq!(reviewer_config.parent_thread_id, Some(parent.thread_id));
     assert_eq!(reviewer_config.forked_from_thread_id, None);
     assert_eq!(reviewer_config.originator, "codex_work_desktop");
@@ -1879,7 +2027,7 @@ async fn spawn_internal_session_preserves_parent_lineage_without_forking_history
 async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() {
     struct InitialDataRecorder {
         lifecycle_observed: Arc<std::sync::Mutex<Vec<(String, String)>>>,
-        mcp_observed: Arc<std::sync::Mutex<Vec<(String, SessionSource)>>>,
+        mcp_observed: Arc<std::sync::Mutex<Vec<(String, SessionSource, bool)>>>,
         mcp_loaded: Arc<std::sync::atomic::AtomicUsize>,
     }
 
@@ -1925,11 +2073,13 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
         ) -> codex_extension_api::ExtensionFuture<'a, Vec<codex_extension_api::SelectedPlugin<'a>>>
         {
             Box::pin(async move {
-                assert_eq!(
-                    context.selected_environments(),
-                    Some([].as_slice()),
-                    "thread MCP projection must preserve explicitly empty selections"
-                );
+                if context.thread_store().is_some() {
+                    assert_eq!(
+                        context.selected_environments(),
+                        Some([].as_slice()),
+                        "thread MCP projection must preserve explicitly empty selections"
+                    );
+                }
                 let thread_init = context
                     .thread_init()
                     .expect("initial MCP resolution should be thread-scoped");
@@ -1946,6 +2096,7 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
                             .session_source()
                             .expect("thread-scoped MCP resolution should identify its source")
                             .clone(),
+                        context.thread_store().is_some(),
                     ));
                 let mut server = codex_mcp::codex_apps_mcp_server_config(
                     "https://selected.invalid",
@@ -1956,7 +2107,8 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
                     &selected_root.location;
                 let source_environment_id = environment_id.clone();
                 server.environment_id = source_environment_id.clone();
-                server.enabled = false;
+                // Keep thread startup offline; host-only checks below never open connections.
+                server.enabled = context.thread_store().is_none();
                 let selected_root_id = selected_root.id;
                 let plugin_id = format!("plugin-{selected_root_id}");
                 let mcp_loaded = Arc::clone(&self.mcp_loaded);
@@ -1966,7 +2118,7 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
                     identity: codex_core_plugins::PluginIdentity::Local {
                         plugin_id: plugin_id.clone(),
                     },
-                    enabled: true,
+                    enabled: codex_extension_api::PluginEnablement::Enabled,
                     mcp: Box::pin(async move {
                         mcp_loaded.fetch_add(1, Ordering::Relaxed);
                         codex_extension_api::SelectedPluginContribution {
@@ -2062,26 +2214,16 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
         .expect("start second thread");
     let first_session = &first_thread.thread.session;
     let first_originator = first_session.originator().await;
+    let host_context = codex_extension_api::McpServerContributionContext::for_host(
+        &config,
+        Some(&first_session.services.mcp_thread_init),
+        Some(&first_originator),
+        Some(&SessionSource::Exec),
+    );
     let first_resolved = first_session
         .services
         .mcp_manager
-        .runtime_config_for_step(
-            &config,
-            &first_session.services.mcp_thread_init,
-            &first_session.services.thread_extension_data,
-            McpThreadIdentity {
-                auth_changed: false,
-                session_source: &SessionSource::Exec,
-                originator: &first_originator,
-                disabled_plugin_ids: &[],
-                environments: McpEnvironmentScope::Selected(
-                    &first_session.services.turn_environments.selections(),
-                ),
-            },
-            /*ready_selected_capability_roots*/ &[],
-            /*executor_capability_discovery*/ None,
-            /*executor_capability_discovery_v2*/ None,
-        )
+        .runtime_config(host_context)
         .await;
     let second_session = &second_thread.thread.session;
     let second_originator = second_session.originator().await;
@@ -2124,10 +2266,14 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner),
         vec![
-            ("selected-a".to_string(), SessionSource::Exec),
-            ("selected-b".to_string(), second_session_source.clone()),
-            ("selected-a".to_string(), SessionSource::Exec),
-            ("selected-b".to_string(), second_session_source),
+            ("selected-a".to_string(), SessionSource::Exec, true),
+            (
+                "selected-b".to_string(),
+                second_session_source.clone(),
+                true
+            ),
+            ("selected-a".to_string(), SessionSource::Exec, false),
+            ("selected-b".to_string(), second_session_source, true),
         ]
     );
     let selected_servers = |config: &codex_mcp::McpConfig| {
@@ -2138,7 +2284,7 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
             .collect::<std::collections::BTreeMap<_, _>>()
     };
     assert_eq!(
-        selected_servers(&first_resolved.config),
+        selected_servers(&first_resolved),
         std::collections::BTreeMap::from([("selected-a".to_string(), "env-a".to_string())])
     );
     assert_eq!(
@@ -2146,12 +2292,13 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
         std::collections::BTreeMap::from([("selected-b".to_string(), "env-b".to_string())])
     );
     for (config, name, source_environment_id) in [
-        (&first_resolved.config, "selected-a", "env-a"),
+        (&first_resolved, "selected-a", "env-a"),
         (&second_resolved.config, "selected-b", "env-b"),
     ] {
+        let key = codex_mcp::McpServerKey::in_environment(source_environment_id, name);
         let server = config
             .mcp_server_catalog
-            .server(name)
+            .server(&key)
             .expect("selected plugin server should be registered");
         let plugin_id = format!("plugin-{name}");
         let mut expected = codex_mcp::ResolvedMcpCatalog::builder();
@@ -2162,9 +2309,9 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
             source_environment_id,
             server.config().clone(),
         ));
-        assert_eq!(Some(server), expected.build().server(name));
+        assert_eq!(Some(server), expected.build().server(&key));
     }
-    let codex_apps_server = codex_mcp::configured_mcp_servers(&first_resolved.config)
+    let codex_apps_server = codex_mcp::configured_mcp_servers(&first_resolved)
         .remove(codex_mcp::CODEX_APPS_MCP_SERVER_NAME)
         .expect("Lemex Apps server should be configured");
     let codex_apps_headers = match codex_apps_server.transport {
@@ -2179,6 +2326,38 @@ async fn start_thread_seeds_extension_data_for_mcp_and_lifecycle_contributors() 
             .get("originator"),
         Some(&"codex_work_desktop".to_string())
     );
+    // A supplied plugin denial or unavailable environment must also restrict host projections.
+    let disabled_plugins = ["plugin-selected-a".to_string()];
+    let pending_environments = [codex_protocol::protocol::TurnEnvironmentSelection {
+        environment_id: "env-a".to_string(),
+        cwd: PathUri::parse("file:///plugins").expect("environment cwd"),
+        workspace_roots: vec![],
+        config: EnvironmentConfigState::Pending,
+        selected_capability_roots: Default::default(),
+    }];
+    for (context, enabled) in [
+        (host_context, true),
+        (
+            host_context.with_disabled_plugin_ids(&disabled_plugins),
+            false,
+        ),
+        (
+            host_context.with_selected_environments(&pending_environments),
+            false,
+        ),
+    ] {
+        let resolved = first_session
+            .services
+            .mcp_manager
+            .runtime_config(context)
+            .await;
+        assert_eq!(
+            codex_mcp::configured_mcp_servers(&resolved)
+                .get("selected-a")
+                .is_some_and(|server| server.enabled),
+            enabled,
+        );
+    }
     for (policy, disabled_plugin_ids, selected_enabled, expected_mcp_loads) in [
         ("", vec!["plugin-selected-a".to_string()], false, 1),
         ("", vec![], true, 1),
@@ -3306,6 +3485,7 @@ async fn new_uses_active_provider_for_model_refresh(with_cache: bool) {
                     .control(started.thread.session.session_id()),
                 Some(started.thread_id),
                 /*inherited_exec_policy*/ None,
+                /*spawn_service_tier*/ None,
             )
             .await
             .expect("spawn child with the parent's provider headers");
@@ -3548,7 +3728,7 @@ fn multi_agent_v2_interrupted_marker_uses_developer_input_message() {
             content: vec![ContentItem::InputText {
                 text: format!(
                     "<turn_aborted>\n{}\n</turn_aborted>",
-                    crate::context::TurnAborted::INTERRUPTED_DEVELOPER_GUIDANCE
+                    crate::context::TurnAborted::INTERRUPTED_NEUTRAL_GUIDANCE
                 ),
             }],
             phase: None,
@@ -3832,7 +4012,7 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
     assert!(rollout_items.iter().any(|item| {
         matches!(
             item,
-            RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
+            RolloutItem::EventMsg { event: EventMsg::TurnAborted(TurnAbortedEvent {
                 root_turn_id: None,
                 turn_id: Some(turn_id),
                 started_at: None,
@@ -3840,7 +4020,7 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
                 error: None,
             completed_at: None,
             duration_ms: None,
-            })) if turn_id == "turn-explicit"
+            }), .. } if turn_id == "turn-explicit"
         )
     }));
 }
@@ -3974,10 +4154,13 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
             .filter(|item| {
                 matches!(
                     item,
-                    RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
-                        reason: TurnAbortReason::Interrupted,
+                    RolloutItem::EventMsg {
+                        event: EventMsg::TurnAborted(TurnAbortedEvent {
+                            reason: TurnAbortReason::Interrupted,
+                            ..
+                        }),
                         ..
-                    }))
+                    }
                 )
             })
             .count(),

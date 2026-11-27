@@ -192,8 +192,19 @@ impl ThreadEventStore {
             .map(|prefix| self.buffer.split_off(prefix.min(self.buffer.len())));
         self.buffer.retain_mut(Self::event_survives_session_refresh);
         self.buffered_agent_message_delta_bytes = 0;
-        for event in tail.into_iter().flatten() {
-            self.push_buffered_event(event);
+        if let Some(tail) = tail {
+            // Status broadcasts can predate the subscription. Only replay the latest
+            // status against the snapshot, even if we missed the newer TurnStarted.
+            let is_status = |event: &ThreadBufferedEvent| {
+                matches!(event, ThreadBufferedEvent::Notification(n)
+                    if matches!(n.as_ref(), ServerNotification::ThreadStatusChanged(_)))
+            };
+            let latest = tail.iter().rposition(is_status);
+            for (index, event) in tail.into_iter().enumerate() {
+                if Some(index) == latest || !is_status(&event) {
+                    self.push_buffered_event(event);
+                }
+            }
         }
     }
 
@@ -331,12 +342,12 @@ impl ThreadEventStore {
             _ => {}
         }
 
-        // These notifications are either handled before routing or ignored by ChatWidget on
-        // replay. In particular, raw response items and realtime audio can carry large payloads,
-        // so cloning them into every thread's replay buffer only retains data the TUI cannot use.
+        // These notifications add no replayable content. Turn diffs only refresh the status
+        // line, which replay_thread_snapshot already refreshes after rebuilding the widget.
         if matches!(
             notification.as_ref(),
             ServerNotification::RawResponseItemCompleted(_)
+                | ServerNotification::TurnDiffUpdated(_)
                 | ServerNotification::FileChangePatchUpdated(_)
                 | ServerNotification::ServerRequestResolved(_)
                 | ServerNotification::McpToolCallProgress(_)
@@ -651,9 +662,13 @@ pub(super) struct ThreadEventChannel {
     /// Set on backend handoff so a retained channel is detached through its owning session.
     pub(super) backend_id: Option<crate::backend_id::BackendId>,
     pub(super) sender: mpsc::Sender<ThreadBufferedEvent>,
-    pub(super) receiver: Option<mpsc::Receiver<ThreadBufferedEvent>>,
+    pub(super) receiver: mpsc::Receiver<ThreadBufferedEvent>,
     pub(super) store: Arc<Mutex<ThreadEventStore>>,
+    /// Live Attach restored delivery without reading the history from the gap.
+    pub(super) history_may_be_incomplete: bool,
+    pub(super) recovered_cloud_history: bool,
     attachment: ThreadEventAttachment,
+    pub(super) archived: bool,
 }
 
 impl ThreadEventChannel {
@@ -661,22 +676,28 @@ impl ThreadEventChannel {
         let (sender, receiver) = mpsc::channel(capacity);
         Self {
             sender,
-            receiver: Some(receiver),
+            receiver,
             store: Arc::new(Mutex::new(ThreadEventStore::new(capacity))),
             backend_id: None,
+            history_may_be_incomplete: false,
+            recovered_cloud_history: false,
             attachment: ThreadEventAttachment::Live,
+            archived: false,
         }
     }
 
     pub(super) fn mark_live(&mut self) {
+        self.recovered_cloud_history = false;
         self.attachment = ThreadEventAttachment::Live;
     }
 
     pub(super) fn mark_replay_only(&mut self) {
+        self.recovered_cloud_history = false;
         self.attachment = ThreadEventAttachment::ReplayOnly;
     }
 
     pub(super) fn mark_external_writer(&mut self) {
+        self.recovered_cloud_history = false;
         self.attachment = ThreadEventAttachment::ExternalWriter;
     }
 
@@ -693,12 +714,15 @@ impl ThreadEventChannel {
         let (sender, receiver) = mpsc::channel(capacity);
         Self {
             sender,
-            receiver: Some(receiver),
+            receiver,
             store: Arc::new(Mutex::new(ThreadEventStore::new_with_session(
                 capacity, session, turns,
             ))),
             backend_id: None,
+            history_may_be_incomplete: false,
+            recovered_cloud_history: false,
             attachment: ThreadEventAttachment::Live,
+            archived: false,
         }
     }
 }
@@ -731,6 +755,7 @@ mod tests {
     use codex_app_server_protocol::ThreadRealtimeAudioChunk;
     use codex_app_server_protocol::ThreadRealtimeOutputAudioDeltaNotification;
     use codex_app_server_protocol::TurnCompletedNotification;
+    use codex_app_server_protocol::TurnDiffUpdatedNotification;
     use codex_app_server_protocol::TurnStartedNotification;
     use codex_app_server_protocol::UserInput;
     use codex_config::types::ApprovalsReviewer;
@@ -740,6 +765,9 @@ mod tests {
 
     fn test_thread_session(thread_id: ThreadId, cwd: PathBuf) -> ThreadSessionState {
         ThreadSessionState {
+            read_only_history: false,
+            thread_settings_confirmed: true,
+            primary_environment_cwd: None,
             daybreak_enabled: false,
             windows_sandbox_host: crate::app::WindowsSandboxHost::Local,
             thread_id,
@@ -753,7 +781,7 @@ mod tests {
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
             active_permission_profile: None,
-            cwd: cwd.abs(),
+            cwd: cwd.abs().into(),
             runtime_workspace_roots: Vec::new(),
             instruction_source_paths: Vec::new(),
             reasoning_effort: None,
@@ -959,6 +987,38 @@ mod tests {
         let mut refreshed_store = ThreadEventStore::new(/*capacity*/ 8);
         refreshed_store.set_session(session, turns);
         assert_eq!(refreshed_store.active_turn_id(), Some("turn-2"));
+
+        let status = |status| {
+            ServerNotification::ThreadStatusChanged(
+                codex_app_server_protocol::ThreadStatusChangedNotification {
+                    thread_id: thread_id.to_string(),
+                    status,
+                },
+            )
+        };
+        let idle = status(codex_app_server_protocol::ThreadStatus::Idle);
+        // Before subscription we can see both broadcasts but miss turn-2's start.
+        refreshed_store.attachment_prefix = Some(0);
+        refreshed_store.push_notification(idle.clone());
+        refreshed_store.push_notification(status(
+            codex_app_server_protocol::ThreadStatus::Active {
+                active_flags: Vec::new(),
+            },
+        ));
+        refreshed_store.set_turns(store.turns.clone());
+        refreshed_store.rebase_buffer_after_session_refresh();
+        assert_eq!(refreshed_store.active_turn_id(), Some("turn-2"));
+        assert_eq!(refreshed_store.snapshot().events.len(), 1);
+
+        // Idle can also arrive after subscription before the history is installed.
+        refreshed_store.attachment_prefix = Some(0);
+        refreshed_store.push_notification(idle.clone());
+        refreshed_store.set_turns(store.turns);
+        refreshed_store.rebase_buffer_after_session_refresh();
+        assert_eq!(refreshed_store.active_turn_id(), None);
+        refreshed_store.push_notification(turn_started_notification(thread_id, "turn-3"));
+        refreshed_store.push_notification(idle);
+        assert_eq!(refreshed_store.active_turn_id(), Some("turn-3"));
     }
 
     #[test]
@@ -986,6 +1046,13 @@ mod tests {
         let large_payload = "x".repeat(1024 * 1024);
 
         for _ in 0..32 {
+            store.push_notification_ref(&ServerNotification::TurnDiffUpdated(
+                TurnDiffUpdatedNotification {
+                    thread_id: thread_id.to_string(),
+                    turn_id: "turn-1".to_string(),
+                    diff: large_payload.clone(),
+                },
+            ));
             store.push_notification_ref(&ServerNotification::ThreadAttachmentUpdated(
                 ThreadAttachmentUpdatedNotification {
                     thread_id: thread_id.to_string(),
@@ -1107,9 +1174,11 @@ mod tests {
         let thread_id = ThreadId::new();
         let notification = ServerNotification::McpServerStatusUpdated(
             codex_app_server_protocol::McpServerStatusUpdatedNotification {
+                environment_id: None,
                 thread_id: Some(thread_id.to_string()),
                 name: "sentry".to_string(),
                 status: codex_app_server_protocol::McpServerStartupState::Failed,
+                duration_ms: None,
                 error: Some("sentry is not logged in".to_string()),
                 failure_reason: None,
             },

@@ -12,6 +12,7 @@ mod client;
 mod diagnostics;
 mod install_lock;
 mod launch;
+mod update_policy;
 pub use launch::restart_with_features;
 pub use launch::start_with_features;
 pub use launch::start_with_features_classified;
@@ -1256,4 +1257,9 @@ pub fn maintain_stderr_log() -> Result<()> {
             .with_extension("stderr.log"),
     );
     Ok(())
+}
+
+/// Honor the managed policy when explicitly replacing the daemon from a local Lemex package.
+pub async fn ensure_updates_allowed() -> Result<()> {
+    update_policy::ensure_allowed(&Daemon::from_environment()?).await
 }

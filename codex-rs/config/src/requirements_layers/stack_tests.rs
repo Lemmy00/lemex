@@ -6,6 +6,7 @@ use super::compose_requirements_for_hostname_and_hook_directory;
 use super::compose_requirements_with_hostname_resolver;
 use crate::ConfigRequirementsToml;
 use crate::ConfigRequirementsWithSources;
+use crate::OtelHeadersHelperTargets;
 use crate::RequirementSource;
 use crate::Sourced;
 use codex_protocol::protocol::AskForApproval;
@@ -48,7 +49,16 @@ fn compose_with_hook_directory_field(
 }
 
 fn expected_requirements(contents: impl AsRef<str>) -> ConfigRequirementsToml {
-    toml::from_str(contents.as_ref()).expect("parse expected requirements TOML")
+    let mut expected: ConfigRequirementsToml =
+        toml::from_str(contents.as_ref()).expect("parse expected requirements TOML");
+    if let Some(shared) = expected
+        .permissions
+        .as_ref()
+        .and_then(|p| p.network.as_deref())
+    {
+        expected.network = Some(shared.clone());
+    }
+    expected
 }
 
 #[test]
@@ -444,6 +454,104 @@ tracestate = { shared = { tenant = "replacement", region = "us" }, lower = { ten
 }
 
 #[test]
+fn otel_managed_headers_follow_each_exporters_owning_layer() -> anyhow::Result<()> {
+    let dir = tempdir()?;
+    let system_command = if cfg!(windows) {
+        "C:/company/headers.exe"
+    } else {
+        "/opt/company/headers"
+    };
+    let mdm_command = if cfg!(windows) {
+        "C:/company/mdm-headers.exe"
+    } else {
+        "/opt/company/mdm-headers"
+    };
+    let system = RequirementsLayerEntry::from_toml(
+        RequirementSource::SystemRequirementsToml {
+            file: AbsolutePathBuf::try_from(dir.path().join("requirements.toml"))?,
+        },
+        r#"[otel]
+headers_helper = "$HELPER"
+exporter = { otlp-http = { endpoint = "https://collector.example/logs", protocol = "binary" } }
+trace_exporter = { otlp-http = { endpoint = "https://collector.example/traces", protocol = "binary" } }
+metrics_exporter = { otlp-http = { endpoint = "https://collector.example/metrics", protocol = "binary" } }
+"#.replace("$HELPER", system_command),
+    );
+    let cloud = layer(
+        "cloud",
+        "Cloud",
+        r#"[otel]
+trace_exporter = { otlp-http = { endpoint = "https://other.example/traces", protocol = "binary" } }
+"#,
+    );
+    let mdm = RequirementsLayerEntry::from_toml(
+        RequirementSource::MdmManagedPreferences {
+            domain: "com.openai.codex".into(),
+            key: "requirements".into(),
+        },
+        r#"[otel]
+headers_helper = "$HELPER"
+metrics_exporter = { otlp-http = { endpoint = "https://mdm.example/metrics", protocol = "binary" } }
+exporter = { otlp-http = { endpoint = "", protocol = "binary" } }
+"#
+        .replace("$HELPER", mdm_command),
+    );
+
+    for (layers, command, logs, traces, metrics) in [
+        (vec![system.clone()], system_command, true, true, true),
+        (
+            vec![system.clone(), cloud.clone()],
+            system_command,
+            true,
+            false,
+            true,
+        ),
+        (vec![system, cloud, mdm], mdm_command, false, false, true),
+    ] {
+        let otel = compose(layers)?.unwrap().otel.unwrap();
+        assert_eq!(otel.headers_helper.as_deref(), Some(command));
+        assert_eq!(
+            otel.headers_helper_targets(),
+            OtelHeadersHelperTargets {
+                logs,
+                traces,
+                metrics
+            }
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn cloud_requirements_cannot_configure_daemon_updates() {
+    for table in ["features", "feature_requirements"] {
+        let err = compose(vec![layer(
+            "cloud",
+            "Cloud",
+            &format!("[{table}]\ndaemon_updates = false"),
+        )])
+        .unwrap_err();
+        assert!(
+            matches!(err, RequirementsCompositionError::Parse { message, .. } if message.contains("local managed requirements"))
+        );
+    }
+}
+
+#[test]
+fn otel_cloud_requirements_cannot_install_or_reschedule_a_helper() {
+    for setting in [
+        "headers_helper = 'headers'",
+        "headers_helper_refresh_interval_ms = 1",
+    ] {
+        let err =
+            compose(vec![layer("cloud", "Cloud", &format!("[otel]\n{setting}"))]).unwrap_err();
+        assert!(
+            matches!(err, RequirementsCompositionError::Parse { message, .. } if message.contains("local managed requirements"))
+        );
+    }
+}
+
+#[test]
 fn provider_auth_missing_command_is_rejected_after_composition() {
     let err = compose(vec![
         layer("low", "Name", "[model_providers.gateway]\nname = 'Gateway'"),
@@ -783,6 +891,7 @@ fn network_maps_use_regular_toml_merge() {
 "example.com" = "deny"
 "low.example.com" = "deny"
 "internal.example.com" = "allow"
+"PROTECTED.TEST." = "deny"
 
 [experimental_network.unix_sockets]
 "/tmp/shared.sock" = "deny"
@@ -798,6 +907,7 @@ fn network_maps_use_regular_toml_merge() {
 "example.com" = "allow"
 "high.example.com" = "allow"
 "internal.example.com" = "deny"
+"protected.test" = "allow"
 
 [experimental_network.unix_sockets]
 "/tmp/shared.sock" = "allow"
@@ -813,13 +923,15 @@ fn network_maps_use_regular_toml_merge() {
         composed,
         expected_requirements(
             r#"
-[experimental_network.domains]
+[permissions.network.domains]
 "example.com" = "allow"
 "high.example.com" = "allow"
 "internal.example.com" = "deny"
 "low.example.com" = "deny"
+"PROTECTED.TEST." = "deny"
+"protected.test" = "allow"
 
-[experimental_network.unix_sockets]
+[permissions.network.unix_sockets]
 "/tmp/admin.sock" = "deny"
 "/tmp/high.sock" = "allow"
 "/tmp/low.sock" = "allow"
@@ -856,44 +968,298 @@ fn network_aliases_merge_with_layer_precedence_and_sources() {
         let composed = compose_requirements_for_hostname(vec![low, high], /*hostname*/ None)
             .expect("compose network aliases")
             .expect("requirements present");
+        let expected: crate::NetworkRequirementsToml = toml::from_str(
+            "enabled = false\nallow_local_binding = false\nallow_upstream_proxy = true\n[domains]\n'low.example.com' = 'allow'\n'high.example.com' = 'allow'\n'shared.example.com' = 'deny'",
+        ).expect("expected network");
         assert_eq!(
-            composed.network,
-            Some(Sourced::new(
-                expected_requirements(
-                    "[network_proxy]\nenabled = false\nallow_local_binding = false\nallow_upstream_proxy = true\n\
-                     [network_proxy.domains]\n'low.example.com' = 'allow'\n'high.example.com' = 'allow'\n'shared.example.com' = 'deny'"
-                )
-                .network
-                .expect("network requirements"),
-                expected_source,
+            composed,
+            ConfigRequirementsWithSources {
+                permissions_network: Some(Box::new(Sourced::new(
+                    expected.clone(),
+                    expected_source
+                ))),
+                ..Default::default()
+            }
+        );
+        let public_view = composed.into_toml();
+        assert_eq!(public_view.network.as_ref(), Some(&expected));
+        assert_eq!(
+            public_view
+                .permissions
+                .and_then(|permissions| permissions.network),
+            Some(Box::new(expected))
+        );
+    }
+}
+
+#[test]
+fn list_replacements_preserve_unrelated_keyed_hosts() {
+    let old = "allowed_domains = ['old.test']\ndenied_domains = ['retired.test']";
+    let mirror = format!("[network_proxy]\n{old}\n[permissions.network]\n{old}");
+    let cloud = "[permissions.network]\ndangerously_allow_all_unix_sockets = true";
+    let device =
+        "[experimental_network]\nallowed_domains = ['new.test']\ndenied_domains = ['shared.test']";
+    for (domains, allowed) in [
+        ("{}", "['new.test']"),
+        (
+            "{ 'cloud.test' = 'allow', 'shared.test' = 'allow', 'NEW.TEST.' = 'deny' }",
+            "['cloud.test', 'new.test']",
+        ),
+    ] {
+        let update = format!("{cloud}\ndomains = {domains}");
+        let merged = compose(vec![
+            layer("old", "Old", &mirror),
+            layer("cloud", "Cloud", &update),
+            layer("device", "Device", device),
+        ]);
+        let expected = expected_requirements(format!(
+            "{cloud}\nallowed_domains = {allowed}\ndenied_domains = ['shared.test']"
+        ));
+        assert_eq!(merged.unwrap(), Some(expected), "{domains}");
+    }
+}
+
+#[test]
+fn only_a_surviving_empty_allowlist_clears_keyed_grants() {
+    let deny = "[network_proxy.domains]\n'a.test' = 'deny'";
+    let grant =
+        "[permissions.network.domains]\n'a.test' = 'allow'\n'B.TEST.' = 'allow'\n'b.test' = 'deny'";
+    let clear =
+        "[network_proxy]\nallowed_domains = []\n[permissions.network]\nallowed_domains = []";
+    let mut layers = vec![
+        layer("deny", "Deny", deny),
+        layer("grant", "Grant", grant),
+        layer("clear", "Clear", clear),
+    ];
+    let cleared =
+        expected_requirements("[permissions.network]\ndenied_domains = ['a.test', 'b.test']");
+    assert_eq!(compose(layers.clone()).unwrap(), Some(cleared));
+
+    let replacement = "[network_proxy]\nallowed_domains = ['new.test']\ndenied_domains = []";
+    layers.push(layer("replacement", "Replacement", replacement));
+    let replaced = expected_requirements(
+        "[permissions.network]\nallowed_domains = ['a.test', 'B.TEST.', 'new.test']\ndenied_domains = ['b.test']",
+    );
+    assert_eq!(compose(layers).unwrap(), Some(replaced));
+}
+
+#[test]
+fn wildcard_ports_revoke_local_exceptions_and_respect_the_surviving_deny_list() {
+    let deny = "[network_proxy]\ndenied_domains = ['127.0.0.1']";
+    let grants = "[permissions.network.domains]\n'127.0.0.1' = 'allow'\n'localhost' = 'allow'\n'::1' = 'allow'";
+    let wildcards = "[network_proxy]\nallowed_domains = ['127.0.0.1:*', 'localhost:*', '[::01]:*']";
+    let merged = compose(vec![
+        layer("deny", "Deny", deny),
+        layer("grants", "Grants", grants),
+        layer("wildcards", "Wildcards", wildcards),
+    ]);
+    let expected = expected_requirements(
+        "[permissions.network]\nallowed_domains = ['127.0.0.1:*', 'localhost:*', '[::1]:*', '[::01]:*']\ndenied_domains = ['127.0.0.1']",
+    );
+    assert_eq!(merged.unwrap(), Some(expected));
+}
+
+#[test]
+fn ipv6_grants_and_denials_preserve_published_spellings() {
+    let low = "[network_proxy.domains]\n'2001:db8::1' = 'allow'\n'2001:db8::2' = 'deny'";
+    let grant = "[network_proxy.domains]\n'[2001:db8::2]' = 'allow'";
+    let high = "[permissions.network.domains]\n'2001:0db8::1' = 'allow'\n'2001:0db8::2' = 'deny'";
+    let merged = compose(vec![
+        layer("low", "Low", low),
+        layer("grant", "Grant", grant),
+        layer("high", "High", high),
+    ]);
+    let expected = expected_requirements(
+        "[permissions.network]\nallowed_domains = ['2001:db8::1', '2001:0db8::1', '[2001:db8::2]']\ndenied_domains = ['2001:db8::2', '2001:0db8::2']",
+    );
+    assert_eq!(merged.unwrap(), Some(expected));
+}
+
+#[test]
+fn layered_mirrors_must_agree_on_replacements_and_the_effective_allowlist() {
+    let policy = "[permissions.network]\nallowed_domains = ['a.test']\ndenied_domains = ['b.test']";
+    let cloud = layer("cloud", "Cloud", policy);
+    for (legacy, nested) in [
+        ("", "allowed_domains = []"),
+        ("", "denied_domains = []"),
+        ("allowed_domains = ['c.test']", "domains.'c.test' = 'allow'"),
+        (
+            "denied_domains = ['a.test']",
+            "denied_domains = ['A.TEST.']",
+        ),
+    ] {
+        let device = format!("[network_proxy]\n{legacy}\n[permissions.network]\n{nested}");
+        let error =
+            compose(vec![cloud.clone(), layer("device", "Device", &device)]).expect_err(&device);
+        assert!(error.to_string().contains("Device"), "{error}");
+    }
+}
+
+#[test]
+fn mixed_network_tables_reject_socket_path_rules() {
+    let cloud = layer("cloud", "Cloud", "[network_proxy]");
+    for device in [
+        "[permissions.network.unix_sockets]\n'/tmp/managed.sock' = 'deny'",
+        "[experimental_network]\n[permissions.network]\nallow_unix_sockets = []",
+    ] {
+        let error =
+            compose(vec![cloud.clone(), layer("device", "Device", device)]).expect_err(device);
+        let message = error.to_string();
+        assert!(
+            message.contains("Unix socket path rules")
+                && message.contains("Device")
+                && message.contains("Cloud"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn shadowed_allows_agree_across_network_spellings() {
+    let legacy = "[experimental_network]\nallowed_domains = ['a.test', 'b.test']\ndenied_domains = ['a.test', 'b.test']";
+    let expected = expected_requirements(
+        "[permissions.network.domains]\n'a.test' = 'deny'\n'b.test' = 'deny'",
+    );
+    for nested in [
+        "[permissions.network]\nallowed_domains = ['a.test']\ndenied_domains = ['a.test', 'b.test']",
+        "[permissions.network.domains]\n'a.test' = 'deny'\n'b.test' = 'deny'",
+    ] {
+        let dual = format!("{legacy}\n{nested}");
+        assert_eq!(
+            compose(vec![layer("same", "Same", &dual)]).expect("both hosts remain denied"),
+            Some(expected.clone()),
+        );
+    }
+}
+
+#[test]
+fn empty_network_allowlist_clears_inherited_allows() {
+    for table in ["experimental_network", "permissions.network"] {
+        let low = format!(
+            "[{table}]\nallowed_domains = ['inherited.test']\ndenied_domains = ['blocked.test']"
+        );
+        let clear = format!("[{table}]\nallowed_domains = []");
+        assert_eq!(
+            compose(vec![
+                layer("low", "Low", &low),
+                layer("high", "High", &clear)
+            ])
+            .expect("clear inherited allowlist"),
+            Some(expected_requirements(
+                "[permissions.network.domains]\n'blocked.test' = 'deny'"
             ))
         );
     }
 }
 
 #[test]
-fn permissions_network_conflicts_with_top_level_network_across_layers() {
+fn network_surfaces_in_one_layer_must_agree() {
     for table in ["network_proxy", "experimental_network"] {
-        for (root_first, root_values) in [(true, "enabled = true"), (false, "")] {
-            let root = layer("root", "Root", &format!("[{table}]\n{root_values}"));
-            let permissions = layer(
-                "permissions",
-                "Permissions",
-                "[permissions.network]\nenabled = true",
+        for fields in ["", "allowed_domains = []", "description = 'device policy'"] {
+            let entry = layer("device", "Device", &format!("[{table}]\n{fields}"));
+            let expected = Sourced::new(
+                crate::NetworkRequirementsToml {
+                    domains: (fields == "allowed_domains = []")
+                        .then(crate::NetworkDomainPermissionsToml::default),
+                    ..Default::default()
+                },
+                entry.source.clone(),
             );
-            let root_source = root.source.clone();
-            let permissions_source = permissions.source.clone();
-            let layers = if root_first {
-                vec![root, permissions]
-            } else {
-                vec![permissions, root]
-            };
-            let err = compose_requirements_for_hostname(layers, /*hostname*/ None)
-                .expect_err("network requirement surfaces must not coexist")
-                .to_string();
-            assert!(err.contains(&root_source.to_string()), "{err}");
-            assert!(err.contains(&permissions_source.to_string()), "{err}");
+            assert_eq!(
+                compose_requirements_for_hostname([entry], /*hostname*/ None)
+                    .expect("valid legacy input"),
+                Some(ConfigRequirementsWithSources {
+                    permissions_network: Some(Box::new(expected)),
+                    ..Default::default()
+                }),
+            );
         }
+        let legacy_lists = "allowed_domains = ['MANAGED.TEST.']\ndenied_domains = ['2001:db8::1']";
+        let legacy_map = "domains = { 'MANAGED.TEST.' = 'allow', '2001:db8::1' = 'deny' }";
+        let nested_lists =
+            "allowed_domains = ['managed.test']\ndenied_domains = ['2001:0db8:0:0:0:0:0:1']";
+        let nested_map = "domains = { 'managed.test' = 'allow', '2001:0db8:0:0:0:0:0:1' = 'deny' }";
+        let expected = expected_requirements(format!(
+            "[permissions.network]\n{legacy_lists}\nreview_domains = ['*.First.Test.', 'second.test', '2001:db8::2']"
+        ));
+        for legacy in [legacy_lists, legacy_map] {
+            for nested in [nested_lists, nested_map] {
+                let dual = format!(
+                    "[{table}]\n{legacy}\nreview_domains = ['*.First.Test.', 'second.test', '2001:db8::2']\n\
+                     [permissions.network]\n{nested}\nreview_domains = ['SECOND.TEST.', '?*.first.test', '*.first.test', '2001:0db8:0:0:0:0:0:2']"
+                );
+                assert_eq!(
+                    compose(vec![layer("same", "Same", &dual)]).expect("equivalent copies"),
+                    Some(expected.clone())
+                );
+            }
+        }
+        // An exact allow/deny pair stays a single denial even when only the nested
+        // copy supplies the shadowed allow. The published denial keeps the legacy text.
+        for (left, right, published) in [
+            (
+                "allowed_domains = ['ONE.TEST.']\ndenied_domains = ['ONE.TEST.']",
+                "denied_domains = ['one.test']",
+                "ONE.TEST.",
+            ),
+            (
+                "denied_domains = ['one.test']",
+                "allowed_domains = ['ONE.TEST.']\ndenied_domains = ['ONE.TEST.']",
+                "one.test",
+            ),
+        ] {
+            let dual = format!("[{table}]\n{left}\n[permissions.network]\n{right}");
+            assert_eq!(
+                compose(vec![layer("same", "Same", &dual)]).expect("equivalent list operations"),
+                Some(expected_requirements(format!(
+                    "[permissions.network]\ndenied_domains = ['{published}']"
+                ))),
+            );
+        }
+        for (legacy, nested) in [
+            (
+                "allowed_domains = ['127.0.0.1:*']",
+                "allowed_domains = ['127.0.0.1']",
+            ),
+            (
+                "allowed_domains = ['one.test']",
+                "allowed_domains = ['one.test:443/path']",
+            ),
+            (
+                "review_domains = ['*.one.test']",
+                "review_domains = ['**.ONE.TEST.']",
+            ),
+            (
+                "allowed_domains = ['ONE.TEST.']\ndenied_domains = ['one.test']",
+                "denied_domains = ['one.test']",
+            ),
+        ] {
+            let conflicting = format!("[{table}]\n{legacy}\n[permissions.network]\n{nested}");
+            assert!(matches!(
+                compose(vec![layer("conflict", "Conflict", &conflicting)]),
+                Err(RequirementsCompositionError::Parse { .. })
+            ));
+        }
+        let shadowed = format!(
+            "[{table}]\nallowed_domains = ['host.test']\ndenied_domains = ['host.test']\n[permissions.network]\nallowed_domains = []\ndenied_domains = ['host.test']"
+        );
+        assert!(matches!(
+            compose(vec![layer("dual", "Dual", &shadowed)]),
+            Err(RequirementsCompositionError::Parse { message, .. }) if message.contains("different allowed_domains replacements")
+        ));
+        let entry = layer(
+            "invalid",
+            "Invalid",
+            &format!("[{table}]\n[permissions.network]\nenabled = false"),
+        );
+        let source = entry.source.clone();
+        let err = compose_requirements_for_hostname(vec![entry], /*hostname*/ None)
+            .expect_err("conflicting network requirement surfaces must fail within one layer");
+        assert!(
+            matches!(&err, RequirementsCompositionError::Parse { layer_source, .. } if *layer_source == source),
+            "{err}"
+        );
+        assert!(err.to_string().contains("same network policy"), "{err}");
     }
 }
 
@@ -1603,7 +1969,7 @@ deny_read = [{denied_path:?}]
             layer(
                 "profile",
                 "Profile",
-                "[permissions.other]\nextends = ':workspace'",
+                "[permissions.other]\nextends = ':workspace'\n[permissions.other.network]\nenabled = false",
             ),
         ],
         /*hostname*/ None,
@@ -1630,6 +1996,8 @@ enabled = true
 
 [permissions.other]
 extends = ":workspace"
+[permissions.other.network]
+enabled = false
 
 [permissions.managed]
 extends = ":workspace"
@@ -1853,6 +2221,128 @@ request_headers = [{ name = "x-old", value = "old" }]"#,
         .expect("compose requirements")
         .expect("requirements present");
         assert_eq!(composed, expected_requirements(higher));
+    }
+}
+
+const GATEWAY_AUTH: &str = r#"
+authorization_url = "https://login.example/authorize"
+token_url = "https://login.example/token"
+client_id = "native-client"
+scopes = ["gateway.access", "offline_access"]
+"#;
+
+fn mdm_gateway() -> RequirementsLayerEntry {
+    RequirementsLayerEntry::from_toml(
+        RequirementSource::MdmManagedPreferences {
+            domain: "com.openai.codex".into(),
+            key: "requirements_toml_base64".into(),
+        },
+        format!(
+            "[gateway]\nbase_url = 'https://new.example/team/'\n[gateway.auth]\n{GATEWAY_AUTH}"
+        ),
+    )
+}
+
+#[test]
+fn mdm_gateway_replaces_system_enrollment_as_a_unit() {
+    let system = RequirementsLayerEntry::from_toml(
+        RequirementSource::SystemRequirementsToml {
+            file: AbsolutePathBuf::from_absolute_path(
+                std::env::temp_dir().join("requirements.toml"),
+            )
+            .unwrap(),
+        },
+        format!(
+            "[gateway]\nname = 'Acme Gateway'\nbase_url = 'https://old.example'\n[gateway.auth]\nresource = 'old-audience'\n{GATEWAY_AUTH}"
+        ),
+    );
+    let system_only = compose(vec![system.clone()]).unwrap().unwrap();
+    assert_eq!(system_only.model_provider.as_deref(), Some("gateway"));
+    assert_eq!(
+        system_only.model_providers.unwrap()["gateway"].name,
+        "Acme Gateway"
+    );
+
+    let actual = compose(vec![
+        system,
+        layer("remote", "Policy", "allow_login_shell = false"),
+        mdm_gateway(),
+    ])
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        actual,
+        expected_requirements(format!(
+            r#"
+allow_login_shell = false
+model_provider = "gateway"
+
+[config_server]
+base_url = "https://new.example/team"
+[config_server.oauth]
+{GATEWAY_AUTH}
+[model_providers.gateway]
+name = "Gateway"
+base_url = "https://new.example/team/v1"
+model_catalog_url = "https://new.example/team/v1/models"
+wire_api = "responses"
+requires_openai_auth = false
+[model_providers.gateway.gateway_oauth]
+{GATEWAY_AUTH}
+"#
+        ))
+    );
+}
+
+#[test]
+fn remote_requirements_cannot_enroll_or_reroute_gateway() {
+    for (contents, field) in [
+        (
+            "[gateway]\nbase_url = 'https://other.example'",
+            "local managed requirements",
+        ),
+        ("model_provider = 'other'", "model_provider"),
+        (
+            "[model_providers.gateway]\nbase_url = 'https://other.example/v1'",
+            "model_providers.gateway",
+        ),
+    ] {
+        let err = compose(vec![mdm_gateway(), layer("remote", "Policy", contents)]).unwrap_err();
+        assert!(err.to_string().contains(field), "{err}");
+    }
+}
+
+#[test]
+fn gateway_rejects_invalid_enrollment() {
+    let named_gateway = |name: &str| {
+        format!(
+            "[gateway]\nname = '{name}'\nbase_url = 'https://gateway.example'\n[gateway.auth]\n{GATEWAY_AUTH}"
+        )
+    };
+    for (contents, error) in [
+        (named_gateway(" "), "gateway.name"),
+        (named_gateway("OpenAI"), "gateway.name"),
+        (named_gateway("Azure"), "gateway.name"),
+        (
+            "[gateway]\nbase_url = 'https://gateway.example'".to_string(),
+            "auth",
+        ),
+        (
+            format!(
+                "[gateway]\nbase_url = 'http://gateway.example'\n[gateway.auth]\n{GATEWAY_AUTH}"
+            ),
+            "HTTPS",
+        ),
+        (
+            format!(
+                "[config_server]\nbase_url = 'https://other.example'\n[gateway]\nbase_url = 'https://gateway.example'\n[gateway.auth]\n{GATEWAY_AUTH}"
+            ),
+            "config_server",
+        ),
+    ] {
+        let layer = RequirementsLayerEntry::from_toml(mdm_gateway().source, contents);
+        let err = compose(vec![layer]).unwrap_err();
+        assert!(err.to_string().contains(error), "{err}");
     }
 }
 

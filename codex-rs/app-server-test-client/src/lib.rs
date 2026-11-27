@@ -559,7 +559,7 @@ fn serve(codex_bin: &Path, config_overrides: &[String], listen: &str, kill: bool
 
     let pid = child.id();
 
-    println!("started codex app-server");
+    println!("started lemex app-server");
     println!("listen: {listen}");
     println!("pid: {pid} (launcher process)");
     println!("log: {}", log_path.display());
@@ -959,6 +959,7 @@ async fn test_login(
                         params: codex_app_server_protocol::LoginAccountParams::AmazonBedrock {
                             api_key,
                             region,
+                            provider_id: None,
                         },
                     },
                     request_id,
@@ -1080,6 +1081,7 @@ async fn thread_list(endpoint: &Endpoint, config_overrides: &[String], limit: u3
         let response = client.thread_list(ThreadListParams {
             include_attached_threads: false,
             current_account_only: false,
+            included_thread_ids: None,
             excluded_thread_ids: None,
             attached_to_thread_id: None,
             originators: None,
@@ -1429,11 +1431,11 @@ impl CodexClient {
         let stdin = codex_app_server
             .stdin
             .take()
-            .context("codex app-server stdin unavailable")?;
+            .context("lemex app-server stdin unavailable")?;
         let stdout = codex_app_server
             .stdout
             .take()
-            .context("codex app-server stdout unavailable")?;
+            .context("lemex app-server stdout unavailable")?;
 
         Ok(Self {
             transport: ClientTransport::Stdio {
@@ -2067,10 +2069,10 @@ impl CodexClient {
                     writeln!(stdin, "{payload}")?;
                     stdin
                         .flush()
-                        .context("failed to flush payload to codex app-server")?;
+                        .context("failed to flush payload to lemex app-server")?;
                     return Ok(());
                 }
-                bail!("codex app-server stdin closed")
+                bail!("lemex app-server stdin closed")
             }
             ClientTransport::WebSocket { socket, url } => {
                 socket
@@ -2087,9 +2089,9 @@ impl CodexClient {
                 let mut response_line = String::new();
                 let bytes = stdout
                     .read_line(&mut response_line)
-                    .context("failed to read from codex app-server")?;
+                    .context("failed to read from lemex app-server")?;
                 if bytes == 0 {
-                    bail!("codex app-server closed stdout");
+                    bail!("lemex app-server closed stdout");
                 }
                 Ok(response_line)
             }
@@ -2204,14 +2206,14 @@ impl Drop for CodexClient {
         let _ = stdin.take();
 
         if let Ok(Some(status)) = child.try_wait() {
-            println!("[codex app-server exited: {status}]");
+            println!("[lemex app-server exited: {status}]");
             return;
         }
 
         let deadline = SystemTime::now() + APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT;
         loop {
             if let Ok(Some(status)) = child.try_wait() {
-                println!("[codex app-server exited: {status}]");
+                println!("[lemex app-server exited: {status}]");
                 return;
             }
 

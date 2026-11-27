@@ -33,6 +33,9 @@ use crate::ReviewCompletion;
 pub struct ReviewMetadata {
     pub thread_id: String,
     pub turn_id: String,
+    pub root_turn_id: Option<String>,
+    /// Origin of the issuing turn, inherited by delegated turns at admission.
+    pub turn_trigger: Option<String>,
     pub review_id: String,
     pub target_item_id: Option<String>,
     pub plugin_id: Option<String>,
@@ -52,11 +55,26 @@ pub struct ReviewReport {
     started_instant: Instant,
     approval_request_source: GuardianApprovalRequestSource,
     reviewed_action: GuardianReviewedAction,
+    turn_origin: &'static str,
 }
 
 impl ReviewReport {
     pub fn new(metadata: ReviewMetadata) -> Self {
         let started_instant = Instant::now();
+        // Keep client-supplied trigger strings out of metric labels. This describes
+        // the turn's origin, not later input steered into an already-running turn.
+        let turn_origin = match metadata.turn_trigger.as_deref() {
+            Some(
+                "automation"
+                | "mcp_event"
+                | "automation_cron_scheduled"
+                | "automation_cron_run_now"
+                | "automation_heartbeat_scheduled"
+                | "automation_heartbeat_run_now",
+            ) => "automation",
+            None | Some("") => "unknown",
+            Some(_) => "other",
+        };
         let started = metadata.action.map(|action| GuardianAssessmentEvent {
             review_reason: Some(metadata.review_reason),
             model_context: Some(metadata.model_context),
@@ -84,6 +102,7 @@ impl ReviewReport {
             started_instant,
             approval_request_source: metadata.approval_request_source,
             reviewed_action: metadata.reviewed_action,
+            turn_origin,
         }
     }
 
@@ -125,6 +144,7 @@ impl ReviewReport {
             &result,
             self.approval_request_source,
             &self.reviewed_action,
+            self.turn_origin,
             elapsed,
         );
     }

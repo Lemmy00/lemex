@@ -5,6 +5,7 @@ use super::AppServerStartedThread;
 use super::HistoryHydrationScope;
 use super::ResumeModelSettings;
 use super::ThreadHistorySupport;
+use super::ThreadParamsMode;
 use super::ThreadSettingsOwner;
 use super::bootstrap_request_error;
 use super::is_history_pagination_unsupported;
@@ -12,17 +13,20 @@ use super::started_thread_from_resume_response;
 use super::thread_resume_params_from_config;
 use super::thread_session_state_from_thread_response;
 use crate::legacy_core::config::Config;
+use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_client::TypedRequestError;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::SortDirection;
 use codex_app_server_protocol::ThreadHistoryMode;
+use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadTurnsListParams;
 use codex_app_server_protocol::ThreadTurnsListResponse;
 use codex_app_server_protocol::TurnItemsView;
 use codex_protocol::ThreadId;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_path_uri::LegacyAppPathString;
 use color_eyre::eyre::Result;
 
 // Bound recovery to recent messages when item paging is unavailable.
@@ -76,9 +80,9 @@ impl AppServerSession {
                 "Showing up to 100 recent prompts and final replies. Intermediate messages and tool activity are unavailable.",
             );
         }
-        let session = thread_session_state_from_thread_response(
+        let mut session = thread_session_state_from_thread_response(
             &thread.id,
-            crate::windows_sandbox::host_from_environments(thread.environments.as_deref()),
+            thread.environments.as_deref(),
             thread.forked_from_id.clone(),
             thread.name.clone(),
             thread.path.clone(),
@@ -89,14 +93,15 @@ impl AppServerSession {
             config.approvals_reviewer,
             config.permissions.permission_profile().clone(),
             config.permissions.active_permission_profile(),
-            thread.cwd.clone(),
-            config.workspace_roots.clone(),
+            super::decode_thread_cwd(&thread.cwd, self.path_convention())?,
+            LegacyAppPathString::from_abs_paths(&config.workspace_roots),
             Vec::new(),
             thread.reasoning_effort,
             local_settings,
         )
         .await
         .map_err(color_eyre::eyre::Report::msg)?;
+        session.read_only_history = true;
         self.freeze_viewed_receipt(thread_id);
         Ok((
             AppServerStartedThread {
@@ -145,6 +150,25 @@ impl AppServerSession {
             thread_id,
             model_settings,
             crate::resume_permissions::ResumePermissions::default(),
+        ))
+        .await
+    }
+
+    /// Prepare a saved Cloud task without displacing the displayed attachment on failure.
+    pub(crate) async fn resume_thread_for_navigation(
+        &mut self,
+        local_settings: &crate::local_settings::LocalSettings,
+        config: Config,
+        thread_id: ThreadId,
+        model_settings: ResumeModelSettings,
+        permission_overrides: crate::resume_permissions::ResumePermissions,
+    ) -> Result<AppServerStartedThread> {
+        Box::pin(self.resume_thread_with_permission_overrides(
+            local_settings,
+            config,
+            thread_id,
+            model_settings,
+            permission_overrides,
         ))
         .await
     }
@@ -208,6 +232,31 @@ impl AppServerSession {
         let metadata = Box::pin(self.thread_read(thread_id, /*include_turns*/ false))
             .await
             .ok();
+        // A fresh load applies managed rules. A loaded thread's sandbox summary
+        // cannot confirm its proxy rules or filesystem restrictions.
+        if permission_overrides.confirm_preset
+            && metadata.as_ref().is_none_or(|thread| {
+                thread.status != codex_app_server_protocol::ThreadStatus::NotLoaded
+            })
+        {
+            if config.managed_network_requirements_enabled() {
+                color_eyre::eyre::bail!(
+                    "Cannot verify managed network restrictions for --approve-for-me. Unload the conversation and retry."
+                );
+            }
+            let profile = config.permissions.permission_profile();
+            if profile.to_legacy_sandbox_policy_template().is_err() {
+                // Account for metadata protections on fixed writable roots.
+                let policy = profile.to_legacy_sandbox_policy(config.cwd.as_path())?;
+                if profile.file_system_sandbox_policy()
+                    != codex_protocol::permissions::FileSystemSandboxPolicy::from(&policy)
+                {
+                    color_eyre::eyre::bail!(
+                        "Cannot verify sandbox restrictions for --approve-for-me."
+                    );
+                }
+            }
+        }
         let known_legacy = cached_legacy
             && (!self.uses_embedded_app_server()
                 || (rollout_maintenance_guard.is_some()
@@ -218,6 +267,7 @@ impl AppServerSession {
             rollout_maintenance_guard = None;
         }
         let request_id = self.next_request_id();
+        let exclude_turns = params.exclude_turns;
         let resume_response = self
             .request_handle
             .request_typed(ClientRequest::ThreadResume {
@@ -248,6 +298,54 @@ impl AppServerSession {
                 ));
             }
         };
+        if permission_overrides.confirm_preset
+            && let Some(settings) =
+                crate::resume_permissions::initial_resume_update(&config, &response)?
+        {
+            // A loaded thread ignores resume overrides. Read back the effective
+            // settings after the update, before releasing the initial prompt.
+            if !self.thread_settings_update(settings).await? {
+                color_eyre::eyre::bail!(
+                    "The server cannot apply --approve-for-me to this conversation."
+                );
+            }
+            let request_id = self.next_request_id();
+            response = self
+                .request_handle
+                .request_typed(ClientRequest::ThreadResume {
+                    request_id,
+                    params: ThreadResumeParams {
+                        thread_id: thread_id.to_string(),
+                        exclude_turns: exclude_turns
+                            && self.history_support == ThreadHistorySupport::Paginated,
+                        ..Default::default()
+                    },
+                })
+                .await?;
+            if crate::resume_permissions::initial_resume_update(&config, &response)?.is_some() {
+                color_eyre::eyre::bail!(
+                    "The server did not confirm the requested permissions for --approve-for-me."
+                );
+            }
+        }
+        self.finish_thread_resume(
+            local_settings,
+            &config,
+            thread_id,
+            response,
+            HistoryHydrationScope::Initial,
+        )
+        .await
+    }
+
+    pub(crate) async fn finish_thread_resume(
+        &mut self,
+        local_settings: &crate::local_settings::LocalSettings,
+        config: &Config,
+        thread_id: ThreadId,
+        mut response: ThreadResumeResponse,
+        scope: HistoryHydrationScope<'_>,
+    ) -> Result<AppServerStartedThread> {
         if let Some(subscribed) = &mut self.attachment_subscribed {
             *subscribed = true;
         }
@@ -255,20 +353,19 @@ impl AppServerSession {
             &mut response.thread,
             response.turns_backwards_cursor.clone(),
             response.items_backwards_cursor.clone(),
-            Some(&config),
+            Some(config),
             Some(local_settings),
-            HistoryHydrationScope::Initial,
+            scope,
         )
         .await?;
+        self.restore_saved_chat_title(config.codex_home.as_path(), thread_id, &mut response.thread)
+            .await;
         let fork_parent_title = self
             .fork_parent_title_from_app_server(response.thread.forked_from_id.as_deref())
             .await;
-        let mut started = started_thread_from_resume_response(
-            response,
-            local_settings,
-            self.thread_params_mode(),
-        )
-        .await?;
+        let mut started =
+            started_thread_from_resume_response(response, local_settings, self.path_convention())
+                .await?;
         started.session.fork_parent_title = fork_parent_title;
         if self.task_tools_available(thread_id) {
             self.remember_task_tool_thread(thread_id);

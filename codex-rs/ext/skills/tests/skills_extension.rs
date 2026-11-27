@@ -33,19 +33,14 @@ use codex_extension_api::NoopTurnItemEmitter;
 use codex_extension_api::PreviousWorldStateSection;
 use codex_extension_api::RenderedWorldStateFragment;
 use codex_extension_api::SelectedPluginSnapshot;
-use codex_extension_api::SkillInvocationInput;
-use codex_extension_api::SkillInvocationKind;
 use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ToolCall;
 use codex_extension_api::ToolCallSource;
 use codex_extension_api::ToolPayload;
 use codex_extension_api::TurnInputContext;
-use codex_extension_api::TurnStartInput;
 use codex_extension_api::WorldStateContributionInput;
 use codex_extension_api::WorldStateSectionContribution;
 use codex_models_manager::model_info::model_info_from_slug;
-use codex_otel::MetricsClient;
-use codex_otel::MetricsConfig;
 use codex_otel::THREAD_SKILLS_DESCRIPTION_TRUNCATED_CHARS_METRIC;
 use codex_otel::THREAD_SKILLS_ENABLED_TOTAL_METRIC;
 use codex_otel::THREAD_SKILLS_KEPT_TOTAL_METRIC;
@@ -83,7 +78,6 @@ use codex_skills_extension::catalog::SkillSearchResult;
 use codex_skills_extension::catalog::SkillSourceKind;
 use codex_skills_extension::install;
 use codex_skills_extension::install_with_providers;
-use codex_skills_extension::install_with_providers_and_metrics;
 use codex_skills_extension::provider::SkillListQuery;
 use codex_skills_extension::provider::SkillProvider;
 use codex_skills_extension::provider::SkillProviderFuture;
@@ -91,15 +85,9 @@ use codex_skills_extension::provider::SkillReadRequest;
 use codex_skills_extension::provider::SkillSearchRequest;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
-use opentelemetry_sdk::metrics::InMemoryMetricExporter;
-use opentelemetry_sdk::metrics::data::AggregatedMetrics;
-use opentelemetry_sdk::metrics::data::MetricData;
 use pretty_assertions::assert_eq;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-#[path = "skills_extension/shadow_task_context_tests.rs"]
-mod shadow_task_context_tests;
 
 #[path = "skills_extension/presentation_dedup_tests.rs"]
 mod presentation_dedup_tests;
@@ -312,27 +300,17 @@ async fn skill_world_state_fragments(
     Ok((executor, cloud))
 }
 
-async fn start_registered_turn(
+async fn refresh_registered_catalogs_for_step(
     registry: &codex_extension_api::ExtensionRegistry<TestConfig>,
     session_store: &ExtensionData,
     thread_store: &ExtensionData,
     turn_id: &str,
 ) {
     let turn_store = ExtensionData::new(turn_id);
-    let mode = codex_protocol::config_types::CollaborationMode {
-        mode: codex_protocol::config_types::ModeKind::Default,
-        settings: codex_protocol::config_types::Settings {
-            model: "test".to_string(),
-            reasoning_effort: None,
-            developer_instructions: None,
-        },
-    };
     for contributor in registry.turn_lifecycle_contributors() {
         contributor
-            .on_turn_start(TurnStartInput {
+            .refresh_catalog_for_step(codex_extension_api::CatalogRefreshInput {
                 turn_id,
-                collaboration_mode: &mode,
-                token_usage_at_turn_start: None,
                 session_store,
                 thread_store,
                 turn_store: &turn_store,
@@ -351,8 +329,7 @@ async fn installed_extension_uses_host_service_snapshot() -> TestResult {
             .ok_or("skill path should have a parent")?,
     )?;
     std::fs::write(&skill_path, DEMO_SKILL_CONTENTS)?;
-    let mut config = default_config();
-    config.shadow_selection_enabled = true;
+    let config = default_config();
 
     let mut builder = ExtensionRegistryBuilder::new();
     install(&mut builder, skills_extension_config);
@@ -398,7 +375,7 @@ async fn installed_extension_uses_host_service_snapshot() -> TestResult {
         TurnInputContext {
             step_store: &ExtensionData::new("step"),
             turn_id: "turn-1".to_string(),
-            user_input: vec![UserInput::Text {
+            user_input: &[UserInput::Text {
                 text: "$demo".to_string(),
                 text_elements: Vec::new(),
             }],
@@ -754,7 +731,7 @@ async fn executor_cloud_and_host_share_catalog_world_state_flow() -> TestResult 
         })
         .await;
     // Host rendering stays separate even when its identity matches a Cloud skill.
-    start_registered_turn(&registry, &session_store, &thread_store, "turn-1").await;
+    refresh_registered_catalogs_for_step(&registry, &session_store, &thread_store, "turn-1").await;
 
     let selected_roots = [SelectedCapabilityRoot {
         id: "skills".to_string(),
@@ -996,293 +973,6 @@ async fn host_world_state_uses_provider_catalog_with_core_compatible_rendering()
 }
 
 #[tokio::test]
-async fn shadow_selection_uses_host_catalog_when_instructions_are_disabled() -> TestResult {
-    let list_calls = Arc::new(AtomicUsize::new(0));
-    let provider = Arc::new(StaticSkillProvider {
-        catalog: SkillCatalog {
-            is_partial: false,
-            entries: vec![test_entry(
-                SkillSourceKind::Host,
-                "host",
-                "host/lint-fix",
-                "lint-fix/SKILL.md",
-            )],
-            warnings: Vec::new(),
-        },
-        read_requests: Arc::new(Mutex::new(Vec::new())),
-        list_calls: Some(Arc::clone(&list_calls)),
-        fail_first_list: false,
-    });
-    let metrics = MetricsClient::new(
-        MetricsConfig::in_memory(
-            "test",
-            "codex-skills-extension",
-            env!("CARGO_PKG_VERSION"),
-            InMemoryMetricExporter::default(),
-        )
-        .with_runtime_reader(),
-    )?;
-    let mut builder = ExtensionRegistryBuilder::new();
-    install_with_providers_and_metrics(
-        &mut builder,
-        SkillProviders::new().with_host_provider(provider),
-        Some(metrics.clone()),
-        skills_extension_config,
-    );
-    let registry = builder.build();
-    let session_store = ExtensionData::new("session");
-    let thread_store = ExtensionData::new("thread");
-    let mut config = default_config();
-    config.include_instructions = false;
-    config.shadow_selection_enabled = true;
-    registry.thread_lifecycle_contributors()[0]
-        .on_thread_start(ThreadStartInput {
-            config: &config,
-            session_source: &SessionSource::Cli,
-            persistent_thread_state_available: true,
-            environments: &[],
-            mcp_resource_client: None,
-            extension_metrics: None,
-            session_store: &session_store,
-            thread_store: &thread_store,
-        })
-        .await;
-    let turn_store = ExtensionData::new("turn-1");
-    let step_store = ExtensionData::new("step");
-    turn_store.insert(HostSkillsSnapshot::new(Arc::new(
-        SkillLoadOutcome::default(),
-    )));
-
-    let sections = prepared_world_state(
-        &registry,
-        &[],
-        WorldStateContributionInput {
-            previous_world_state: None,
-            step_store: &step_store,
-            model_info: &catalog_model_info(),
-            thread_id: codex_protocol::ThreadId::new(),
-            turn_id: "turn-1",
-            environments: &[],
-            extension_metrics: None,
-            session_store: &session_store,
-            thread_store: &thread_store,
-            turn_store: &turn_store,
-        },
-    )
-    .await;
-    let fragments = prepared_turn_input(
-        &registry,
-        TurnInputContext {
-            step_store: &step_store,
-            turn_id: "turn-1".to_string(),
-            user_input: vec![UserInput::Text {
-                text: "Fix lint errors.".to_string(),
-                text_elements: Vec::new(),
-            }],
-            environments: Vec::new(),
-        },
-        /*extension_metrics*/ None,
-        &session_store,
-        &thread_store,
-        &turn_store,
-    )
-    .await;
-
-    assert!(
-        world_state_section(&sections, "host_skills")
-            .render_diff(PreviousWorldStateSection::Absent)
-            .1
-            .is_none()
-    );
-    assert!(fragments.is_empty());
-    let snapshots = shadow_task_context_tests::collect_shadow_observations(
-        &metrics,
-        "codex.skills.shadow_selection.catalog_entries",
-        /*expected*/ 12,
-    )
-    .await?;
-    let catalog_entry_counts = snapshots
-        .iter()
-        .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
-        .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
-        .filter(|metric| metric.name() == "codex.skills.shadow_selection.catalog_entries")
-        .flat_map(|metric| match metric.data() {
-            AggregatedMetrics::F64(MetricData::Histogram(histogram)) => histogram
-                .data_points()
-                .map(opentelemetry_sdk::metrics::data::HistogramDataPoint::sum),
-            data => panic!("unexpected shadow catalog metric data: {data:?}"),
-        })
-        .collect::<Vec<_>>();
-
-    assert!(
-        catalog_entry_counts.iter().all(|count| *count == 1.0),
-        "every shadow selector should see the cached host skill: {catalog_entry_counts:?}"
-    );
-    assert_eq!(1, list_calls.load(Ordering::Relaxed));
-    Ok(())
-}
-
-#[tokio::test]
-async fn shadow_lru_selector_recovers_a_skill_invoked_on_an_earlier_turn() -> TestResult {
-    let provider = Arc::new(StaticSkillProvider {
-        catalog: SkillCatalog {
-            is_partial: false,
-            entries: vec![test_entry(
-                SkillSourceKind::Host,
-                "host",
-                "host/lint-fix",
-                "lint-fix/SKILL.md",
-            )],
-            warnings: Vec::new(),
-        },
-        read_requests: Arc::new(Mutex::new(Vec::new())),
-        list_calls: None,
-        fail_first_list: false,
-    });
-    let metrics = MetricsClient::new(
-        MetricsConfig::in_memory(
-            "test",
-            "codex-skills-extension",
-            env!("CARGO_PKG_VERSION"),
-            InMemoryMetricExporter::default(),
-        )
-        .with_runtime_reader(),
-    )?;
-    let mut builder = ExtensionRegistryBuilder::new();
-    install_with_providers_and_metrics(
-        &mut builder,
-        SkillProviders::new().with_host_provider(provider),
-        Some(metrics.clone()),
-        skills_extension_config,
-    );
-    let registry = builder.build();
-    let session_store = ExtensionData::new("session");
-    let thread_store = ExtensionData::new("thread");
-    let mut config = default_config();
-    config.include_instructions = false;
-    config.shadow_selection_enabled = true;
-    registry.thread_lifecycle_contributors()[0]
-        .on_thread_start(ThreadStartInput {
-            config: &config,
-            session_source: &SessionSource::Cli,
-            persistent_thread_state_available: true,
-            environments: &[],
-            mcp_resource_client: None,
-            extension_metrics: None,
-            session_store: &session_store,
-            thread_store: &thread_store,
-        })
-        .await;
-
-    for (turn_id, text) in [("turn-1", "Fix lint errors."), ("turn-2", "continue")] {
-        let turn_store = ExtensionData::new(turn_id);
-        let fragments = prepared_turn_input(
-            &registry,
-            TurnInputContext {
-                step_store: &ExtensionData::new("step"),
-                turn_id: turn_id.to_string(),
-                user_input: vec![UserInput::Text {
-                    text: text.to_string(),
-                    text_elements: Vec::new(),
-                }],
-                environments: vec![codex_extension_api::TurnInputEnvironment {
-                    environment_id: "test".to_string(),
-                    cwd: PathUri::from_host_native_path(std::env::current_dir().expect("test cwd"))
-                        .expect("absolute cwd"),
-                    is_primary: true,
-                    fs: &FileSystemEnvironmentAccessor::unrestricted(&LOCAL_FS),
-                }],
-            },
-            /*extension_metrics*/ None,
-            &session_store,
-            &thread_store,
-            &turn_store,
-        )
-        .await;
-        assert!(fragments.is_empty());
-        registry.skill_invocation_contributors()[0]
-            .on_skill_invocation(SkillInvocationInput {
-                session_store: &session_store,
-                thread_store: &thread_store,
-                turn_store: &turn_store,
-                turn_id,
-                skill_resource: "lint-fix/SKILL.md",
-                kind: SkillInvocationKind::Implicit,
-            })
-            .await;
-    }
-
-    let snapshots = shadow_task_context_tests::collect_shadow_observations(
-        &metrics,
-        "codex.skills.shadow_selection.invocation",
-        /*expected*/ 24,
-    )
-    .await?;
-    let selector_hits = snapshots
-        .iter()
-        .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
-        .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
-        .filter(|metric| metric.name() == "codex.skills.shadow_selection.invocation")
-        .flat_map(|metric| match metric.data() {
-            AggregatedMetrics::U64(MetricData::Sum(sum)) => sum.data_points(),
-            data => panic!("unexpected shadow invocation metric data: {data:?}"),
-        })
-        .filter_map(|point| {
-            let method = point
-                .attributes()
-                .find(|attribute| attribute.key.as_str() == "method")?
-                .value
-                .as_str();
-            if !matches!(
-                method.as_ref(),
-                "lru_v1"
-                    | "lru_plus_lexical_v1"
-                    | "lru_plus_character_routing_v1"
-                    | "lru_plus_lexical_character_routing_v1"
-            ) {
-                return None;
-            }
-            let hit = point
-                .attributes()
-                .find(|attribute| attribute.key.as_str() == "hit")?
-                .value
-                .as_str()
-                .to_string();
-            Some((method.to_string(), hit, point.value()))
-        })
-        .fold(
-            std::collections::BTreeMap::new(),
-            |mut totals, (method, hit, count)| {
-                *totals.entry((method, hit)).or_insert(0) += count;
-                totals
-            },
-        )
-        .into_iter()
-        .map(|((method, hit), count)| (method, hit, count))
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        vec![
-            (
-                "lru_plus_character_routing_v1".to_string(),
-                "true".to_string(),
-                2,
-            ),
-            (
-                "lru_plus_lexical_character_routing_v1".to_string(),
-                "true".to_string(),
-                2,
-            ),
-            ("lru_plus_lexical_v1".to_string(), "true".to_string(), 2),
-            ("lru_v1".to_string(), "false".to_string(), 1),
-            ("lru_v1".to_string(), "true".to_string(), 1),
-        ],
-        selector_hits
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn selected_executor_catalog_caches_root_selections_per_turn_and_reuses_discovery_snapshots()
 -> TestResult {
     let step_store = ExtensionData::new("step-1");
@@ -1383,7 +1073,7 @@ async fn selected_executor_catalog_caches_root_selections_per_turn_and_reuses_di
         TurnInputContext {
             step_store: &step_store,
             turn_id: "turn-1".to_string(),
-            user_input: vec![UserInput::Text {
+            user_input: &[UserInput::Text {
                 text: "$lint-fix please".to_string(),
                 text_elements: Vec::new(),
             }],
@@ -1920,7 +1610,7 @@ async fn default_context_truncates_catalog_descriptions() -> TestResult {
             thread_store: &thread_store,
         })
         .await;
-    start_registered_turn(&registry, &session_store, &thread_store, "turn-1").await;
+    refresh_registered_catalogs_for_step(&registry, &session_store, &thread_store, "turn-1").await;
 
     let (executor, cloud) =
         skill_world_state_fragments(&registry, &session_store, &thread_store, "turn-1").await?;
@@ -2086,7 +1776,13 @@ async fn catalog_rebalances_only_to_avoid_omissions_and_retains_the_allocation()
                 );
                 let turn_id = format!("turn-{step}");
                 let turn_store = ExtensionData::new(&turn_id);
-                start_registered_turn(&registry, &session_store, &thread_store, &turn_id).await;
+                refresh_registered_catalogs_for_step(
+                    &registry,
+                    &session_store,
+                    &thread_store,
+                    &turn_id,
+                )
+                .await;
                 let sections = prepared_world_state(
                     &registry,
                     if ready { &selected_roots } else { &[] },
@@ -2270,7 +1966,7 @@ async fn extreme_budget_pressure_removes_descriptions_before_omitting_entries() 
             thread_store: &thread_store,
         })
         .await;
-    start_registered_turn(&registry, &session_store, &thread_store, "turn-1").await;
+    refresh_registered_catalogs_for_step(&registry, &session_store, &thread_store, "turn-1").await;
 
     let (executor, cloud) =
         skill_world_state_fragments(&registry, &session_store, &thread_store, "turn-1").await?;
@@ -2383,7 +2079,7 @@ async fn skills_list_only_returns_model_visible_bounded_metadata() -> TestResult
             thread_store: &thread_store,
         })
         .await;
-    start_registered_turn(&registry, &session_store, &thread_store, "turn-1").await;
+    refresh_registered_catalogs_for_step(&registry, &session_store, &thread_store, "turn-1").await;
 
     let step_store = ExtensionData::new("step");
     prepared_world_state(
@@ -2601,14 +2297,18 @@ async fn skills_list_only_returns_model_visible_bounded_metadata() -> TestResult
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cloud_discovery_is_gated_and_reports_failures() -> TestResult {
     for (cloud_skill_enabled, has_cloud_provider) in [(false, true), (true, true), (true, false)] {
         let list_calls = Arc::new(AtomicUsize::new(0));
         let mut providers = SkillProviders::new();
         if has_cloud_provider {
             providers = providers.with_cloud_provider(Arc::new(StaticSkillProvider {
-                catalog: SkillCatalog::default(),
+                catalog: SkillCatalog {
+                    is_partial: true,
+                    warnings: vec!["catalog diagnostic".to_string()],
+                    ..SkillCatalog::default()
+                },
                 read_requests: Arc::new(Mutex::new(Vec::new())),
                 list_calls: Some(Arc::clone(&list_calls)),
                 fail_first_list: true,
@@ -2640,30 +2340,8 @@ async fn cloud_discovery_is_gated_and_reports_failures() -> TestResult {
             })
             .await;
 
-        assert_eq!(
-            registry
-                .turn_lifecycle_contributors()
-                .iter()
-                .map(|contributor| contributor.turn_start_phase(&thread_store))
-                .collect::<Vec<_>>(),
-            vec![
-                codex_extension_api::TurnStartPhase::BeforeTaskRegistration,
-                if cloud_available {
-                    codex_extension_api::TurnStartPhase::RegularTaskStart
-                } else {
-                    codex_extension_api::TurnStartPhase::BeforeTaskRegistration
-                },
-            ]
-        );
-        assert_eq!(
-            registry
-                .turn_lifecycle_contributors()
-                .iter()
-                .map(|contributor| contributor.requires_mcp_runtime(&thread_store))
-                .collect::<Vec<_>>(),
-            vec![false, cloud_available]
-        );
-        start_registered_turn(&registry, &session_store, &thread_store, "turn-1").await;
+        refresh_registered_catalogs_for_step(&registry, &session_store, &thread_store, "turn-1")
+            .await;
         assert_eq!(
             list_calls.load(Ordering::Relaxed),
             usize::from(cloud_available)
@@ -2729,6 +2407,40 @@ async fn cloud_discovery_is_gated_and_reports_failures() -> TestResult {
         assert_eq!(warning.thread_id, thread_store.level_id());
         assert_eq!(warning.turn_id.as_deref(), Some("turn-1"));
         assert!(warning.message.contains("temporary cloud failure"));
+
+        tokio::time::advance(std::time::Duration::from_secs(30)).await;
+        refresh_registered_catalogs_for_step(&registry, &session_store, &thread_store, "turn-2")
+            .await;
+        refresh_registered_catalogs_for_step(&registry, &session_store, &thread_store, "turn-3")
+            .await;
+        assert_eq!(list_calls.load(Ordering::Relaxed), 2);
+        let input = codex_extension_api::CloudCatalogRefreshInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+        };
+        let contributors = registry.turn_lifecycle_contributors();
+        for contributor in contributors {
+            assert_eq!(
+                contributor.refresh_cloud_catalog(input).await,
+                codex_extension_api::CloudCatalogRefreshOutcome::UNCHANGED
+            );
+        }
+        refresh_registered_catalogs_for_step(&registry, &session_store, &thread_store, "turn-4")
+            .await;
+        assert_eq!(list_calls.load(Ordering::Relaxed), 3);
+
+        // Re-arm the provider's first-call failure for an explicit refresh.
+        list_calls.store(0, Ordering::Relaxed);
+        let mut errors = Vec::new();
+        for contributor in contributors {
+            let outcome = contributor.refresh_cloud_catalog(input).await;
+            assert!(!outcome.needs_mcp_refresh);
+            errors.extend(outcome.result.err());
+        }
+        assert_eq!(
+            errors,
+            ["cloud skills unavailable: temporary cloud failure"]
+        );
     }
     Ok(())
 }
@@ -3013,7 +2725,7 @@ async fn root_qualified_locator_selects_only_the_matching_executor_skill() -> Te
         TurnInputContext {
             step_store: &step_store,
             turn_id: "turn-1".to_string(),
-            user_input: vec![UserInput::Mention {
+            user_input: &[UserInput::Mention {
                 name: "lint-fix".to_string(),
                 path: root_b_locator.to_string(),
             }],
@@ -3109,7 +2821,7 @@ async fn model_context_window_scales_executor_and_cloud_catalogs() -> TestResult
             thread_store: &thread_store,
         })
         .await;
-    start_registered_turn(&registry, &session_store, &thread_store, "turn-1").await;
+    refresh_registered_catalogs_for_step(&registry, &session_store, &thread_store, "turn-1").await;
     let mut model_info = model_info_from_slug("test-model");
     model_info.context_window = Some(10_000);
 
@@ -3281,7 +2993,7 @@ async fn executor_catalog_emits_at_most_four_warnings() -> TestResult {
         TurnInputContext {
             step_store: &step_store,
             turn_id: "turn-1".to_string(),
-            user_input: Vec::new(),
+            user_input: &[],
             environments: Vec::new(),
         },
         /*extension_metrics*/ None,
@@ -3388,7 +3100,7 @@ async fn host_catalog_compacts_shared_paths_under_budget_pressure() -> TestResul
         TurnInputContext {
             step_store: &ExtensionData::new("step"),
             turn_id: "turn-1".to_string(),
-            user_input: vec![UserInput::Text {
+            user_input: &[UserInput::Text {
                 text: "hello".to_string(),
                 text_elements: Vec::new(),
             }],
@@ -3474,7 +3186,7 @@ async fn prompt_hidden_skill_can_still_be_invoked() -> TestResult {
         TurnInputContext {
             step_store: &ExtensionData::new("step"),
             turn_id: "turn-1".to_string(),
-            user_input: vec![UserInput::Text {
+            user_input: &[UserInput::Text {
                 text: "$hidden-skill".to_string(),
                 text_elements: Vec::new(),
             }],
@@ -3720,7 +3432,6 @@ struct TestConfig {
     omit_descriptions: bool,
     bundled_skills_enabled: bool,
     cloud_skill_enabled: bool,
-    shadow_selection_enabled: bool,
 }
 
 fn default_config() -> TestConfig {
@@ -3730,7 +3441,6 @@ fn default_config() -> TestConfig {
         omit_descriptions: false,
         bundled_skills_enabled: true,
         cloud_skill_enabled: true,
-        shadow_selection_enabled: false,
     }
 }
 
@@ -3742,7 +3452,6 @@ fn skills_extension_config(config: &TestConfig) -> SkillsExtensionConfig {
         max_context_tokens: None,
         bundled_skills_enabled: config.bundled_skills_enabled,
         cloud_skill_enabled: config.cloud_skill_enabled,
-        shadow_selection_enabled: config.shadow_selection_enabled,
     }
 }
 

@@ -1,6 +1,6 @@
 //! Shared root-conversation and host-verified answer sections.
 //!
-//! Hosts resolve source provenance; sync preparation applies request limits. Source roles remain
+//! Hosts resolve source provenance; preparation applies request limits. Source roles remain
 //! line-labeled evidence, not instructions or a change to the delivery role.
 
 use crate::ContextSection;
@@ -10,8 +10,29 @@ use crate::SectionInput;
 use crate::SectionScope;
 use codex_protocol::models::ContentItem;
 
+/// Authorization state that changes on genuine user input or history resets.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GuardianAuthorizationVersion {
+    /// UUID of the loaded root, present only in hosted evidence.
+    pub root_runtime_id: Option<[u8; 16]>,
+    /// User-message/reset revision, preserved across compaction and internal context.
+    pub user_message_revision: u64,
+    /// False when required retained answers or root instructions are unavailable.
+    pub retained_context_complete: bool,
+}
+
+/// Evidence used by a score eligible to cancel a pending review.
+#[derive(Debug, Eq, PartialEq)]
+pub struct CachedApprovalContext {
+    /// Revisions of the thread requesting approval.
+    pub user_message_revision: u64,
+    pub review_context_revision: u64,
+    /// Authorization and review-context revisions, absent when reviewing without a root.
+    pub root_versions: Option<(GuardianAuthorizationVersion, u64)>,
+}
+
 /// A root conversation message or host notice exposed only to a worker's Guardian reviewers.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum GuardianRootMessage {
     /// Genuine root-user input that can establish or revoke authorization.
     User(String),
@@ -84,9 +105,7 @@ impl SectionContributor for RootConversationSection {
     }
 
     fn contribute(&self, input: &SectionInput<'_>) -> Result<Option<ContextSection>, SectionError> {
-        if input.target == crate::ContextTarget::Sync
-            && let Some(candidates) = input.root_conversation_candidates
-        {
+        if let Some(candidates) = input.root_conversation_candidates {
             return Ok(Some(ContextSection::RootConversation {
                 content: RootConversationContent::Collected(candidates.clone()),
             }));

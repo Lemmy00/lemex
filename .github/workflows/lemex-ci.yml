@@ -98,11 +98,12 @@ jobs:
     needs: metadata-and-packaging
     if: needs.metadata-and-packaging.outputs.rust_required == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -117,6 +118,21 @@ jobs:
       - name: Type-check Lemex and its code-mode host
         working-directory: codex-rs
         run: cargo check --locked --bin lemex --bin lemex-code-mode-host
+      - name: Test Lemex provider, history and product boundaries
+        working-directory: codex-rs
+        env:
+          RUST_MIN_STACK: "8388608"
+        run: |
+          cargo test --locked -p codex-model-provider --lib
+          cargo test --locked -p codex-cli --bin lemex installed_cli_omits_cloud_desktop_and_test_client_commands
+          cargo test --locked -p codex-cli --bin lemex history_browses_saved_chats_across_projects_and_sources
+          cargo test --locked -p codex-tui --lib history_lists_all_top_level_chats_without_project_or_provider_filter
+          cargo test --locked -p codex-tui --lib lemex_keeps_coding_and_voice_without_account_or_pet_commands
+          cargo test --locked -p codex-tui --lib chatwidget::tests::model_picker_tests
+          cargo test --locked -p codex-tui --lib local_tips_do_not_advertise_removed_desktop_commands
+          cargo test --locked -p codex-tui --lib lemex_status_choices_keep_tokens_without_account_reports
+          cargo test --locked -p codex-tui --lib fetch_thread_usage_keeps_account_reporting_disabled_with_legacy_auth
+          cargo test --locked -p codex-rollout-trace --lib traced_response_item_preserves_reasoning_content_omitted_by_normal_serializer
       - name: Test network proxy credential isolation
         working-directory: codex-rs
         env:

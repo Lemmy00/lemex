@@ -219,19 +219,19 @@ async fn command_start_before_message_completion_does_not_duplicate_preamble() -
     );
     for replay in [false, true] {
         if replay {
-            app.store_active_thread_receiver().await;
-            let (receiver, snapshot) = app
+            app.save_active_thread_state().await;
+            let snapshot = app
                 .activate_thread_for_replay(thread_id)
                 .await
                 .expect("thread should retain its buffered notifications");
-            app.active_thread_rx = Some(receiver);
             app.render_thread_snapshot(
                 &mut tui,
-                &app_server,
+                &mut app_server,
                 thread_id,
                 snapshot,
                 /*resume_restored_queue*/ false,
-            )?;
+            )
+            .await?;
             while let Ok(event) = app_events.try_recv() {
                 app.handle_event(&mut tui, &mut app_server, event).await?;
             }

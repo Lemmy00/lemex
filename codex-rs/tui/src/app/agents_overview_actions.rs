@@ -7,6 +7,8 @@ use super::agents_overview::AGENTS_OVERVIEW_VIEW_ID;
 use crate::app_event::AgentsOverviewAction;
 use crate::app_event::AppEvent;
 use crate::app_server_session::AppServerSession;
+use crate::backend_id::BackendId;
+use crate::bottom_pane::BottomPaneView;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::chatwidget::ChatWidget;
@@ -56,7 +58,9 @@ async fn run_lifecycle_modal<T>(
     operation: impl Future<Output = T>,
     events: impl Stream<Item = tui::TuiEvent> + Unpin,
 ) -> color_eyre::Result<T> {
-    app.render_chat_widget_frame(tui, tui.terminal.last_known_screen_size)?;
+    let screen_size = tui.prepare_draw_size()?;
+    app.handle_draw_pre_render(tui, screen_size)?;
+    app.render_chat_widget_frame(tui, screen_size)?;
     let mut events = events.fuse();
     tokio::pin!(operation);
     let result = loop {
@@ -68,18 +72,31 @@ async fn run_lifecycle_modal<T>(
                 if matches!(&event, tui::TuiEvent::Paste(_) | tui::TuiEvent::FocusLost) {
                     app.cancel_pending_key_chord();
                 }
-                let dashboard_active = app.chat_widget
+                let dock_owns_input = app.workspace_center_owns_input();
+                let dashboard_active = dock_owns_input || app.chat_widget
                     .selected_index_for_active_view(AGENTS_OVERVIEW_VIEW_ID)
                     .is_some();
                 match event {
                     tui::TuiEvent::Key(key) if dashboard_active => {
                         if let Some(key) = app.route_key_chord_event(tui, key) {
-                            app.chat_widget.handle_key_event_with_activation_key(key, app.routed_key_activation);
+                            if dock_owns_input {
+                                if let Some(view) = &mut app.agents_overview.workspace.view {
+                                    view.handle_key_event(key);
+                                }
+                            } else {
+                                app.chat_widget.handle_key_event_with_activation_key(key, app.routed_key_activation);
+                            }
                         }
                         tui.frame_requester().schedule_frame();
                     }
                     tui::TuiEvent::Paste(text) if dashboard_active => {
-                        app.chat_widget.handle_paste(text);
+                        if dock_owns_input {
+                            if let Some(view) = &mut app.agents_overview.workspace.view {
+                                view.handle_paste(text);
+                            }
+                        } else {
+                            app.chat_widget.handle_paste(text);
+                        }
                         tui.frame_requester().schedule_frame();
                     }
                     tui::TuiEvent::Key(_) | tui::TuiEvent::Paste(_) | tui::TuiEvent::FocusLost | tui::TuiEvent::Mouse(_) => {}
@@ -106,7 +123,8 @@ impl App {
             return;
         }
         let request_id = Uuid::new_v4();
-        self.agents_overview.pending_pin_change = Some(request_id);
+        self.agents_overview.pending_pin_change = Some((request_id, app_server.backend_id()));
+        let backend_id = app_server.backend_id();
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
@@ -123,6 +141,7 @@ impl App {
                 .map(|_| ())
                 .map_err(|error| error.to_string());
             app_event_tx.send(AppEvent::AgentsOverviewPinToggled {
+                backend_id,
                 request_id,
                 thread_id,
                 pinned,
@@ -134,18 +153,25 @@ impl App {
     pub(super) fn complete_agents_overview_pin(
         &mut self,
         app_server: &AppServerSession,
+        backend_id: BackendId,
         request_id: Uuid,
         thread_id: ThreadId,
         pinned: bool,
         result: Result<(), String>,
     ) {
-        if self.agents_overview.pending_pin_change != Some(request_id) {
+        let Some((_, owner)) = self
+            .agents_overview
+            .pending_pin_change
+            .filter(|(id, owner)| *id == request_id && *owner == backend_id)
+        else {
             return;
-        }
+        };
         self.agents_overview.pending_pin_change = None;
         match result {
             Ok(()) => {
-                if let Some(pinned_thread_ids) = self.agents_overview.pinned_thread_ids.as_mut() {
+                if let Some(Some(pinned_thread_ids)) =
+                    self.agents_overview.pins_by_backend.get_mut(&owner)
+                {
                     if pinned {
                         if !pinned_thread_ids.contains(&thread_id) {
                             pinned_thread_ids.push(thread_id);
@@ -162,21 +188,11 @@ impl App {
                 ));
             }
         }
-        let restore_show_more = self.agents_overview.refresh_show_more;
-        if let Some(refresh) = self.agents_overview.refresh_task.take() {
-            refresh.abort();
+        self.cancel_agents_overview_refresh(backend_id);
+        if backend_id == app_server.backend_id() {
+            self.refresh_agents_overview_threads(app_server);
         }
-        self.agents_overview.request_id = None;
-        self.agents_overview.refresh_show_more = false;
-        self.agents_overview.refresh_notifications.clear();
-        let refresh_thread_ids =
-            std::mem::take(&mut self.agents_overview.active_refresh_thread_ids);
-        self.agents_overview
-            .refresh_thread_ids
-            .extend(refresh_thread_ids);
-        self.agents_overview.refresh_pending = false;
-        self.agents_overview.show_more_requested |= restore_show_more;
-        self.refresh_agents_overview_threads(app_server);
+
         self.repaint_agents_overview();
     }
 
@@ -218,8 +234,8 @@ impl App {
             ),
             AgentsOverviewAction::Delete => (
                 format!("Permanently delete “{name}”?"),
-                "Tasks with saved side chats stay intact. Otherwise, deleting this task stops its running work and permanently deletes its history and its child agents’ history.",
-                "Permanently delete task and child agents",
+                "This stops running work and permanently deletes this task, its child agents, and its saved side chats.",
+                "Permanently delete task and history",
             ),
         };
         self.chat_widget.show_selection_view(SelectionViewParams {
@@ -331,7 +347,11 @@ impl App {
                 attempted = true;
                 match action {
                     AgentsOverviewAction::Archive => app_server.thread_archive(thread_id).await,
-                    AgentsOverviewAction::Delete => app_server.thread_delete(thread_id).await,
+                    AgentsOverviewAction::Delete => {
+                        app_server
+                            .delete_thread_with_saved_side_chats(thread_id)
+                            .await
+                    }
                 }
             }
             .await;
@@ -369,22 +389,7 @@ impl App {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .removal = None;
         let (result, detach_primary) = outcome?;
-        if attempted {
-            // A read started before the RPC can contain stale task and approval state.
-            if let Some(refresh) = self.agents_overview.refresh_task.take() {
-                refresh.abort();
-            }
-            self.agents_overview.request_id = None;
-            self.agents_overview.refresh_show_more = false;
-            self.agents_overview.active_refresh_thread_ids.clear();
-            self.agents_overview
-                .view_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .loading = false;
-            self.agents_overview.refresh_pending = false;
-            self.agents_overview.refresh_notifications.clear();
-        }
+
         if result.is_ok() {
             let mut removed = if removes_subtree {
                 self.known_thread_subtree(thread_id)
@@ -407,15 +412,15 @@ impl App {
                 self.agents_overview.dispatched_requests.remove(&removed_id);
             }
         }
+        if attempted {
+            // Discard reads started before the mutation after recording the removed threads.
+            self.cancel_agents_overview_refresh(app_server.backend_id());
+        }
         if detach_primary {
-            self.agents_overview.selection_after_removal =
-                self.agents_overview.selection_after_removal.or_else(|| {
-                    self.chat_widget
-                        .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
-                        .and_then(|index| {
-                            self.agents_overview.visible_thread_ids.get(index).copied()
-                        })
-                });
+            self.agents_overview.selection_after_removal = self
+                .agents_overview
+                .selection_after_removal
+                .or_else(|| self.overview_selected_thread_id());
             self.reset_for_thread_switch(tui)?;
             self.pending_thread_switch_resets += 1;
             self.app_event_tx

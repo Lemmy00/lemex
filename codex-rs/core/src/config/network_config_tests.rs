@@ -4,13 +4,14 @@ use super::*;
 use codex_config::RequirementSource;
 use codex_network_proxy::NetworkProxyConstraints;
 use codex_network_proxy::build_config_state;
+use codex_network_proxy::environment_policy_from_config;
 use pretty_assertions::assert_eq;
 
 #[test]
 fn environment_policy_presence_keeps_selected_and_managed_denials() {
     let mut configured_proxy = NetworkProxyConfig::default();
     configured_proxy.set_denied_domains(vec!["blocked.example".to_string()]);
-    let expected = EnvironmentNetworkPolicy::from_config(
+    let expected = environment_policy_from_config(
         &configured_proxy,
         /*managed_allowed_domains_only*/ false,
     );
@@ -90,7 +91,7 @@ allow_local_binding = false
             );
             assert_eq!(
                 validate_environment_network_policy(
-                    &EnvironmentNetworkPolicy::from_config(
+                    &environment_policy_from_config(
                         &expected.to_network_proxy_config(),
                         /*managed_allowed_domains_only*/ false,
                     ),
@@ -146,7 +147,7 @@ action = ['redact']
         "[unix_sockets]\n'relative.sock' = 'allow'",
         "[unix_sockets]\n'~/allowed.sock' = 'allow'",
         "[unix_sockets]\n\"/tmp/\\u0000allowed.sock\" = 'allow'",
-        "[domains]\n'[' = 'allow'",
+        "[domains]\n'api[12].example' = 'allow'",
     ] {
         let network: NetworkToml = toml::from_str(raw).unwrap();
         let projected = project_environment_profile_network(Some(network.clone()))
@@ -154,7 +155,15 @@ action = ['redact']
             .unwrap();
         assert_eq!(projected, network);
         let configured_proxy = projected.to_network_proxy_config();
-        let policy = EnvironmentNetworkPolicy::from_config(
+        assert!(
+            PreparedNetworkConfig {
+                configured_proxy: configured_proxy.clone()
+            }
+            .build(/*requirements*/ None, &PermissionProfile::read_only())
+            .expect("a disabled unmanaged profile can load unused selectors")
+            .is_none()
+        );
+        let policy = environment_policy_from_config(
             &configured_proxy,
             /*managed_allowed_domains_only*/ false,
         );
@@ -187,7 +196,7 @@ action = ['redact']
             .unwrap();
         assert_eq!(
             policy,
-            EnvironmentNetworkPolicy::from_config(
+            environment_policy_from_config(
                 &NetworkProxyConfig {
                     enabled: true,
                     unix_sockets: Some(Default::default()),

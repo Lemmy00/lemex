@@ -47,16 +47,25 @@ pub(crate) enum Overlay {
 }
 
 impl Overlay {
+    /// The transcript currently receiving input, if any.
+    pub(crate) fn input_transcript(&self) -> Option<&TranscriptOverlay> {
+        match self {
+            Self::Transcript(view) => Some(view),
+            _ => None,
+        }
+    }
+
     pub(crate) fn new_transcript(
         cells: Vec<Arc<dyn HistoryCell>>,
         keymap: PagerKeymap,
         copy_on_select: bool,
         mouse_scroll_speed: f64,
+        bidi_layout: bool,
     ) -> Self {
         let mut overlay = TranscriptOverlay::new(cells, keymap);
+        overlay.view.bidi_layout = bidi_layout;
         overlay.view.copy_on_select = copy_on_select;
         overlay.view.mouse_scroll_speed = mouse_scroll_speed;
-        overlay.view.primary_selection = crate::clipboard_copy::primary::available();
         Self::Transcript(overlay)
     }
 
@@ -146,8 +155,10 @@ fn render_navigation_hints(area: Rect, buf: &mut Buffer, keymap: &PagerKeymap) {
         ("jump_top", &keymap.jump_top),
         ("jump_bottom", &keymap.jump_bottom),
     ];
-    let hints = actions
-        .chunks_exact(2)
+    const ACTIONS_PER_HINT: usize = 2;
+    let (action_groups, _) = actions.as_chunks::<ACTIONS_PER_HINT>();
+    let hints = action_groups
+        .iter()
         .zip(["to scroll", "to page", "to jump"])
         .map(|(actions, description)| {
             (

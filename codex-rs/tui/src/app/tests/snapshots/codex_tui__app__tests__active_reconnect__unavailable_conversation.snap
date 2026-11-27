@@ -6,5 +6,3 @@ expression: "format!(\"{history}\\n{}\",\nrender_bottom_popup(&app.chat_widget,\
 ⚠ A background Lemex service is running v2.0.0, different from your Lemex CLI
   v0.0.0.
 › unavailable draft
-
-  gpt-test default · /tmp/project

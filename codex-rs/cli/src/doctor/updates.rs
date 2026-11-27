@@ -170,7 +170,7 @@ where
             .request(Method::GET, url)
             .header(
                 http::header::USER_AGENT,
-                concat!("codex-doctor/", env!("CARGO_PKG_VERSION")),
+                concat!("lemex-doctor/", env!("CARGO_PKG_VERSION")),
             )
             .send()
             .await

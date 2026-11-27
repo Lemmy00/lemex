@@ -804,9 +804,11 @@ async fn guardian_cleanup_drops_stale_reviews_and_restores_mcp_status() {
 
     handle_turn_started(&mut chat, "turn-1");
     chat.on_mcp_server_status_updated(McpServerStatusUpdatedNotification {
+        environment_id: None,
         thread_id: None,
         name: "alpha".to_string(),
         status: McpServerStartupState::Starting,
+        duration_ms: None,
         error: None,
         failure_reason: None,
     });

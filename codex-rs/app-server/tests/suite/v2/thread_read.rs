@@ -52,6 +52,7 @@ use codex_app_server_protocol::ThreadStatus;
 use codex_app_server_protocol::ThreadTurnsListParams;
 use codex_app_server_protocol::ThreadTurnsListResponse;
 use codex_app_server_protocol::Turn;
+use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnItemsView;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
@@ -160,7 +161,7 @@ async fn thread_read_returns_summary_without_turns() -> Result<()> {
     assert_eq!(thread.model_provider, "mock_provider");
     assert!(!thread.ephemeral, "stored rollouts should not be ephemeral");
     assert!(thread.path.as_ref().expect("thread path").is_absolute());
-    assert_eq!(thread.cwd, test_absolute_path("/"));
+    assert_eq!(thread.cwd, test_absolute_path("/").into());
     assert_eq!(thread.cli_version, "0.0.0");
     assert_eq!(thread.source, SessionSource::Cli);
     assert_eq!(thread.git_info, None);
@@ -417,6 +418,7 @@ async fn paginated_stored_thread_routes_projected_turns() -> Result<()> {
         .send_thread_list_request(ThreadListParams {
             include_attached_threads: false,
             current_account_only: false,
+            included_thread_ids: None,
             excluded_thread_ids: None,
             attached_to_thread_id: None,
             originators: None,
@@ -658,6 +660,7 @@ async fn thread_search_occurrences_reads_paginated_projection() -> Result<()> {
             multi_agent_version: None,
             history_mode: codex_protocol::protocol::ThreadHistoryMode::Paginated,
             history_base: None,
+            inherited_history_visibility: Default::default(),
             subagent_history_start_ordinal: None,
             initial_window_id: ContextWindowId::new_uuid_v7(),
             runtime_workspace_roots: None,
@@ -688,7 +691,8 @@ async fn thread_search_occurrences_reads_paginated_projection() -> Result<()> {
                                 text_elements: Vec::new(),
                             },
                             codex_protocol::user_input::UserInput::Text {
-                                text: "dle needle needle needle".to_string(),
+                                text: "dle needle needle [needle](https://example.com/needle)  end\n\n```\na  b\n```"
+                                    .to_string(),
                                 text_elements: Vec::new(),
                             },
                         ],
@@ -701,8 +705,8 @@ async fn thread_search_occurrences_reads_paginated_projection() -> Result<()> {
                         id: "steer-1".to_string(),
                         client_id: None,
                         content: vec![codex_protocol::user_input::UserInput::Text {
-                            text: "steer toward needle".to_string(),
-                            text_elements: Vec::new(),
+                            text: "steer [label](https://example.com/needle)".to_string(),
+                            text_elements: vec![TextElement::new(ByteRange { start: 0, end: 5 }, /*placeholder*/ None)],
                         }],
                     }),
                 ),
@@ -795,7 +799,31 @@ async fn thread_search_occurrences_reads_paginated_projection() -> Result<()> {
             .collect::<Vec<_>>(),
         vec![0, 7, 14]
     );
+    assert_eq!(
+        data[0].snippet,
+        "Needle needle needle needle  end\n\n```\na  b\n```"
+    );
     let next_cursor = next_cursor.expect("first page should have another occurrence");
+
+    // A raw-text index may count a URL before a visible hit. Reject it rather than skipping that hit.
+    let old_cursor = serde_json::json!({
+        "threadId": thread_id.to_string(), "searchTerm": "needle",
+        "nextRolloutOrdinal": 2, "nextOccurrenceIndex": 1
+    });
+    let request_id = mcp
+        .send_thread_search_occurrences_request(ThreadSearchOccurrencesParams {
+            thread_id: thread_id.to_string(),
+            search_term: "needle".to_string(),
+            cursor: Some(old_cursor.to_string()),
+            limit: Some(3),
+        })
+        .await?;
+    let error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    assert!(error.error.message.contains("invalid cursor"));
 
     let request_id = mcp
         .send_thread_search_occurrences_request(ThreadSearchOccurrencesParams {
@@ -1004,7 +1032,8 @@ async fn thread_turns_list_reads_store_history_without_rollout_path() -> Result<
 }
 
 #[tokio::test]
-async fn thread_read_loaded_include_turns_reads_store_history_without_rollout_path() -> Result<()> {
+async fn thread_read_loaded_reads_stored_title_and_requested_history_without_rollout_path()
+-> Result<()> {
     let codex_home = TempDir::new()?;
     let store_id = Uuid::new_v4().to_string();
     MockResponsesConfig::new("http://127.0.0.1:1")
@@ -1078,15 +1107,31 @@ async fn thread_read_loaded_include_turns_reads_store_history_without_rollout_pa
             thread_id,
             patch: ThreadMetadataPatch {
                 daybreak_enabled: Some(false),
+                name: Some(Some("  Stored title  ".to_string())),
                 ..Default::default()
             },
             include_archived: false,
         })
         .await?;
 
-    let result = client
+    let reads_before = store.calls().await.read_thread;
+    let metadata = client
         .request(ClientRequest::ThreadRead {
             request_id: RequestId::Integer(2),
+            params: ThreadReadParams {
+                thread_id: thread.id.clone(),
+                include_turns: false,
+            },
+        })
+        .await?
+        .expect("metadata-only thread/read should succeed");
+    let metadata: ThreadReadResponse = serde_json::from_value(metadata)?;
+    assert_eq!(metadata.thread.name.as_deref(), Some("Stored title"));
+    assert_eq!(store.calls().await.read_thread - reads_before, 1);
+
+    let result = client
+        .request(ClientRequest::ThreadRead {
+            request_id: RequestId::Integer(3),
             params: ThreadReadParams {
                 thread_id: thread.id,
                 include_turns: true,
@@ -1188,6 +1233,7 @@ async fn thread_list_includes_store_thread_without_rollout_path() -> Result<()> 
             params: ThreadListParams {
                 include_attached_threads: false,
                 current_account_only: false,
+                included_thread_ids: None,
                 excluded_thread_ids: None,
                 attached_to_thread_id: None,
                 originators: None,
@@ -1672,6 +1718,7 @@ async fn paginated_thread_name_set_is_reflected_in_read_list_and_metadata_resume
         .send_thread_list_request(ThreadListParams {
             include_attached_threads: false,
             current_account_only: false,
+            included_thread_ids: None,
             excluded_thread_ids: None,
             attached_to_thread_id: None,
             originators: None,
@@ -2845,17 +2892,24 @@ async fn thread_items_read_validates_ids_before_history_access() -> Result<()> {
     Ok(())
 }
 
-#[test_case::test_case("model_not_found", CodexErrorInfo::ModelNotFound, "Access to this deployment ended."; "model_not_found")]
-#[test_case::test_case("inference_hook_denied", CodexErrorInfo::InferenceHookDenied, "Blocked by the workspace hook."; "inference_hook_denied")]
+#[test_case::test_case("api_key_spend_limit_exceeded", CodexErrorInfo::ApiKeySpendLimitExceeded, "Request denied", "Your API key has reached its spend limit."; "api_key_spend_limit_exceeded")]
+#[test_case::test_case("project_spend_limit_exceeded", CodexErrorInfo::ProjectSpendLimitExceeded, "Request denied", "Your API project has reached its spend limit."; "project_spend_limit_exceeded")]
+#[test_case::test_case("organization_spend_limit_exceeded", CodexErrorInfo::OrganizationSpendLimitExceeded, "Request denied", "Your API organization has reached its spend limit."; "organization_spend_limit_exceeded")]
+#[test_case::test_case("model_not_found", CodexErrorInfo::ModelNotFound, "Access to this deployment ended.", "Access to this deployment ended."; "model_not_found")]
+#[test_case::test_case("inference_hook_denied", CodexErrorInfo::InferenceHookDenied, "Blocked by the workspace hook.", "Blocked by the workspace hook."; "inference_hook_denied")]
 #[tokio::test]
 async fn thread_read_preserves_provider_error_after_failed_turn(
     code: &str,
     expected: CodexErrorInfo,
-    message: &str,
+    provider_message: &str,
+    expected_message: &str,
 ) -> Result<()> {
     let server = responses::start_mock_server().await;
-    let response_mock =
-        responses::mount_sse_once(&server, responses::sse_failed("resp-1", code, message)).await;
+    let response_mock = responses::mount_sse_once(
+        &server,
+        responses::sse_failed("resp-1", code, provider_message),
+    )
+    .await;
     let codex_home = TempDir::new()?;
     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
 
@@ -2888,12 +2942,14 @@ async fn thread_read_preserves_provider_error_after_failed_turn(
         timeout(DEFAULT_READ_TIMEOUT, mcp.read_notification("error")).await??;
     assert!(!live.will_retry);
     assert_eq!(live.error.codex_error_info, Some(expected));
-    assert_eq!(live.error.message, message);
-    timeout(
+    assert_eq!(live.error.message, expected_message);
+    let completed: TurnCompletedNotification = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_notification_message("turn/completed"),
+        mcp.read_notification("turn/completed"),
     )
     .await??;
+    assert_eq!(completed.turn.status, TurnStatus::Failed);
+    assert_eq!(completed.turn.error.as_ref(), Some(&live.error));
 
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
@@ -2911,6 +2967,27 @@ async fn thread_read_preserves_provider_error_after_failed_turn(
     );
     assert_eq!(response_mock.requests().len(), 1);
 
+    let recovered = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("recovered"),
+            responses::ev_completed("recovered"),
+        ]),
+    )
+    .await;
+    let next = mcp
+        .start_turn_and_wait_for_completion(TurnStartParams {
+            thread_id: thread.id,
+            input: vec![UserInput::Text {
+                text: "try again".into(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    assert_ne!(next.turn.id, completed.turn.id);
+    assert_eq!(next.turn.status, TurnStatus::Completed);
+    recovered.single_request();
     Ok(())
 }
 
@@ -3079,6 +3156,7 @@ async fn create_paginated_thread(
             multi_agent_version: None,
             history_mode: codex_protocol::protocol::ThreadHistoryMode::Paginated,
             history_base: None,
+            inherited_history_visibility: Default::default(),
             subagent_history_start_ordinal: None,
             initial_window_id: ContextWindowId::new_uuid_v7(),
             runtime_workspace_roots: None,
@@ -3197,6 +3275,7 @@ async fn seed_pathless_store_thread(
             multi_agent_version: None,
             history_mode: Default::default(),
             history_base: None,
+            inherited_history_visibility: Default::default(),
             subagent_history_start_ordinal: None,
             initial_window_id: ContextWindowId::new_uuid_v7(),
             runtime_workspace_roots: None,

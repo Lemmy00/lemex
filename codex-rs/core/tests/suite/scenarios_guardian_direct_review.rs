@@ -1,8 +1,10 @@
 //! Direct review preserves live action rendering without executing commands or applying patches.
 
 use anyhow::Result;
+use codex_core::CodexThread;
 use codex_core::config::Constrained;
 use codex_core::guardian_review::GuardianReviewResult;
+use codex_core::guardian_review::RecordedReviewMode;
 use codex_features::Feature;
 use codex_history::RolloutItem;
 use codex_protocol::ThreadId;
@@ -30,6 +32,21 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
+pub(in crate::suite) async fn assess_with_transcript_reviewer(
+    thread: &CodexThread,
+    tool_call: &ResponseItem,
+) -> codex_protocol::error::Result<GuardianReviewResult> {
+    thread
+        .review_recorded_call(
+            tool_call,
+            RecordedReviewMode::Transcript {
+                root_evidence: None,
+            },
+            &CancellationToken::new(),
+        )
+        .await
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn direct_exec_review_matches_live_action_without_execution() -> Result<()> {
     skip_if_no_network!(Ok(()));
@@ -52,13 +69,8 @@ async fn direct_exec_review_matches_live_action_without_execution() -> Result<()
     let mut call = ev_function_call("exec-review", "exec_command", arguments);
     call["item"]["encrypted_function_args"] = json!([]);
     call["item"]["encrypted_content"] = json!("cached-output-tokens");
-    let assessment = json!({
-        "risk_level": "low",
-        "user_authorization": "high",
-        "outcome": "allow",
-        "rationale": "The command is authorized."
-    });
-    let mock = responses::mount_sse_sequence(
+    let assessment = r#"{"outcome":"allow","risk_level":"low","user_authorization":"high","rationale":"The command is authorized."}"#;
+    let live_mock = responses::mount_sse_sequence(
         harness.server(),
         vec![
             sse(vec![call, ev_completed("parent-action")]),
@@ -70,10 +82,6 @@ async fn direct_exec_review_matches_live_action_without_execution() -> Result<()
                 ev_assistant_message("parent-done", "Denied."),
                 ev_completed("parent-done"),
             ]),
-            sse(vec![
-                ev_assistant_message("direct-allow", &assessment.to_string()),
-                ev_completed("direct-review"),
-            ]),
         ],
     )
     .await;
@@ -81,6 +89,20 @@ async fn direct_exec_review_matches_live_action_without_execution() -> Result<()
     let prompt = "Check the command, but do not run it without approval.";
     test.submit_text_turn(prompt).await?;
 
+    let direct_mock = responses::mount_sse_sequence(
+        harness.server(),
+        vec![
+            sse(vec![
+                ev_assistant_message("direct-allow", assessment),
+                ev_completed("direct-review"),
+            ]),
+            sse(vec![
+                ev_assistant_message("follow-up-deny", r#"{"outcome":"deny"}"#),
+                ev_completed("follow-up-review"),
+            ]),
+        ],
+    )
+    .await;
     // Replay the recorded items, including the provenance attached to the user message.
     test.codex.flush_rollout().await?;
     let history = test.codex.load_history(/*include_archived*/ false).await?;
@@ -111,6 +133,7 @@ async fn direct_exec_review_matches_live_action_without_execution() -> Result<()
         .replace(vec![initial])
         .expect("live environments");
     let direct = test.thread_manager.start_thread(options).await?;
+    let tool_call = items.last().expect("recorded call").clone();
     direct.thread.inject_response_items(items).await?;
     direct
         .thread
@@ -122,29 +145,25 @@ async fn direct_exec_review_matches_live_action_without_execution() -> Result<()
             ..Default::default()
         })
         .await?;
-    let result = direct
-        .thread
-        .guardian_review(&CancellationToken::new())
-        .await?;
+    let result = assess_with_transcript_reviewer(&direct.thread, &tool_call).await?;
     assert_eq!(
         result,
         GuardianReviewResult {
             call_id: "exec-review".to_owned(),
-            assessment: Some(serde_json::from_value(assessment)?),
+            assessment: serde_json::from_str(assessment)?,
         }
     );
     assert!(!harness.path_exists("guardian-direct.txt").await?);
 
-    // A tool output at the end invalidates the request, even with an older exec call.
+    // A tool output is valid context but cannot be the review target.
+    let tool_call: ResponseItem = serde_json::from_value(json!({
+        "type": "function_call_output", "call_id": "exec-review", "output": "recorded output"
+    }))?;
     direct
         .thread
-        .inject_response_items(vec![serde_json::from_value(json!({
-            "type": "function_call_output", "call_id": "exec-review", "output": "recorded output"
-        }))?])
+        .inject_response_items(vec![tool_call.clone()])
         .await?;
-    let error = direct
-        .thread
-        .guardian_review(&CancellationToken::new())
+    let error = assess_with_transcript_reviewer(&direct.thread, &tool_call)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -152,41 +171,31 @@ async fn direct_exec_review_matches_live_action_without_execution() -> Result<()
         codex_protocol::error::CodexErrorDetails::InvalidRequest(_)
     ));
 
-    // The explicit allow rule skips review on every platform.
+    let tool_call: ResponseItem = serde_json::from_value(json!({
+        "type": "function_call", "call_id": "follow-up", "name": "exec_command",
+        "arguments": r#"{"cmd":"echo follow-up > guardian-follow-up.txt","sandbox_permissions":"require_escalated","justification":"Write the follow-up file."}"#,
+    }))?;
     direct
         .thread
-        .inject_response_items(vec![serde_json::from_value(json!({
-            "type": "function_call", "call_id": "skip-review", "name": "exec_command",
-            "arguments": r#"{"cmd":"git init guardian-skipped"}"#,
-        }))?])
+        .inject_response_items(vec![tool_call.clone()])
         .await?;
-    assert_eq!(
-        direct
-            .thread
-            .guardian_review(&CancellationToken::new())
-            .await?,
-        GuardianReviewResult {
-            call_id: "skip-review".to_owned(),
-            assessment: None,
-        }
-    );
-    assert!(!harness.path_exists("guardian-skipped").await?);
+    let follow_up = assess_with_transcript_reviewer(&direct.thread, &tool_call).await?;
+    assert_eq!(follow_up.call_id, "follow-up");
+    assert!(!harness.path_exists("guardian-follow-up.txt").await?);
 
-    // The same allowlisted command cannot be assessed after a recorded permission grant.
+    // Even the final history item must be checked for a prior permission request.
     direct
         .thread
         .inject_response_items(serde_json::from_value(json!([
             {"type": "function_call", "name": "request_permissions", "call_id": "grant",
              "arguments": r#"{"permissions":{"network":{"enabled":true}}}"#},
-            {"type": "function_call_output", "call_id": "grant",
-             "output": r#"{"permissions":{"network":{"enabled":true}},"scope":"turn","strict_auto_review":true}"#},
-            {"type": "function_call", "name": "exec_command", "call_id": "after-grant",
-             "arguments": r#"{"cmd":"git init guardian-skipped"}"#}
         ]))?)
         .await?;
-    let error = direct
-        .thread
-        .guardian_review(&CancellationToken::new())
+    let tool_call = serde_json::from_value(json!({
+        "type": "function_call", "name": "exec_command", "call_id": "after-grant",
+        "arguments": r#"{"cmd":"git init guardian-skipped"}"#,
+    }))?;
+    let error = assess_with_transcript_reviewer(&direct.thread, &tool_call)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -195,9 +204,13 @@ async fn direct_exec_review_matches_live_action_without_execution() -> Result<()
             if message.contains("does not support replaying request_permissions")
     ));
 
-    let requests = mock.requests();
-    let [_, live, _, recorded] = requests.as_slice() else {
-        panic!("expected parent, live Guardian, parent, recorded Guardian");
+    let live_requests = live_mock.requests();
+    let [_, live, _] = live_requests.as_slice() else {
+        panic!("expected parent, live Guardian, parent");
+    };
+    let recorded_requests = direct_mock.requests();
+    let [recorded, _] = recorded_requests.as_slice() else {
+        panic!("expected two recorded Guardian reviews");
     };
     assert_eq!(
         model_input(recorded, direct.thread_id)?,
@@ -205,8 +218,8 @@ async fn direct_exec_review_matches_live_action_without_execution() -> Result<()
     );
 
     let mut snapshot = context_snapshot::format_request_history_snapshot(
-        "Direct Guardian review of an injected exec call; an allow assessment does not execute it.",
-        std::slice::from_ref(recorded),
+        "Sequential direct Guardian reviews of recorded exec calls on the same thread.",
+        &recorded_requests,
         &ContextSnapshotOptions::default().rewrite_known_segments(),
     );
     let environment_id = &test.executor_environment().selection().environment_id;
@@ -222,8 +235,8 @@ async fn direct_exec_review_matches_live_action_without_execution() -> Result<()
     for (pattern, replacement) in [
         (r#"(?m)^(\s*"cwd": )"[^"]*""#, "$1\"<CWD>\""),
         (
-            r#""command": \[\s*(?:"[^"]*",\s*)*"echo should-not-run > guardian-direct.txt"\s*\]"#,
-            "\"command\": [\"<SHELL>\", \"echo should-not-run > guardian-direct.txt\"]",
+            r#""command": \[\s*(?:"[^"]*",\s*)*("echo [^"]+")\s*\]"#,
+            "\"command\": [\"<SHELL>\", $1]",
         ),
     ] {
         snapshot = regex_lite::Regex::new(pattern)?
@@ -330,15 +343,13 @@ async fn direct_patch_review_matches_live_action_without_writes(
         .thread_manager
         .start_thread(test.start_thread_options().await)
         .await?;
+    let tool_call = items.last().expect("recorded call").clone();
     direct.thread.inject_response_items(items).await?;
     assert_eq!(
-        direct
-            .thread
-            .guardian_review(&CancellationToken::new())
-            .await?,
+        assess_with_transcript_reviewer(&direct.thread, &tool_call).await?,
         GuardianReviewResult {
             call_id: "patch-review".to_owned(),
-            assessment: Some(serde_json::from_value(assessment)?),
+            assessment: serde_json::from_value(assessment)?,
         }
     );
     // 3. Verify no writes despite approval, and parity with the normal review input.
@@ -459,34 +470,38 @@ async fn direct_permissions_review_matches_live_action() -> Result<()> {
         .thread_manager
         .start_thread(test.start_thread_options().await)
         .await?;
+    let mut items = items;
+    let tool_call = items.pop().expect("recorded permission request");
     direct.thread.inject_response_items(items).await?;
     assert_eq!(
-        direct
-            .thread
-            .guardian_review(&CancellationToken::new())
-            .await?,
+        assess_with_transcript_reviewer(&direct.thread, &tool_call).await?,
         GuardianReviewResult {
             call_id: "permissions-review".to_owned(),
-            assessment: Some(serde_json::from_value(assessment)?),
+            assessment: serde_json::from_value(assessment)?,
         }
     );
-    // 3. Verify parity with the live review input.
-
+    // The live transcript includes the call. Both planned actions should match.
     let requests = mock.requests();
-    let [_, live_review_request, _, direct_review_request] = requests.as_slice() else {
+    let [_, live, _, recorded] = requests.as_slice() else {
         panic!("expected parent, live review, parent, direct review");
     };
-    let turn_ids = regex_lite::Regex::new(r#"\\"turn_id\\": \\"[^"\\]*\\""#)?;
-    assert_eq!(
-        turn_ids.replace_all(
-            &model_input(direct_review_request, direct.thread_id)?,
-            r#"\"turn_id\": \"<TURN>\""#
-        ),
-        turn_ids.replace_all(
-            &model_input(live_review_request, history.thread_id)?,
-            r#"\"turn_id\": \"<TURN>\""#
-        ),
-    );
+    let planned_action = |request: &ResponsesRequest| {
+        request
+            .input()
+            .iter()
+            .filter_map(|item| item["content"].as_array())
+            .flatten()
+            .filter_map(|part| {
+                serde_json::from_str::<serde_json::Value>(part["text"].as_str()?).ok()
+            })
+            .find(|value| value["tool"] == "request_permissions")
+            .expect("permission action")
+    };
+    let mut live_action = planned_action(live);
+    let mut recorded_action = planned_action(recorded);
+    live_action.as_object_mut().unwrap().remove("turn_id");
+    recorded_action.as_object_mut().unwrap().remove("turn_id");
+    assert_eq!(recorded_action, live_action);
     let snapshot = context_snapshot::format_request_history_snapshot(
         "Live and direct Guardian review receive the same permission request.",
         &requests,
@@ -517,58 +532,6 @@ async fn direct_permissions_review_matches_live_action() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn direct_patch_review_skips_writable_file_without_writes() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-    let builder = test_codex().with_model("gpt-5.5").with_config(|config| {
-        super::configure_scenario_catalog(config);
-        config.approvals_reviewer = ApprovalsReviewer::AutoReview;
-        config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
-        // Writable patches can bypass review only when a sandbox is available.
-        config.permissions.windows_sandbox_mode =
-            Some(codex_config::types::WindowsSandboxModeToml::Unelevated);
-        config
-            .permissions
-            .set_permission_profile(PermissionProfile::workspace_write())
-            .expect("workspace-write permissions");
-    });
-    let harness = TestCodexHarness::with_auto_env_builder(builder).await?;
-    let test = harness.test();
-    harness
-        .write_file("guardian-skipped.txt", "before\n")
-        .await?;
-    let mock = responses::mount_sse_once(
-        harness.server(),
-        sse(vec![ev_completed("unexpected-review")]),
-    )
-    .await;
-
-    test.codex
-        .inject_response_items(vec![serde_json::from_value(json!({
-            "type": "custom_tool_call",
-            "call_id": "patch-skip",
-            "name": "apply_patch",
-            "input": "*** Begin Patch\n*** Update File: guardian-skipped.txt\n@@\n-before\n+after\n*** End Patch",
-        }))?])
-        .await?;
-    assert_eq!(
-        test.codex
-            .guardian_review(&CancellationToken::new())
-            .await?,
-        GuardianReviewResult {
-            call_id: "patch-skip".to_owned(),
-            assessment: None,
-        }
-    );
-    assert!(mock.requests().is_empty());
-    assert_eq!(
-        harness.read_file_text("guardian-skipped.txt").await?,
-        "before\n"
-    );
-    test.codex.shutdown_and_wait().await?;
-    Ok(())
-}
-
 #[test_case::test_case(AskForApproval::Never; "never")]
 #[test_case::test_case(AskForApproval::Granular(codex_protocol::protocol::GranularApprovalConfig {
     sandbox_approval: true,
@@ -578,7 +541,7 @@ async fn direct_patch_review_skips_writable_file_without_writes() -> Result<()> 
     skill_approval: true,
 }); "granular")]
 #[tokio::test]
-async fn direct_permissions_review_skips_when_policy_disallows_requests(
+async fn direct_permissions_review_returns_assessment_when_policy_disallows_requests(
     policy: AskForApproval,
 ) -> Result<()> {
     skip_if_no_network!(Ok(()));
@@ -594,29 +557,39 @@ async fn direct_permissions_review_skips_when_policy_disallows_requests(
         });
     let harness = TestCodexHarness::with_auto_env_builder(builder).await?;
     let test = harness.test();
-    let mock =
-        responses::mount_sse_once(harness.server(), sse(vec![ev_completed("unexpected")])).await;
-    test.codex
-        .inject_response_items(vec![serde_json::from_value(json!({
-            "type": "function_call", "name": "request_permissions", "call_id": "permissions-skip",
-            "arguments": r#"{"permissions":{"network":{"enabled":true}}}"#,
-        }))?])
-        .await?;
+    let assessment = json!({
+        "outcome": "allow",
+        "risk_level": "low",
+        "user_authorization": "high",
+        "rationale": "The network request is authorized."
+    });
+    responses::mount_sse_once(
+        harness.server(),
+        sse(vec![
+            ev_assistant_message("review", &assessment.to_string()),
+            ev_completed("review"),
+        ]),
+    )
+    .await;
+    let tool_call: ResponseItem = serde_json::from_value(json!({
+        "type": "function_call", "name": "request_permissions", "call_id": "permissions-review",
+        "arguments": r#"{"permissions":{"network":{"enabled":true}}}"#,
+    }))?;
     assert_eq!(
-        test.codex
-            .guardian_review(&CancellationToken::new())
-            .await?,
+        assess_with_transcript_reviewer(&test.codex, &tool_call).await?,
         GuardianReviewResult {
-            call_id: "permissions-skip".into(),
-            assessment: None,
+            call_id: "permissions-review".into(),
+            assessment: serde_json::from_value(assessment)?,
         }
     );
-    assert!(mock.requests().is_empty());
     test.codex.shutdown_and_wait().await?;
     Ok(())
 }
 
-pub(super) fn model_input(request: &ResponsesRequest, parent: ThreadId) -> Result<String> {
+pub(in crate::suite) fn model_input(
+    request: &ResponsesRequest,
+    parent: ThreadId,
+) -> Result<String> {
     let mut input = request.input();
     for item in &mut input {
         item.as_object_mut().expect("response item").remove("id");
@@ -683,19 +656,18 @@ prefix_rule(pattern=["git", "init", "guardian-rewritten"], decision="prompt")
     )
     .await;
 
+    let tool_call: ResponseItem = serde_json::from_value(json!({
+        "type": "function_call", "call_id": "hook-review", "name": "exec_command",
+        "arguments": r#"{"cmd":"git init guardian-original"}"#,
+    }))?;
     test.codex
-        .inject_response_items(vec![serde_json::from_value(json!({
-            "type": "function_call", "call_id": "hook-review", "name": "exec_command",
-            "arguments": r#"{"cmd":"git init guardian-original"}"#,
-        }))?])
+        .inject_response_items(vec![tool_call.clone()])
         .await?;
     assert_eq!(
-        test.codex
-            .guardian_review(&CancellationToken::new())
-            .await?,
+        assess_with_transcript_reviewer(&test.codex, &tool_call).await?,
         GuardianReviewResult {
             call_id: "hook-review".to_owned(),
-            assessment: Some(serde_json::from_value(assessment)?),
+            assessment: serde_json::from_value(assessment)?,
         }
     );
 
@@ -776,15 +748,11 @@ async fn direct_exec_review_honors_hook_denial_before_policy_skip() -> Result<()
     let mock =
         responses::mount_sse_once(harness.server(), sse(vec![ev_completed("unexpected")])).await;
 
-    test.codex
-        .inject_response_items(vec![serde_json::from_value(json!({
-            "type": "function_call", "call_id": "hook-review", "name": "exec_command",
-            "arguments": r#"{"cmd":"git init guardian-original"}"#,
-        }))?])
-        .await?;
-    let error = test
-        .codex
-        .guardian_review(&CancellationToken::new())
+    let tool_call: ResponseItem = serde_json::from_value(json!({
+        "type": "function_call", "call_id": "hook-review", "name": "exec_command",
+        "arguments": r#"{"cmd":"git init guardian-original"}"#,
+    }))?;
+    let error = assess_with_transcript_reviewer(&test.codex, &tool_call)
         .await
         .expect_err("hook must reject the call before policy can skip review");
     assert!(matches!(

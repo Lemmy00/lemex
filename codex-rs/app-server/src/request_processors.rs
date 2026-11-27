@@ -203,6 +203,7 @@ use codex_app_server_protocol::ThreadDecrementElicitationResponse;
 use codex_app_server_protocol::ThreadDeleteParams;
 use codex_app_server_protocol::ThreadDeleteResponse;
 use codex_app_server_protocol::ThreadDeletedNotification;
+use codex_app_server_protocol::ThreadEnvironment;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadGoal;
@@ -216,8 +217,6 @@ use codex_app_server_protocol::ThreadGoalSetResponse;
 use codex_app_server_protocol::ThreadGoalStatus;
 use codex_app_server_protocol::ThreadGoalUpdatedNotification;
 use codex_app_server_protocol::ThreadHistoryBuilder;
-#[cfg(test)]
-use codex_app_server_protocol::ThreadHistoryMode;
 use codex_app_server_protocol::ThreadIncrementElicitationParams;
 use codex_app_server_protocol::ThreadIncrementElicitationResponse;
 use codex_app_server_protocol::ThreadInjectItemsParams;
@@ -312,7 +311,6 @@ use codex_app_server_protocol::WindowsSandboxSetupStartResponse;
 use codex_app_server_protocol::WorkspaceMessage;
 use codex_app_server_protocol::WorkspaceMessageType;
 use codex_arg0::Arg0DispatchPaths;
-use codex_backend_client::AddCreditsNudgeCreditType as BackendAddCreditsNudgeCreditType;
 use codex_backend_client::Client as BackendClient;
 use codex_backend_client::CodexWorkspaceMessage as BackendWorkspaceMessage;
 use codex_backend_client::CodexWorkspaceMessageType as BackendWorkspaceMessageType;
@@ -321,7 +319,6 @@ use codex_backend_client::ConsumeRateLimitResetCreditCode as BackendConsumeRateL
 use codex_backend_client::RateLimitResetCreditDetails as BackendRateLimitResetCreditDetails;
 use codex_backend_client::RateLimitResetCreditsDetails as BackendRateLimitResetCreditsDetails;
 use codex_backend_client::RequestError as BackendRequestError;
-use codex_backend_client::TokenUsageProfile;
 use codex_chatgpt::connectors;
 use codex_config::CloudConfigBundleLoadError;
 use codex_config::CloudConfigBundleLoadErrorCode;
@@ -356,8 +353,6 @@ use codex_core::exec::ExecExpiration;
 use codex_core::exec::ExecParams;
 use codex_core::exec_env::create_env;
 use codex_core::path_utils;
-#[cfg(test)]
-use codex_core::read_head_for_summary;
 use codex_core::sandboxing::SandboxPermissions;
 use codex_core::truncate_rollout_after_turn_id;
 use codex_core::truncate_rollout_before_turn_id;
@@ -387,7 +382,6 @@ use codex_core_plugins::remote::RemotePluginCatalogError;
 use codex_core_plugins::remote::RemotePluginDetail as RemoteCatalogPluginDetail;
 use codex_core_plugins::remote::RemotePluginServiceConfig;
 use codex_core_plugins::remote::RemotePluginShareContext as RemoteCatalogPluginShareContext;
-use codex_core_plugins::remote::RemotePluginShareSummary as RemoteCatalogPluginShareSummary;
 use codex_core_plugins::remote::RemotePluginSummary as RemoteCatalogPluginSummary;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::EnvironmentObservedStatus;
@@ -424,8 +418,6 @@ use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
-#[cfg(test)]
-use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AdditionalContextEntry as CoreAdditionalContextEntry;
@@ -438,8 +430,6 @@ use codex_protocol::protocol::ConversationStartTransport;
 use codex_protocol::protocol::ConversationTextParams;
 use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::EventMsg;
-#[cfg(test)]
-use codex_protocol::protocol::GitInfo as CoreGitInfo;
 use codex_protocol::protocol::McpAuthStatus as CoreMcpAuthStatus;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RealtimeVoicesList;
@@ -450,8 +440,6 @@ use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::TurnEnvironmentRequest;
 use codex_protocol::protocol::W3cTraceContext;
-#[cfg(test)]
-use codex_protocol::protocol::strip_user_message_prefix;
 use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use codex_protocol::user_input::UserInput as CoreInputItem;
 use codex_rmcp_client::McpOAuthClientRegistration;
@@ -504,7 +492,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::Mutex;
-use tokio::sync::Semaphore;
 use tokio::sync::SemaphorePermit;
 use tokio::sync::broadcast;
 use tokio::sync::oneshot;
@@ -513,6 +500,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::sync::DropGuard;
 use tokio_util::task::TaskTracker;
 use toml::Value as TomlValue;
+
+use self::thread_list_state::ThreadListState;
 use tracing::Instrument;
 use tracing::error;
 use tracing::info;
@@ -555,6 +544,7 @@ mod thread_attachments;
 mod thread_enrichment;
 mod thread_fork_goal;
 mod thread_input;
+pub(crate) mod thread_list_state;
 mod thread_memory;
 mod thread_processor;
 mod thread_queue_processor;
@@ -587,6 +577,7 @@ pub(crate) use search::SearchRequestProcessor;
 pub(crate) use thread_goal_processor::ThreadGoalRequestProcessor;
 pub(crate) use thread_processor::ThreadRequestProcessor;
 pub(crate) use thread_processor::ThreadResumeTarget;
+pub(crate) use thread_processor::ThreadSearchDelivery;
 pub(crate) use thread_queue_processor::ThreadQueueRequestProcessor;
 pub(crate) use turn_processor::TurnRequestProcessor;
 pub(crate) use windows_sandbox_processor::WindowsSandboxRequestProcessor;
@@ -605,17 +596,34 @@ use token_usage_replay::send_thread_token_usage_update_to_connection;
 
 pub(crate) fn apply_live_thread_settings(
     thread: &mut Thread,
+    loaded_thread: &CodexThread,
     config_snapshot: &ThreadConfigSnapshot,
 ) {
-    thread.model = Some(config_snapshot.model.clone());
-    thread.reasoning_effort = config_snapshot.reasoning_effort.clone();
-    thread.environments = Some(
+    apply_thread_view_settings(
+        thread,
+        loaded_thread,
+        config_snapshot.model.clone(),
+        config_snapshot.reasoning_effort.clone(),
         config_snapshot
             .environment_selections()
             .iter()
             .map(Into::into)
             .collect(),
     );
+}
+
+fn apply_thread_view_settings(
+    thread: &mut Thread,
+    loaded_thread: &CodexThread,
+    model: String,
+    reasoning_effort: Option<ReasoningEffort>,
+    environments: Vec<ThreadEnvironment>,
+) {
+    thread.daybreak_program_propagation_enrolled =
+        Some(loaded_thread.daybreak_program_propagation_enrolled());
+    thread.model = Some(model);
+    thread.reasoning_effort = reasoning_effort;
+    thread.environments = Some(environments);
 }
 
 fn resolve_request_cwd(cwd: Option<PathBuf>) -> Result<Option<AbsolutePathBuf>, JSONRPCErrorError> {
@@ -725,10 +733,6 @@ use self::thread_resume_redaction::*;
 use self::thread_summary::*;
 
 pub(crate) use self::thread_lifecycle::populate_thread_turns_from_history;
-#[cfg(test)]
-pub(crate) use self::thread_summary::read_summary_from_rollout;
-#[cfg(test)]
-pub(crate) use self::thread_summary::summary_to_thread;
 pub(crate) use self::thread_summary::thread_settings_from_config_snapshot;
 
 pub(crate) fn build_legacy_api_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<Turn> {

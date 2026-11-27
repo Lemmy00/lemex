@@ -64,7 +64,7 @@ async fn discover_executor_catalog(
     cloud_enabled: bool,
 ) -> SkillCatalog {
     let query = SkillListQuery {
-        turn_id: input.turn_id.to_string(),
+        turn_id: Some(input.turn_id.to_string()),
         executor_roots: input.ready_selected_capability_roots.to_vec(),
         host_snapshot: None,
         include_host_skills: false,
@@ -89,13 +89,13 @@ async fn discover_host_catalog(
 ) -> Option<SkillCatalog> {
     let host_snapshot = HostSkillsSnapshot::for_step(input.step_store, input.turn_store)
         .filter(|_| providers.has_host_provider())?;
-    if !config.include_instructions && !config.shadow_selection_enabled {
+    if !config.include_instructions {
         return Some(SkillCatalog::default());
     }
     Some(
         providers
             .list_host_for_turn(SkillListQuery {
-                turn_id: input.turn_id.to_string(),
+                turn_id: Some(input.turn_id.to_string()),
                 executor_roots: Vec::new(),
                 host_snapshot: Some(host_snapshot),
                 include_host_skills: true,

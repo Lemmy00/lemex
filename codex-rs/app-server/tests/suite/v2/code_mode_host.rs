@@ -58,7 +58,7 @@ async fn code_mode_model_output_uses_structured_host_timing(
     let experimental_show_cell_overhead = matches!(timing_output, TimingOutput::WithOverhead);
     let mut host = match transport {
         "grpc" => Some(
-            Command::new(codex_utils_cargo_bin::cargo_bin("codex-code-mode-host")?)
+            Command::new(codex_utils_cargo_bin::cargo_bin("lemex-code-mode-host")?)
                 .args(["--listen", "grpc://127.0.0.1:0"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())

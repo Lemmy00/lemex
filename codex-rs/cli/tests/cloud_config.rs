@@ -130,7 +130,7 @@ impl CloudManagedConfigFixture {
     }
 
     fn command(&self, args: &[&str]) -> Result<Command> {
-        let mut command = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+        let mut command = Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?);
         command
             .kill_on_drop(true)
             .current_dir(self.codex_home.path())
@@ -546,7 +546,7 @@ async fn startup_config_loads_managed_policy_or_reports_cloud_failure() -> Resul
         std::fs::write(&history_path, b"history must not be repaired")?;
         let output = fixture
             .command(&["app-server", "--print-startup-config"])?
-            .env("CODEX_SQLITE_HOME", sqlite_home.path())
+            .env("LEMEX_SQLITE_HOME", sqlite_home.path())
             .env(
                 "CODEX_REFRESH_TOKEN_URL_OVERRIDE",
                 format!("{}/refresh", fixture.server.uri()),
@@ -619,7 +619,7 @@ async fn startup_config_sign_out_reloads_policy_without_starting_runtime() -> Re
         let value = successful_json(
             fixture
                 .command(&["app-server", "--print-startup-config", "--startup-sign-out"])?
-                .env("CODEX_SQLITE_HOME", sqlite_home.path())
+                .env("LEMEX_SQLITE_HOME", sqlite_home.path())
                 .env(
                     "CODEX_REVOKE_TOKEN_URL_OVERRIDE",
                     format!("{}/revoke", fixture.server.uri()),
@@ -713,7 +713,7 @@ async fn check_registration(
         "--environment-id",
         "test",
     ])?;
-    command.env("CODEX_API_KEY", "test-api-key");
+    command.env("LEMEX_API_KEY", "test-api-key");
     let output = timeout(Duration::from_secs(30), command.output()).await??;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

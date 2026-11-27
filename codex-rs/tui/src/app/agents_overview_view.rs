@@ -9,11 +9,13 @@ pub(super) mod command_center;
 mod grouping;
 
 pub(super) use grouping::AgentsOverviewGrouping;
+use grouping::WorkspaceGroups;
 use grouping::model_name;
 
 use super::agents_overview::AGENTS_OVERVIEW_VIEW_ID;
 use super::agents_overview_details::AgentsOverviewDetails;
 use super::agents_overview_discovery::HistorySearch;
+use super::agents_overview_discovery::HistorySort;
 use super::agents_overview_discovery::supports_shared_pinning;
 use crate::app_event::AgentsOverviewAction;
 use crate::app_event::AppEvent;
@@ -37,6 +39,7 @@ use crate::terminal_hyperlinks::mark_buffer_hyperlinks;
 use crate::terminal_hyperlinks::plain_hyperlink_lines;
 use crate::terminal_hyperlinks::remap_wrapped_line;
 use crate::terminal_hyperlinks::visible_lines;
+use crate::thread_label::ThreadLabelStyle;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadActiveFlag;
@@ -65,6 +68,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::PoisonError;
+use std::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -108,6 +112,8 @@ fn is_subagent(thread: &Thread) -> bool {
 
 #[derive(Clone)]
 pub(super) struct AgentsOverviewRow {
+    pub(super) backend_id: Option<crate::backend_id::BackendId>,
+    pub(super) label_style: ThreadLabelStyle,
     pub(super) search_id: Option<uuid::Uuid>,
     pub(super) details: AgentsOverviewDetails,
     pub(super) thread: Thread,
@@ -130,10 +136,8 @@ struct AgentsOverviewProjectGroup {
 }
 
 impl AgentsOverviewProjectGroup {
-    fn for_thread(thread: &Thread, worktrees_enabled: bool) -> Self {
-        if worktrees_enabled
-            && let Some(identity) = codex_git_utils::repository_identity(thread.cwd.as_path())
-        {
+    fn for_cwd(cwd: &Path, worktrees_enabled: bool) -> Self {
+        if worktrees_enabled && let Some(identity) = codex_git_utils::repository_identity(cwd) {
             Self {
                 key: (
                     identity.common_dir.into_path_buf(),
@@ -143,8 +147,8 @@ impl AgentsOverviewProjectGroup {
             }
         } else {
             Self {
-                key: (thread.cwd.to_path_buf(), PathBuf::new()),
-                heading: thread.cwd.to_path_buf(),
+                key: (cwd.to_path_buf(), PathBuf::new()),
+                heading: cwd.to_path_buf(),
             }
         }
     }
@@ -157,10 +161,26 @@ pub(super) fn directory_group_key(cwd: &Path, worktrees_enabled: bool) -> PathBu
         .unwrap_or_else(|| cwd.to_path_buf())
 }
 
+/// The item painted under the pointer, identified across task-list refreshes.
+#[derive(Clone, Copy)]
+enum RowTarget {
+    Thread(ThreadId),
+    ShowMore,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct OpeningTask {
+    pub(super) thread_id: ThreadId,
+    pub(super) started_at: Instant,
+}
+
 #[derive(Default)]
 pub(super) struct AgentsOverviewViewState {
+    workspace_groups: WorkspaceGroups,
+    row_hits: Vec<(RowTarget, Rect)>,
     scroll: usize,
     page_height: usize,
+    list_width: u16,
     status_filter: usize,
     help: bool,
     pub(super) input: TextArea,
@@ -168,13 +188,16 @@ pub(super) struct AgentsOverviewViewState {
     pub(super) creating_worktree: bool,
     pub(super) refresh_failed: bool,
     pub(super) loading: bool,
+    pub(super) initial_discovery_started_at: Option<Instant>,
     pub(super) has_more: bool,
+    pub(super) opening_task: Option<OpeningTask>,
     show_more_selected: bool,
     pub(super) connection_notice: Option<&'static str>,
     /// Browse only while the server holds its lifecycle lock.
     pub(super) removal: Option<AgentsOverviewAction>,
     pub(super) server_version_notice: Option<String>,
     pub(super) search: String,
+    pub(super) search_sort: HistorySort,
     pub(super) history: Option<HistorySearch>,
     browse_selection: Option<ThreadId>,
     searching: bool,
@@ -185,6 +208,11 @@ pub(super) struct AgentsOverviewViewState {
 }
 
 impl AgentsOverviewViewState {
+    pub(super) fn finish_loading(&mut self) {
+        self.loading = false;
+        self.initial_discovery_started_at = None;
+    }
+
     pub(super) fn set_rename_input(&mut self, text: &str, keymap: &RuntimeKeymap) {
         let mut input = TextArea::new_single_line();
         input.set_keymap_bindings(keymap);
@@ -196,12 +224,15 @@ impl AgentsOverviewViewState {
     }
 
     pub(super) fn restart_history_search(&mut self) {
-        self.history =
-            (!self.search.is_empty() && self.connection_notice.is_none()).then(|| HistorySearch {
-                id: uuid::Uuid::new_v4(),
+        self.history = (!self.search.is_empty() && self.connection_notice.is_none()).then(|| {
+            let id = uuid::Uuid::new_v4();
+            HistorySearch {
+                id,
+                scan_id: id,
                 target: self.history.as_ref().map_or(10, |search| search.target),
                 ..Default::default()
-            });
+            }
+        });
     }
 
     fn includes_row(&self, row: &AgentsOverviewRow) -> bool {
@@ -218,17 +249,26 @@ impl AgentsOverviewViewState {
             })
     }
 
+    fn task_actions_blocked(&self) -> bool {
+        self.connection_notice.is_some() || self.creating_worktree || self.removal.is_some()
+    }
+
     pub(super) fn editing_metadata(&self) -> bool {
         self.searching || self.rename_target.is_some()
     }
 }
 
 pub(super) struct AgentsOverviewView {
+    pub(super) dock_motion: Option<(crate::motion::MotionMode, crate::tui::FrameRequester)>,
+    /// Some when shown beside the conversation. The value records keyboard focus.
+    pub(super) dock_focused: Option<bool>,
+    pub(super) hint_focus: crate::footer_hint::HintFocus,
     use_theme_colors: bool,
     pub(super) rows: Vec<AgentsOverviewRow>,
     project_groups: Vec<AgentsOverviewProjectGroup>,
     directory_group_keys: Vec<PathBuf>,
     pub(super) pinned_thread_ranks: Option<HashMap<ThreadId, usize>>,
+    pub(super) pin_action_supported: bool,
     pub(super) pin_action_pending: bool,
     pub(super) can_return_to_chat: bool,
     selected: usize,
@@ -261,14 +301,8 @@ impl AgentsOverviewView {
             })
             .or_else(|| rows.iter().position(|row| row.is_current))
             .unwrap_or(0);
-        let project_groups = rows
-            .iter()
-            .map(|row| AgentsOverviewProjectGroup::for_thread(&row.thread, worktrees_enabled))
-            .collect();
-        let directory_group_keys = rows
-            .iter()
-            .map(|row| directory_group_key(row.thread.cwd.as_path(), worktrees_enabled))
-            .collect();
+        let (project_groups, directory_group_keys) =
+            WorkspaceGroups::for_rows(&state, &rows, worktrees_enabled, &app_event_tx);
         let center_shortcut_keys = crate::keymap::keymap_action_ids()
             .filter(|action| matches!(action.context, KeymapContext::List | KeymapContext::Agents))
             .flat_map(|action| {
@@ -301,12 +335,16 @@ impl AgentsOverviewView {
             }
         }
         let mut view = Self {
+            dock_motion: None,
+            dock_focused: None,
+            hint_focus: crate::footer_hint::HintFocus::Active,
             editor_keymap: keymap.clone(),
             use_theme_colors,
             rows,
             project_groups,
             directory_group_keys,
             pinned_thread_ranks: None,
+            pin_action_supported: true,
             pin_action_pending: false,
             can_return_to_chat: false,
             selected,
@@ -323,6 +361,29 @@ impl AgentsOverviewView {
         view.state().completion = None;
         view.reconcile_command_center_selection();
         view
+    }
+
+    pub(super) fn owns_nested_input(&self) -> bool {
+        let state = self.state();
+        state.editing_metadata() || state.help || state.removal.is_some() || state.creating_worktree
+    }
+
+    /// Follow a newly displayed task once its row arrives. Ordinary refreshes keep the browse position.
+    pub(super) fn follow_changed_conversation(&mut self, previous: &Self) {
+        let Some((index, current)) = self.rows.iter().enumerate().find(|(_, row)| row.is_current)
+        else {
+            return;
+        };
+        if !previous
+            .rows
+            .iter()
+            .any(|row| row.is_current && row.thread_id == current.thread_id)
+            && !self.owns_nested_input()
+            && self.visible_indices().contains(&index)
+        {
+            self.selected = index;
+            self.state().show_more_selected = false;
+        }
     }
 
     pub(super) fn thread_ids(&self) -> Vec<ThreadId> {
@@ -362,6 +423,7 @@ impl AgentsOverviewView {
 
     fn can_toggle_selected_pin(&self) -> bool {
         !self.pin_action_pending
+            && self.pin_action_supported
             && self.pinned_thread_ranks.is_some()
             && self
                 .selected_row()
@@ -392,12 +454,16 @@ impl AgentsOverviewView {
         if self.state().history.is_none() {
             return;
         }
-        let visible = self.visible_indices().len();
+        let indices = self.visible_indices();
         let mut state = self.state();
         if state.more_available()
             && let Some(search) = &mut state.history
             && !search.loading
         {
+            let visible = indices
+                .iter()
+                .filter(|&&i| !search.retained.contains(&self.rows[i].thread_id))
+                .count();
             if additional > 0 {
                 search.target = visible + additional;
                 search.failed = false;
@@ -407,7 +473,7 @@ impl AgentsOverviewView {
             }
             search.loading = true;
             self.app_event_tx.send(AppEvent::SearchAgentsOverview(
-                search.id,
+                search.scan_id,
                 search.target - visible,
             ));
         }
@@ -418,6 +484,7 @@ impl AgentsOverviewView {
             self.load_search_matches(/*additional*/ 10);
             return;
         }
+
         if self.selected == usize::MAX && self.state().has_more {
             if !self.state().loading {
                 self.state().loading = true;
@@ -513,23 +580,21 @@ impl AgentsOverviewView {
             ]),
             width,
         );
+        let title = Line::from(Span::styled(
+            display_title(&row.thread).to_owned(),
+            self.title_style(row.thread_id).bold(),
+        ));
         let mut lines = vec![
             Line::from("Task details".bold()),
             Line::default(),
-            crate::line_truncation::truncate_line_with_ellipsis_if_overflow(
-                Line::from(Span::styled(
-                    display_title(&row.thread).to_owned(),
-                    self.title_style(row.thread_id).bold(),
-                )),
-                width,
-            ),
+            row.label_style.render(title, width),
             Line::from(vec![dot, " ".into(), status.into()]),
             Line::default(),
             model,
             reasoning,
             Line::default(),
             Line::from("Project".dim()),
-            Line::from(row.thread.cwd.display().to_string()),
+            Line::from(row.thread.cwd.to_string()),
         ];
         lines.extend(row.details.usage_lines.clone());
         if let Some(branch) = row
@@ -719,23 +784,33 @@ impl BottomPaneView for AgentsOverviewView {
             return;
         }
 
+        if self.agents_keymap.next_group.is_pressed(key) {
+            self.select_section(command_center::SectionDirection::Next);
+            return;
+        }
+        if self.agents_keymap.previous_group.is_pressed(key) {
+            self.select_section(command_center::SectionDirection::Previous);
+            return;
+        }
+
         if self.agents_keymap.search.is_pressed(key) {
             let mut state = self.state();
             if state.rename_target.is_none() {
                 if state.searching {
                     drop(state);
                     self.on_ctrl_c();
+                    return;
                 } else {
                     state.browse_selection = self.rows.get(self.selected).map(|row| row.thread_id);
                     state.searching = true;
                 }
             }
+            drop(state);
+            self.reconcile_command_center_selection();
             return;
         }
 
-        if (self.state().connection_notice.is_some()
-            || self.state().creating_worktree
-            || self.state().removal.is_some())
+        if self.state().task_actions_blocked()
             && self.keymap.action_for(key) != Some(ListAction::Cancel)
         {
             match self.keymap.action_for(key) {
@@ -744,11 +819,8 @@ impl BottomPaneView for AgentsOverviewView {
                 Some(action @ (ListAction::PageUp | ListAction::PageDown)) => {
                     self.page_selection(action)
                 }
-                Some(ListAction::JumpTop) => {
-                    self.selected = self.visible_indices().first().copied().unwrap_or(0);
-                }
-                Some(ListAction::JumpBottom) => {
-                    self.selected = self.visible_indices().last().copied().unwrap_or(0);
+                Some(action @ (ListAction::JumpTop | ListAction::JumpBottom)) => {
+                    self.jump_selection(action)
                 }
                 _ => {}
             }
@@ -787,14 +859,18 @@ impl BottomPaneView for AgentsOverviewView {
         }
         if self.agents_keymap.new_task.is_pressed(key) {
             self.app_event_tx.send(AppEvent::NewAgentsOverviewSession {
-                cwd: self.selected_row().map(|row| row.thread.cwd.clone()),
+                backend_id: self.selected_row().and_then(|row| row.backend_id),
+                cwd: self.selected_row().map(|row| row.thread.cwd.to_path_buf()),
             });
             return;
         }
         if self.agents_keymap.new_worktree.is_pressed(key) {
             if self.worktrees_enabled {
                 self.app_event_tx.send(AppEvent::NewAgentsOverviewWorktree {
-                    cwd: self.selected_row().map(|row| row.thread.cwd.clone()),
+                    backend_id: self.selected_row().and_then(|row| row.backend_id),
+                    cwd: self
+                        .selected_row()
+                        .and_then(|row| row.thread.cwd.to_inferred_abs_path()),
                 });
             }
             return;
@@ -866,16 +942,11 @@ impl BottomPaneView for AgentsOverviewView {
             match action {
                 ListAction::MoveUp => self.move_selection(/*forward*/ false),
                 ListAction::MoveDown => self.move_selection(/*forward*/ true),
-                ListAction::JumpTop => {
-                    self.selected = self.visible_indices().first().copied().unwrap_or(0);
-                }
-                ListAction::JumpBottom => {
-                    self.selected = self.visible_indices().last().copied().unwrap_or(0);
-                }
+                ListAction::JumpTop | ListAction::JumpBottom => self.jump_selection(action),
                 ListAction::Accept => self.activate(),
                 ListAction::Cancel => {
-                    if self.can_return_to_chat
-                        && matches!(self.on_ctrl_c(), CancellationEvent::NotHandled)
+                    if matches!(self.on_ctrl_c(), CancellationEvent::NotHandled)
+                        && self.can_return_to_chat
                     {
                         self.state().completion = Some(ViewCompletion::Cancelled);
                     }

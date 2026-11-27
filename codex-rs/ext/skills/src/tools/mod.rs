@@ -57,7 +57,7 @@ pub(crate) fn skill_tools(
     session_store: &ExtensionData,
     thread_store: &ExtensionData,
     step_store: &ExtensionData,
-) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
+) -> Vec<Arc<dyn ToolExecutor>> {
     let Some(thread_state) = thread_store.get::<SkillsThreadState>() else {
         return Vec::new();
     };
@@ -82,7 +82,7 @@ pub(crate) fn skill_tools(
         analytics,
         step_state,
     };
-    let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> = vec![
+    let mut tools: Vec<Arc<dyn ToolExecutor>> = vec![
         Arc::new(list::ListTool {
             context: context.clone(),
         }),

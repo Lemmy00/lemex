@@ -3,7 +3,6 @@
 //! pending billing results and disabled capability state.
 
 use super::App;
-use super::agents_overview::AGENTS_OVERVIEW_VIEW_ID;
 use super::background_requests::THREAD_USAGE_FETCH_TIMEOUT;
 use super::background_requests::fetch_thread_usage;
 use crate::app_event::AppEvent;
@@ -35,14 +34,20 @@ pub(super) struct AgentsOverviewUsage {
 }
 
 impl App {
+    pub(super) fn reset_agents_overview_usage_for_backend_switch(&mut self) {
+        self.agents_overview.usage.retain(|_, usage| {
+            usage.estimate = None;
+            usage.fetched_at = None;
+            usage.tokens.is_some()
+        });
+    }
+
     pub(super) fn refresh_agents_overview_usage(
         &mut self,
         app_server: &AppServerSession,
         frame_requester: FrameRequester,
     ) {
-        if self.reconnect.offline
-            || self.agents_overview.usage_disabled
-            || self.agents_overview.pending_usage.is_some()
+        if self.agents_overview.pending_usage.is_some()
             || !self.chat_widget.has_codex_backend_auth()
             || !matches!(
                 self.chat_widget.current_plan_type(),
@@ -56,14 +61,20 @@ impl App {
         {
             return;
         }
-        let Some(thread_id) = self
-            .chat_widget
-            .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
-            .and_then(|index| self.agents_overview.visible_thread_ids.get(index))
-            .copied()
-        else {
+        let Some(thread_id) = self.overview_selected_thread_id() else {
             return;
         };
+        let owner = app_server.backend_id();
+        // The plan used to format usage belongs to the displayed backend.
+        if self
+            .backend_registry
+            .owner(thread_id)
+            .is_some_and(|thread_owner| thread_owner != owner)
+            || self.reconnect.offline
+            || self.agents_overview.usage_disabled
+        {
+            return;
+        }
         if let Some(age) = self
             .agents_overview
             .usage
@@ -136,9 +147,12 @@ impl App {
                     usage.estimate = Some(estimate);
                 }
                 Ok(ThreadUsageOutcome::Disabled) => {
+                    let owner = self.app_server_backend_id;
                     self.agents_overview.usage_disabled = true;
-                    for usage in self.agents_overview.usage.values_mut() {
-                        usage.estimate = None;
+                    for (id, usage) in &mut self.agents_overview.usage {
+                        if self.backend_registry.owner(*id).or(owner) == owner {
+                            usage.estimate = None;
+                        }
                     }
                 }
                 Ok(ThreadUsageOutcome::Available(_)) | Err(_) => {}

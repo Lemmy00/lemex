@@ -3,7 +3,6 @@ mod account;
 mod account_system_proxy;
 
 mod account_gcp;
-mod account_thread_usage;
 mod agent_message_board;
 mod analytics;
 mod app_installed;
@@ -124,7 +123,6 @@ mod plugin_share;
 mod plugin_uninstall;
 mod process_exec;
 mod projects;
-mod rate_limit_reset_credits;
 mod rate_limits;
 #[path = "rate_limits_identity_tests.rs"]
 mod rate_limits_identity;
@@ -172,6 +170,9 @@ mod thread_read_state;
 mod thread_resume;
 mod thread_revert;
 mod thread_sample;
+#[cfg(target_os = "linux")]
+#[path = "thread_search_streaming_tests.rs"]
+mod thread_search_streaming;
 mod thread_sections;
 mod thread_settings_update;
 mod thread_shell_command;

@@ -54,6 +54,8 @@ impl App {
                     let mut config = self
                         .rebuild_config_for_cwd_from(
                             &settings.config,
+                            &settings.local_settings,
+                            &settings.target,
                             settings.config.cwd.to_path_buf(),
                         )
                         .await?;
@@ -161,6 +163,7 @@ impl App {
                 &config_current_cwd,
                 config_resume_cwd,
                 (&current_config, &local_settings),
+                &target,
             )
             .await
         {
@@ -177,15 +180,17 @@ impl App {
         }
         let resumed_thread = if matches!(target, AppServerTarget::LocalDaemon { .. }) {
             Some(
-                app_server
-                    .thread_read(target_session.thread_id, /*include_turns*/ false)
-                    .await
-                    .map_err(|error| {
-                        self.add_session_picker_error(format!(
-                            "Unable to check resumed folder: {error}"
-                        ));
-                        AppRunControl::Continue
-                    })?,
+                self.wait_for_opening_task(
+                    tui,
+                    app_server.thread_read(target_session.thread_id, /*include_turns*/ false),
+                )
+                .await
+                .map_err(|error| {
+                    self.add_session_picker_error(format!(
+                        "Unable to check resumed folder: {error}"
+                    ));
+                    AppRunControl::Continue
+                })?,
             )
         } else {
             None
@@ -279,11 +284,7 @@ impl App {
             if options.cancel == Some(crate::onboarding::TrustCancelAction::CurrentTask) {
                 return Err(AppRunControl::Continue);
             }
-            if self
-                .chat_widget
-                .selected_index_for_present_view(AGENTS_OVERVIEW_VIEW_ID)
-                .is_none()
-            {
+            if self.overview_selected_index().is_none() {
                 self.open_agents_overview(app_server);
             }
             return Err(AppRunControl::Continue);
@@ -295,7 +296,12 @@ impl App {
             *config = StartupDraftPump::run_with_optional_draft(
                 startup_draft.as_deref_mut(),
                 tui,
-                self.rebuild_config_for_cwd_from(config, config.cwd.to_path_buf()),
+                self.rebuild_config_for_cwd_from(
+                    config,
+                    local_settings,
+                    target,
+                    config.cwd.to_path_buf(),
+                ),
             )
             .await
             .map_err(|error| {

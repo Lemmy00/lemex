@@ -92,6 +92,71 @@ fn matching_filenames_survive_the_path_result_limit() {
 }
 
 #[test]
+fn highlights_use_scalar_offsets_for_basename_and_full_path_matches() {
+    let root = TempDir::new().unwrap();
+    let parent = Path::new("e\u{301}");
+    let path = parent.join("👩‍💻target.txt");
+    fs::create_dir(root.path().join(parent)).unwrap();
+    fs::write(root.path().join(&path), "").unwrap();
+
+    for (query, expected) in [
+        ("target", vec![6, 7, 8, 9, 10, 11]),
+        ("e👩t", vec![0, 1, 3, 4, 5, 6]),
+    ] {
+        let result = run(
+            query,
+            vec![root.path().to_path_buf()],
+            FileSearchOptions {
+                index_unit: Some(IndexUnit::Scalar),
+                ..Default::default()
+            },
+            /*cancel_flag*/ None,
+        )
+        .unwrap();
+        let [matched] = result.matches.as_slice() else {
+            panic!("expected one match for {query}");
+        };
+        assert_eq!((&matched.path, &matched.indices), (&path, &Some(expected)));
+    }
+}
+
+#[test]
+fn overlapping_roots_share_result_slots_by_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let parent = dir.path().to_path_buf();
+    let child = parent.join("sub");
+    fs::create_dir(&child).unwrap();
+    let expected = [parent.clone(), child.clone()].map(|root| (root, PathBuf::from("target.txt")));
+    for (root, path) in &expected {
+        fs::write(root.join(path), "").unwrap();
+    }
+
+    for roots in [
+        vec![parent.clone(), child.clone(), parent.clone()],
+        vec![child.clone(), parent, child],
+    ] {
+        let result = run(
+            "target",
+            roots,
+            FileSearchOptions {
+                limit: NonZero::new(2).unwrap(),
+                ..Default::default()
+            },
+            /*cancel_flag*/ None,
+        )
+        .unwrap();
+        let mut paths: Vec<_> = result
+            .matches
+            .into_iter()
+            .map(|m| (m.root, m.path))
+            .collect();
+        paths.sort();
+        assert_eq!(result.total_match_count, expected.len());
+        assert_eq!(paths, expected);
+    }
+}
+
+#[test]
 fn file_name_from_path_uses_basename() {
     assert_eq!(file_name_from_path("foo/bar.txt"), "bar.txt");
 }
@@ -223,22 +288,66 @@ fn session_scanned_file_count_is_monotonic_across_queries() {
 
 #[test]
 fn session_streams_updates_before_walk_complete() {
-    let dir = create_temp_tree(/*file_count*/ 600);
+    let dir = tempfile::tempdir().unwrap();
     let reporter = Arc::new(RecordingReporter::default());
-    let session = create_session(
-        vec![dir.path().to_path_buf()],
-        FileSearchOptions::default(),
-        reporter.clone(),
-        /*cancel_flag*/ None,
-    )
-    .expect("session");
+    let (work_tx, work_rx) = unbounded();
+    let notify_tx = work_tx.clone();
+    let nucleo = Nucleo::new(
+        Config::DEFAULT.match_paths(),
+        Arc::new(move || {
+            let _ = notify_tx.send(WorkSignal::NucleoNotify);
+        }),
+        /*num_threads*/ Some(1),
+        /*columns*/ 1,
+    );
+    let injector = nucleo.injector();
+    let inner = Arc::new(SessionInner {
+        search_directories: vec![dir.path().to_path_buf()],
+        limit: 50,
+        threads: 1,
+        index_unit: None,
+        respect_gitignore: true,
+        cancelled: Arc::new(AtomicBool::new(false)),
+        shutdown: Arc::new(AtomicBool::new(false)),
+        reporter: reporter.clone(),
+        work_tx,
+    });
+    let session = FileSearchSession {
+        inner: inner.clone(),
+    };
+    let worker = thread::spawn(move || matcher_worker(inner, work_rx, nucleo));
 
+    // Feed a walk result directly so a fast filesystem cannot finish the walk
+    // before the matcher has a chance to publish a streaming update.
+    injector.push(
+        IndexedEntry::Ascii {
+            root_idx: 0,
+            match_type: MatchType::File,
+        },
+        |_, columns| columns[0] = Utf32String::from("file-0000.txt"),
+    );
     session.update_query("file-0");
-    let completed = reporter.wait_for_complete(Duration::from_secs(5));
-
-    assert!(completed);
-    let updates = reporter.updates();
-    assert!(updates.iter().any(|snapshot| !snapshot.walk_complete));
+    assert!(reporter.wait_until(
+        &reporter.updates,
+        &reporter.update_cv,
+        Duration::from_secs(5),
+        |updates| updates.iter().any(|snapshot| {
+            !snapshot.walk_complete
+                && snapshot.query == "file-0"
+                && snapshot
+                    .matches
+                    .iter()
+                    .any(|matched| matched.path == Path::new("file-0000.txt"))
+        }),
+    ));
+    session
+        .inner
+        .work_tx
+        .send(WorkSignal::WalkComplete)
+        .unwrap();
+    assert!(reporter.wait_for_complete(Duration::from_secs(5)));
+    drop(session);
+    worker.join().unwrap().unwrap();
 }
 
 #[test]
@@ -367,7 +476,7 @@ fn run_returns_matches_for_query() {
         limit: NonZero::new(20).unwrap(),
         exclude: Vec::new(),
         threads: NonZero::new(2).unwrap(),
-        compute_indices: false,
+        index_unit: None,
         respect_gitignore: true,
     };
     let results = run(
@@ -402,7 +511,7 @@ fn run_returns_directory_matches_for_query() {
             limit: NonZero::new(20).unwrap(),
             exclude: Vec::new(),
             threads: NonZero::new(2).unwrap(),
-            compute_indices: false,
+            index_unit: None,
             respect_gitignore: true,
         },
         /*cancel_flag*/ None,
@@ -443,7 +552,7 @@ fn cancel_exits_run() {
     let cancel_flag = Arc::new(AtomicBool::new(true));
     let search_dir = dir.path().to_path_buf();
     let options = FileSearchOptions {
-        compute_indices: false,
+        index_unit: None,
         ..Default::default()
     };
     let (tx, rx) = std::sync::mpsc::channel();
@@ -492,7 +601,7 @@ fn parent_gitignore_outside_repo_does_not_hide_repo_files() {
             limit: NonZero::new(20).unwrap(),
             exclude: Vec::new(),
             threads: NonZero::new(2).unwrap(),
-            compute_indices: false,
+            index_unit: None,
             respect_gitignore: true,
         },
         /*cancel_flag*/ None,
@@ -512,7 +621,7 @@ fn parent_gitignore_outside_repo_does_not_hide_repo_files() {
             limit: NonZero::new(20).unwrap(),
             exclude: Vec::new(),
             threads: NonZero::new(2).unwrap(),
-            compute_indices: false,
+            index_unit: None,
             respect_gitignore: true,
         },
         /*cancel_flag*/ None,
@@ -556,7 +665,7 @@ fn git_repo_still_respects_local_gitignore_when_enabled() {
             limit: NonZero::new(20).unwrap(),
             exclude: Vec::new(),
             threads: NonZero::new(2).unwrap(),
-            compute_indices: false,
+            index_unit: None,
             respect_gitignore: true,
         },
         /*cancel_flag*/ None,
@@ -576,7 +685,7 @@ fn git_repo_still_respects_local_gitignore_when_enabled() {
             limit: NonZero::new(20).unwrap(),
             exclude: Vec::new(),
             threads: NonZero::new(2).unwrap(),
-            compute_indices: false,
+            index_unit: None,
             respect_gitignore: true,
         },
         /*cancel_flag*/ None,
@@ -596,7 +705,7 @@ fn git_repo_still_respects_local_gitignore_when_enabled() {
             limit: NonZero::new(20).unwrap(),
             exclude: Vec::new(),
             threads: NonZero::new(2).unwrap(),
-            compute_indices: false,
+            index_unit: None,
             respect_gitignore: true,
         },
         /*cancel_flag*/ None,

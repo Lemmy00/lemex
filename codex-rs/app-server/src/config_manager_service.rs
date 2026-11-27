@@ -24,6 +24,7 @@ use codex_config::config_toml::ConfigToml;
 use codex_config::is_structured_feature_path;
 use codex_config::merge_toml_values;
 use codex_config::shell_environment_filter_entry;
+use codex_config::structured_feature_toggle_field;
 use codex_config::validate_shell_environment_policy_filter_config;
 use codex_connectors::apps_config_from_layer_stack;
 use codex_connectors::apps_config_origins_from_layer_stack;
@@ -137,23 +138,28 @@ impl ConfigManager {
         &self,
         params: ConfigReadParams,
     ) -> Result<ConfigReadResponse, ConfigManagerError> {
-        let layers = match params.cwd.as_deref() {
-            Some(cwd) => {
-                let cwd = AbsolutePathBuf::try_from(PathBuf::from(cwd)).map_err(|err| {
+        let cwd = params
+            .cwd
+            .map(|cwd| {
+                AbsolutePathBuf::try_from(PathBuf::from(cwd)).map_err(|err| {
                     ConfigManagerError::io("failed to resolve config cwd to an absolute path", err)
-                })?;
-                self.load_config_layers(Some(cwd)).await.map_err(|err| {
-                    ConfigManagerError::io("failed to read configuration layers", err)
-                })?
-            }
-            None => self.load_thread_agnostic_config().await.map_err(|err| {
-                ConfigManagerError::io("failed to read configuration layers", err)
-            })?,
-        };
+                })
+            })
+            .transpose()?;
+        let layers = self
+            .load_config_layers(cwd)
+            .await
+            .map_err(|err| ConfigManagerError::io("failed to read configuration layers", err))?;
+        Self::config_read_response(&layers, params.include_layers)
+    }
 
+    pub(super) fn config_read_response(
+        layers: &ConfigLayerStack,
+        include_layers: bool,
+    ) -> Result<ConfigReadResponse, ConfigManagerError> {
         let mut effective_config_toml = ConfigToml::try_from(layers.effective_config())
             .map_err(|err| ConfigManagerError::toml("invalid configuration", err))?;
-        effective_config_toml.apps = apps_config_from_layer_stack(&layers);
+        effective_config_toml.apps = apps_config_from_layer_stack(layers);
         layers
             .requirements_toml()
             .apply_exact_to_config(&mut effective_config_toml);
@@ -161,12 +167,8 @@ impl ConfigManager {
 
         let json_value = serde_json::to_value(&effective_config_toml)
             .map_err(|err| ConfigManagerError::json("failed to serialize configuration", err))?;
-        let mut config: ApiConfig = serde_json::from_value(json_value)
+        let config: ApiConfig = serde_json::from_value(json_value)
             .map_err(|err| ConfigManagerError::json("failed to deserialize configuration", err))?;
-        config.client_search_provider = effective_config_toml
-            .tools
-            .as_ref()
-            .and_then(|tools| tools.client_search_provider);
 
         let mut origins = layers.origins_with_path_filter(|segments| {
             layers
@@ -175,7 +177,7 @@ impl ConfigManager {
                 .is_none()
         });
         origins.retain(|path, _| !path.starts_with("apps."));
-        origins.extend(apps_config_origins_from_layer_stack(&layers));
+        origins.extend(apps_config_origins_from_layer_stack(layers));
         origins.retain(|_, metadata| {
             !matches!(&metadata.name, ConfigLayerSource::PackagedDefaults { .. })
         });
@@ -186,7 +188,7 @@ impl ConfigManager {
                 .into_iter()
                 .map(|(path, metadata)| (path, config_layer_metadata_to_api(metadata)))
                 .collect(),
-            layers: params.include_layers.then(|| {
+            layers: include_layers.then(|| {
                 layers
                     .all_layers_high_to_low()
                     .filter(|layer| {
@@ -347,13 +349,24 @@ impl ConfigManager {
             ));
         }
 
+        self.persist_user_edits(&layers, &user_layer, provided_path, edits)
+            .await
+    }
+
+    async fn persist_user_edits(
+        &self,
+        layers: &ConfigLayerStack,
+        user_layer: &ConfigLayerEntry,
+        provided_path: AbsolutePathBuf,
+        edits: Vec<(String, JsonValue, MergeStrategy)>,
+    ) -> Result<ConfigWriteResponse, ConfigManagerError> {
         let mut user_config = user_layer.config.clone();
         let mut credential_provider_edits = CredentialProviderEdits::new(&user_config);
         let mut parsed_segments = Vec::new();
         let mut config_edits = Vec::new();
 
         for (key_path, value, strategy) in edits.into_iter() {
-            let mut segments = writable_key_path(&layers, &key_path)?;
+            let mut segments = writable_key_path(layers, &key_path)?;
             if (value.is_null() || matches!(strategy, MergeStrategy::Upsert))
                 && let Some(pattern) = shell_environment_filter_entry(&user_config, &segments)
                     .map(|(pattern, _)| pattern.clone())
@@ -413,15 +426,15 @@ impl ConfigManager {
                     })?;
             }
 
-            let structured_feature_toggle = preserves_network_proxy_settings
-                || is_structured_feature_path(&segments)
-                    && parsed_value.as_ref().is_some_and(|value| {
-                        value.is_bool()
-                            || matches!(strategy, MergeStrategy::Upsert)
-                                && value.as_table().is_some_and(|table| {
-                                    table.len() == 1 && table.contains_key("enabled")
-                                })
-                    });
+            let toggle_field = structured_feature_toggle_field(&segments).filter(|&field| {
+                parsed_value.as_ref().is_some_and(|value| {
+                    value.is_bool()
+                        || matches!(strategy, MergeStrategy::Upsert)
+                            && value
+                                .as_table()
+                                .is_some_and(|table| table.len() == 1 && table.contains_key(field))
+                })
+            });
 
             if let Some(edit) = credential_provider_edits.apply(
                 &mut user_config,
@@ -432,8 +445,8 @@ impl ConfigManager {
                 config_edits.push(edit);
             }
 
-            if structured_feature_toggle {
-                segments.push("enabled".to_string());
+            if let Some(field) = toggle_field {
+                segments.push(field.to_string());
             }
             parsed_segments.push(segments);
         }
@@ -909,10 +922,7 @@ fn value_at_semantic_path<'a>(root: &'a TomlValue, segments: &[String]) -> Optio
         .or_else(|| value_at_path(root, segments))
         .or_else(|| {
             let (field, parents) = segments.split_last()?;
-            if field != "enabled" {
-                return None;
-            }
-            if structured_feature_depth(parents) != Some(parents.len()) {
+            if structured_feature_toggle_field(parents) != Some(field.as_str()) {
                 return None;
             }
             let feature = value_at_path(root, parents)?;

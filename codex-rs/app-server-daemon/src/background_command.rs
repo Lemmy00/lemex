@@ -33,7 +33,7 @@ pub(crate) fn set_working_directory(command: &mut Command, state_dir: &Path) -> 
     // Preserve process-scoped paths before changing cwd; CA names match CUSTOM_CA_ENV_KEYS.
     for name in [
         #[cfg(windows)]
-        "CODEX_SQLITE_HOME",
+        "LEMEX_SQLITE_HOME",
         "CODEX_CA_CERTIFICATE",
         "SSL_CERT_FILE",
         "REQUESTS_CA_BUNDLE",
@@ -55,7 +55,7 @@ pub(crate) fn set_working_directory(command: &mut Command, state_dir: &Path) -> 
         };
         if matches!(
             name,
-            "CODEX_SQLITE_HOME" | "npm_config_cafile" | "NPM_CONFIG_CAFILE"
+            "LEMEX_SQLITE_HOME" | "npm_config_cafile" | "NPM_CONFIG_CAFILE"
         ) {
             value = value.to_str().unwrap_or_default().trim().into();
         }
@@ -67,7 +67,7 @@ pub(crate) fn set_working_directory(command: &mut Command, state_dir: &Path) -> 
         } else {
             matches!(
                 name,
-                "CODEX_SQLITE_HOME" | "AWS_CONFIG_FILE" | "AWS_SHARED_CREDENTIALS_FILE"
+                "LEMEX_SQLITE_HOME" | "AWS_CONFIG_FILE" | "AWS_SHARED_CREDENTIALS_FILE"
             ) && std::path::Path::new(&value).starts_with("~")
         };
         if value.is_empty() || expands_home {

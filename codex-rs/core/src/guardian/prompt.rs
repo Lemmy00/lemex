@@ -1,11 +1,12 @@
 use codex_extension_api::ConversationHistorySnapshot;
+use codex_guardian_context::AudioTranscript;
 use codex_guardian_context::CollectedContext;
 use codex_guardian_context::ContextProfile;
 use codex_guardian_context::GuardianRootMessage;
-use codex_guardian_context::PlannedAction;
 use codex_guardian_context::SectionError;
 use codex_guardian_context::SectionHistory;
 use codex_guardian_context::SectionInput;
+use codex_guardian_context::SelectedExecOutputPredicate;
 #[cfg(test)]
 pub(crate) use codex_guardian_context::TranscriptCursor as GuardianTranscriptCursor;
 pub(crate) use codex_guardian_context::TranscriptMode as GuardianPromptMode;
@@ -14,7 +15,6 @@ use codex_guardian_context::default_registry;
 use codex_guardian_reviewer::GuardianPromptItems;
 use codex_protocol::models::ResponseItem;
 
-use crate::context::GuardianPermissionContext;
 use crate::context::NodeReplReviewEvidence;
 use crate::context::NodeReplReviewEvidenceMode;
 use crate::context::is_guardian_context_message;
@@ -28,6 +28,23 @@ use super::GuardianApprovalRequest;
 use super::GuardianReviewContext;
 
 pub(super) use codex_guardian_reviewer::GUARDIAN_TRANSCRIPT_START;
+
+impl GuardianReviewContext {
+    fn native_agent_history_enabled(&self) -> bool {
+        let turn = self.turn();
+        turn.config.guardian_native_multi_agent_history_enabled()
+            && turn.multi_agent_version == codex_protocol::protocol::MultiAgentVersion::V2
+    }
+
+    pub(super) fn frame_native_agent_actions(&self) -> bool {
+        self.native_agent_history_enabled()
+            && self
+                .turn()
+                .config
+                .features
+                .enabled(codex_features::Feature::GuardianNativeActionFraming)
+    }
+}
 
 /// Selects transcript evidence using the checkpoint already loaded by the reviewer.
 pub(crate) enum GuardianTranscriptHistory<'a> {
@@ -59,14 +76,14 @@ pub(crate) async fn build_guardian_prompt_items(
             retry: retry_reason,
         },
         request,
-        mode,
+        /*is_selected_exec_output*/ None,
         /*reviewed_node_repl_evidence_sequence*/ 0,
     )
     .await?;
     codex_guardian_reviewer::compose_guardian_prompt(
         collected.sections,
         &collected.profile,
-        collected.mode,
+        mode,
         collected.history_version,
         &collected.session_id,
         collected.node_repl_evidence_sequence,
@@ -77,7 +94,6 @@ pub(crate) async fn build_guardian_prompt_items(
 pub(super) struct CollectedGuardianPrompt {
     pub(super) sections: CollectedContext,
     pub(super) profile: ContextProfile,
-    pub(super) mode: GuardianPromptMode,
     pub(super) history_version: u64,
     pub(super) session_id: String,
     pub(super) node_repl_evidence_sequence: u64,
@@ -89,7 +105,7 @@ pub(super) async fn collect_guardian_prompt_items_with_parent_turn(
     parent_context: Option<&GuardianReviewContext>,
     reasons: ApprovalRequestReasons,
     request: GuardianApprovalRequest,
-    mode: GuardianPromptMode,
+    is_selected_exec_output: Option<&SelectedExecOutputPredicate<'_>>,
     reviewed_node_repl_evidence_sequence: u64,
 ) -> anyhow::Result<CollectedGuardianPrompt> {
     let (history, use_parent_checkpoint) = match transcript_history {
@@ -108,18 +124,24 @@ pub(super) async fn collect_guardian_prompt_items_with_parent_turn(
     };
     let config = session.get_config().await;
     let root_authorization = session
-        .services
-        .agent_control
-        .get_guardian_package(session.thread_id)
-        .await
+        .guardian_root_snapshot()
+        .await?
         .and_then(|snapshot| snapshot.request_candidates);
-    let trusted_user_inputs = history
+    let budgeting = parent_context.map_or_else(
+        || config.guardian_context_budgeting(),
+        |context| context.turn().config.guardian_context_budgeting(),
+    );
+    let retained_context = history
         .retained_context()
+        .map(|context| budgeting.retained_message_view(context));
+    let trusted_user_inputs = retained_context
+        .as_deref()
         .map(codex_guardian_context::collect_verified_answer_candidates)
         .unwrap_or_default();
     let planned_action = codex_guardian_reviewer::build_guardian_planned_action(
         &request,
         reasons.retry.or(reasons.approval),
+        parent_context.and_then(|context| context.enclosing_invocation_id.as_deref()),
     )?;
     let permissions = super::permissions::for_request(&request, parent_context)?;
     let node_repl_snapshot = if node_repl_transcripts_enabled {
@@ -142,11 +164,7 @@ pub(super) async fn collect_guardian_prompt_items_with_parent_turn(
     let mut profile = ContextProfile::synchronous();
     profile.transcript.entry_limits.node_repl_output_tokens = node_repl_result_token_limit;
     profile.transcript.options.native_multi_agent_namespace = parent_context
-        .is_some_and(|context| {
-            let turn = context.turn();
-            turn.config.guardian_native_multi_agent_history_enabled()
-                && turn.multi_agent_version == codex_protocol::protocol::MultiAgentVersion::V2
-        })
+        .is_some_and(GuardianReviewContext::native_agent_history_enabled)
         .then(|| {
             config
                 .multi_agent_v2
@@ -155,26 +173,39 @@ pub(super) async fn collect_guardian_prompt_items_with_parent_turn(
                 .filter(|namespace| !namespace.is_empty())
                 .unwrap_or_else(|| "functions".to_owned())
         });
+    profile.transcript.options.frame_native_agent_actions =
+        parent_context.is_some_and(GuardianReviewContext::frame_native_agent_actions);
     profile.transcript_format = match parent_context {
         Some(context) => context.turn().config.guardian_transcript_mode,
         None => config.guardian_transcript_mode,
     };
-    let sections = collect_guardian_context(
-        &GuardianReviewHistory {
+    let recorded_root = parent_context
+        .and_then(|context| context.root_evidence.as_deref())
+        .map(super::recorded_tool_call::root_messages)
+        .unwrap_or_default();
+    let sections = collect_guardian_context(SectionInput {
+        target: profile.target,
+        history: &GuardianReviewHistory {
             history,
+            retained_context: retained_context.as_deref(),
             use_parent_checkpoint,
         },
-        &profile,
-        root_authorization.as_ref(),
-        &trusted_user_inputs,
-        Some(&planned_action),
-        permissions.as_ref(),
-        node_repl_context.as_ref(),
-    )?;
+        transcript: &profile.transcript,
+        is_selected_exec_output,
+        root_conversation: &recorded_root,
+        root_conversation_candidates: root_authorization.as_ref(),
+        trusted_user_answers: &trusted_user_inputs,
+        planned_action: Some(&planned_action),
+        permissions: permissions.as_ref(),
+        previous_reviews: None,
+        trusted_tool: None,
+        trusted_skill_paths: &[],
+        images: None,
+        node_repl: node_repl_context.as_ref(),
+    })?;
     Ok(CollectedGuardianPrompt {
         sections,
         profile,
-        mode,
         history_version: if use_parent_checkpoint {
             history.history_version()
         } else {
@@ -196,39 +227,23 @@ pub(super) async fn collect_guardian_prompt_items_with_parent_turn(
 /// Per-entry truncation happens in sync preparation after cursor selection.
 /// The cursor counts every non-empty evidence entry.
 pub(super) fn collect_guardian_context(
-    history: &dyn SectionHistory,
-    profile: &ContextProfile,
-    root_conversation_candidates: Option<&codex_guardian_context::RootConversationInput>,
-    trusted_user_answers: &[codex_guardian_context::TrustedUserAnswer],
-    planned_action: Option<&PlannedAction>,
-    permissions: Option<&GuardianPermissionContext>,
-    node_repl: Option<&codex_guardian_context::NodeReplContext<'_>>,
+    input: SectionInput<'_>,
 ) -> Result<CollectedContext, SectionError> {
     default_registry().prepare(&SectionInput {
-        target: profile.target,
-        history: &FilteredGuardianHistory(history),
-        transcript: &profile.transcript,
-        root_conversation: &[],
-        root_conversation_candidates,
-        trusted_user_answers,
-        planned_action,
-        permissions,
-        previous_reviews: None,
-        trusted_tool: None,
-        trusted_skill_paths: &[],
-        images: None,
-        node_repl,
+        history: &FilteredGuardianHistory(input.history),
+        ..input
     })
 }
 
 struct GuardianReviewHistory<'a> {
     history: &'a dyn ConversationHistorySnapshot,
+    retained_context: Option<&'a codex_history::RetainedContext>,
     use_parent_checkpoint: bool,
 }
 
 impl SectionHistory for GuardianReviewHistory<'_> {
     fn retained_context(&self) -> Option<&codex_history::RetainedContext> {
-        self.history.retained_context()
+        self.retained_context
     }
 
     fn items(&self) -> Box<dyn Iterator<Item = &ResponseItem> + Send + '_> {
@@ -268,6 +283,13 @@ impl SectionHistory for GuardianReviewHistory<'_> {
 struct FilteredGuardianHistory<'a>(&'a dyn SectionHistory);
 
 impl SectionHistory for FilteredGuardianHistory<'_> {
+    fn audio_transcripts_for<'a>(
+        &'a self,
+        item: &'a ResponseItem,
+    ) -> Box<dyn Iterator<Item = AudioTranscript<'a>> + Send + 'a> {
+        self.0.audio_transcripts_for(item)
+    }
+
     fn items_with_sources(
         &self,
     ) -> Box<dyn Iterator<Item = (&ResponseItem, Option<&codex_history::RetainedSource>)> + Send + '_>

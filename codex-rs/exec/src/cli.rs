@@ -17,6 +17,26 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
+    /// Connect to an existing app server.
+    /// Explicit --model and -c model_reasoning_effort overrides update the remote thread
+    /// for this turn and subsequent turns; omitted settings are inherited from the server.
+    #[arg(
+        id = "exec_remote",
+        long = "remote",
+        value_name = "ADDR",
+        global = true
+    )]
+    pub remote: Option<String>,
+
+    /// Environment variable containing the remote WebSocket bearer token.
+    #[arg(
+        id = "exec_remote_auth_token_env",
+        long = "remote-auth-token-env",
+        value_name = "ENV_VAR",
+        global = true
+    )]
+    pub remote_auth_token_env: Option<String>,
+
     /// Error out when config.toml contains fields that are not recognized by this version of Lemex.
     #[arg(long = "strict-config", global = true, default_value_t = false)]
     pub strict_config: bool,

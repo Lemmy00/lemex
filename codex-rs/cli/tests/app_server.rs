@@ -8,7 +8,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
-    let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+    let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?);
     cmd.env("LEMEX_HOME", codex_home)
         .env_remove("LEMEX_ACCESS_TOKEN")
         .env_remove("LEMEX_API_KEY")
@@ -160,7 +160,7 @@ fn app_server_keeps_sqlite_logs_in_overridden_sqlite_home() -> Result<()> {
     )?;
 
     codex_command(home.path())?
-        .env("CODEX_SQLITE_HOME", sqlite_home.path())
+        .env("LEMEX_SQLITE_HOME", sqlite_home.path())
         .env(
             "CODEX_APP_SERVER_MANAGED_CONFIG_PATH",
             home.path().join("managed_config.toml"),
@@ -191,7 +191,7 @@ fn app_server_preserves_the_existing_sqlite_logs_symlink() -> Result<()> {
     )?;
 
     codex_command(home.path())?
-        .env_remove("CODEX_SQLITE_HOME")
+        .env_remove("LEMEX_SQLITE_HOME")
         .env(
             "CODEX_APP_SERVER_MANAGED_CONFIG_PATH",
             home.path().join("managed_config.toml"),
@@ -311,11 +311,11 @@ async fn print_startup_config_is_independent_of_a_locked_history_database() -> R
 
     let home = TempDir::new()?;
     let sqlite = TempDir::new()?;
-    let binary = codex_utils_cargo_bin::cargo_bin("codex")?;
+    let binary = codex_utils_cargo_bin::cargo_bin("lemex")?;
     let mut command = Command::new(&binary);
     command
         .env("LEMEX_HOME", home.path())
-        .env("CODEX_SQLITE_HOME", sqlite.path())
+        .env("LEMEX_SQLITE_HOME", sqlite.path())
         .env_remove("LEMEX_ACCESS_TOKEN")
         .env_remove("LEMEX_API_KEY")
         .env_remove("OPENAI_API_KEY")

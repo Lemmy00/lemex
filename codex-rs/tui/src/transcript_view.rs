@@ -10,10 +10,14 @@ mod bookmark;
 mod composer_gap;
 mod copy_mode;
 mod disclosure;
+mod document;
+pub(crate) use document::DocumentPosition;
+pub(crate) use document::DocumentTarget;
 mod follow_control;
 mod footer;
 mod input;
 mod layout;
+mod markdown_images;
 mod mutations;
 mod prompt_header;
 mod search;
@@ -24,6 +28,7 @@ mod text;
 mod turn_details;
 mod turn_tip;
 
+use crate::terminal_hyperlinks::bidi;
 use std::sync::Arc;
 
 use crate::chatwidget::ActiveCellTranscriptKey;
@@ -31,8 +36,10 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::HistoryRenderMode;
 use crate::pager_overlay::TranscriptHistoryState;
 use crate::terminal_hyperlinks::HyperlinkLine;
+use crate::terminal_hyperlinks::TerminalHyperlink;
 use crate::tui::SelectionCopy;
 use ratatui::buffer::Buffer;
+use ratatui::layout::Position as ScreenPosition;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
@@ -45,6 +52,7 @@ use select_mode::SelectMode;
 use selection::Selection;
 use snapshot::ViewSnapshot;
 pub(crate) use text::TextLayout;
+use text::images;
 
 pub(crate) use bookmark::TranscriptBookmark;
 pub(crate) use input::JumpTarget;
@@ -88,9 +96,17 @@ struct VisibleRow {
     activity_ids: Arc<[String]>,
 }
 
+enum RenderContent {
+    Transcript,
+    Document,
+}
+
 /// Shared scrolling and interaction state for compact and detailed transcript presentations.
 pub(crate) struct TranscriptView {
     pub(crate) image_protocol: Option<crate::terminal_image::ImageProtocol>,
+    pub(crate) bidi_layout: bool,
+    pub(crate) agent_links: Option<crate::backend_id::BackendId>,
+    pub(crate) document_links: bool,
     pub(crate) mouse_scroll_speed: f64,
     pending_mouse_scroll: f64,
     pub(crate) copy_on_select: bool,
@@ -98,6 +114,7 @@ pub(crate) struct TranscriptView {
     pub(crate) primary_selection: bool,
     position: Position,
     follow_control: follow_control::FollowControl,
+    pub(crate) show_follow_control: bool,
     copy_feedback: Option<composer_gap::CopyFeedback>,
     composer_tip: Option<(Rect, HyperlinkLine)>,
     turn_tip_key: Option<EntryKey>,
@@ -107,11 +124,13 @@ pub(crate) struct TranscriptView {
     live_key: Option<(u16, ActiveCellTranscriptKey)>,
     live_continuation: bool,
     area: Rect,
+    last_rendered_width: u16,
     prompt_header_target: Option<(Rect, EntryKey)>,
     suppressed_prompt_header: Option<prompt_header::SuppressedHeader>,
     visible: Vec<VisibleRow>,
     selection: Option<Selection>,
     select_mode: Option<SelectMode>,
+    select_reveal_pending: bool,
     copy_mode: Option<copy_mode::CopyMode>,
     held_reading: Option<ViewSnapshot>,
     search: Search,
@@ -132,6 +151,9 @@ impl Default for TranscriptView {
     fn default() -> Self {
         Self {
             image_protocol: None,
+            bidi_layout: false,
+            agent_links: None,
+            document_links: false,
             mouse_scroll_speed: 1.0,
             pending_mouse_scroll: 0.0,
             copy_on_select: false,
@@ -139,6 +161,7 @@ impl Default for TranscriptView {
             primary_selection: false,
             position: Position::Latest,
             follow_control: follow_control::FollowControl::default(),
+            show_follow_control: true,
             copy_feedback: None,
             composer_tip: None,
             turn_tip_key: None,
@@ -148,11 +171,13 @@ impl Default for TranscriptView {
             live_key: None,
             live_continuation: false,
             area: Rect::default(),
+            last_rendered_width: 0,
             prompt_header_target: None,
             suppressed_prompt_header: None,
             visible: Vec::new(),
             selection: None,
             select_mode: None,
+            select_reveal_pending: false,
             copy_mode: None,
             held_reading: None,
             search: Search::default(),
@@ -172,6 +197,17 @@ impl Default for TranscriptView {
 }
 
 impl TranscriptView {
+    pub(crate) fn can_scroll_without_refresh(
+        &self,
+        cells: &[Arc<dyn HistoryCell>],
+        live_key: Option<ActiveCellTranscriptKey>,
+    ) -> bool {
+        !self.area.is_empty()
+            && !self.cache.has_mutable_source()
+            && self.last_tail == cells.last().map(EntryKey::cell)
+            && self.live_key.map(|(_, key)| key) == live_key
+    }
+
     /// Rows left after the last render, including all startup notices and live entries.
     /// Callers can paint temporary UI here without changing selection or saved history.
     pub(crate) fn remaining_area(&self) -> Rect {
@@ -186,6 +222,19 @@ impl TranscriptView {
     }
 
     pub(crate) fn render(&mut self, area: Rect, buf: &mut Buffer, cells: &[Arc<dyn HistoryCell>]) {
+        self.paint_rows(area, buf, cells, RenderContent::Transcript);
+        self.finish_collapse_layout(cells);
+    }
+
+    fn paint_rows(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        cells: &[Arc<dyn HistoryCell>],
+        content: RenderContent,
+    ) {
+        let previous_viewport_height =
+            self.area.height + u16::from(self.prompt_header_target.is_some());
         self.composer_tip = None;
         self.prompt_header_target = None;
         self.cache.begin_frame();
@@ -196,7 +245,12 @@ impl TranscriptView {
         let suppressed_prompt_header = self.suppressed_prompt_header.take();
         Clear.render(area, buf);
         let previous_height = self.area.height;
-        let resized = self.area.width != area.width || self.area.bottom() != area.bottom();
+        let resized = self.last_rendered_width != area.width || self.area.bottom() != area.bottom();
+        self.last_rendered_width = area.width;
+        let select_width_changed = self
+            .visible
+            .first()
+            .is_some_and(|row| row.layout.width != area.width);
         self.prepare_width(area.width);
         self.area = area;
         self.normalize_selection(cells);
@@ -208,6 +262,15 @@ impl TranscriptView {
             self.tail_visible = false;
             return;
         }
+        let select_reveal_pending = std::mem::take(&mut self.select_reveal_pending);
+        if (resized
+            || select_width_changed
+            || previous_viewport_height != area.height
+            || select_reveal_pending)
+            && self.is_select_mode()
+        {
+            self.reveal_select_cursor(cells);
+        }
         if let Some(key) = self.disclosure.anchor_control.take()
             && let Position::Reading(mut anchor) = self.position
             && anchor.key == key
@@ -218,7 +281,19 @@ impl TranscriptView {
             anchor.row_bias = layout.row_for_offset(anchor.offset) as isize - row as isize;
             self.position = Position::Reading(anchor);
         }
-        let initial_start = self.start(cells);
+        // Closing a disclosure can leave its reading anchor below the new scroll limit.
+        let clamp_after_collapse = self.disclosure.clamp_after_collapse
+            && self.selection.is_none()
+            && matches!(self.position, Position::Reading(_));
+        let render_start = |view: &mut Self| {
+            let start = view.start(cells);
+            if clamp_after_collapse {
+                start.min(view.bottom_start(cells))
+            } else {
+                start
+            }
+        };
+        let initial_start = render_start(self);
         let initial_position = self.position;
         let mut start = initial_start;
         let mut body = area;
@@ -242,8 +317,8 @@ impl TranscriptView {
             if resized {
                 self.reveal_copy_context(cells);
             }
-            // Following may advance into the next turn after reserving the header row.
-            start = self.start(cells);
+            // The bottom limit changes after reserving the header row.
+            start = render_start(self);
             if let Some((header, key)) =
                 prompt_header::line(cells, start.0, area.width, self.detailed)
             {
@@ -290,6 +365,9 @@ impl TranscriptView {
             };
             let row_area = Rect::new(area.x, y, area.width, /*height*/ 1);
             layout.render(row_area, buf, row);
+            if self.agent_links.is_some() {
+                layout.underline_agent_links(row_area, buf, row);
+            }
             self.render_disclosure(&activity_ids, &layout, row, row_area, buf);
             if self.highlight == Some(index) && self.selection.is_none() && !self.search.is_active()
             {
@@ -312,7 +390,11 @@ impl TranscriptView {
         {
             self.extend_selection(pointer.x, pointer.y);
         }
-        self.tail_visible = self.current_tail_is_visible(current_cells);
+        self.tail_visible = match content {
+            RenderContent::Transcript => self.current_tail_is_visible(current_cells),
+            // Documents have immutable chunks and no hidden reasoning or live tail.
+            RenderContent::Document => !self.document_has_rows_below(cells),
+        };
         if self.tail_visible {
             self.unseen_activity = false;
         }
@@ -324,6 +406,103 @@ impl TranscriptView {
         self.render_search(buf);
     }
 
+    pub(crate) fn has_document_link_at(&self, pointer: ScreenPosition) -> bool {
+        self.document_links
+            && self
+                .raw_link_at(pointer)
+                .is_some_and(|(_, link)| link.is_document())
+    }
+
+    fn raw_link_at(&self, pointer: ScreenPosition) -> Option<(&VisibleRow, &TerminalHyperlink)> {
+        if !self.area.contains(pointer) {
+            return None;
+        }
+        let row = self.visible.get(usize::from(pointer.y - self.area.y))?;
+        let link = row.layout.raw_link_at(row.row, pointer.x - self.area.x)?;
+        Some((row, link))
+    }
+
+    pub(crate) fn paint_document_links(&self, buf: &mut Buffer, pointer: Option<ScreenPosition>) {
+        let Some((hit_row, hit_link)) = pointer
+            .filter(|_| self.document_links && !self.has_active_interaction())
+            .and_then(|pointer| self.raw_link_at(pointer))
+            .filter(|(_, link)| link.is_document())
+        else {
+            return;
+        };
+        for (y, row) in (self.area.top()..self.area.bottom()).zip(&self.visible) {
+            if row.key != hit_row.key {
+                continue;
+            }
+            let Some((inset, links)) = row.layout.row_links(row.row) else {
+                continue;
+            };
+            for link in links.iter().filter(|link| link.is_document()) {
+                if !(std::ptr::eq(hit_link, link) && hit_row.row == row.row
+                    || hit_link.markdown_source.is_some()
+                        && hit_link.markdown_source == link.markdown_source
+                        && hit_link.destination == link.destination)
+                {
+                    continue;
+                }
+                let columns = (inset + link.columns.start)
+                    ..(inset + link.columns.end).min(usize::from(self.area.width));
+                if !columns.is_empty() {
+                    buf.set_style(
+                        Rect::new(
+                            self.area.x + columns.start as u16,
+                            y,
+                            columns.len() as u16,
+                            1,
+                        ),
+                        ratatui::style::Style::default().bold(),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Persist the clamped reading position after the last paint at the final viewport height.
+    pub(crate) fn finish_collapse_layout(&mut self, cells: &[Arc<dyn HistoryCell>]) {
+        if self.area.is_empty()
+            || !std::mem::take(&mut self.disclosure.clamp_after_collapse)
+            || self.selection.is_some()
+            || !matches!(self.position, Position::Reading(_))
+        {
+            return;
+        }
+        let snapshot = self.snapshot_cells();
+        let cells = snapshot.as_deref().unwrap_or(cells);
+        let start = self.start(cells);
+        if let Some(first) = self.visible.first()
+            && (first.index, first.row) < start
+        {
+            let (index, row, layout) = (first.index, first.row, Arc::clone(&first.layout));
+            self.read_from_row(cells, index, row, &layout);
+        }
+    }
+
+    pub(crate) fn request_visible_images(
+        &mut self,
+        frames: &crate::tui::FrameRequester,
+        local_workspace: impl Future<Output = bool> + Send + 'static,
+        streaming: Option<&Arc<dyn HistoryCell>>,
+    ) {
+        if self.image_protocol.is_none() || self.mode != HistoryRenderMode::Rich {
+            return;
+        }
+        let streaming = streaming.map(EntryKey::cell);
+        let visible = self
+            .visible
+            .chunk_by(|a, b| a.index == b.index)
+            .filter(|rows| Some(rows[0].key) != streaming)
+            .flat_map(|rows| {
+                let first = &rows[0];
+                images::visible_requests(&first.layout, first.row..first.row + rows.len())
+            });
+        self.cache.images.request(visible, frames, local_workspace);
+    }
+
     pub(crate) fn image_placements(&self) -> Vec<crate::transcript_image::ImagePlacement> {
         let mut placements = Vec::new();
         let mut y = self.area.y;
@@ -331,26 +510,30 @@ impl TranscriptView {
             let entry_y = y;
             y += rows.len() as u16;
             let visible = &rows[0];
-            let Some(image) = visible.layout.visible_image() else {
-                continue;
-            };
-            let image_start = visible.layout.text_row_count();
-            let skip = image_start.saturating_sub(visible.row);
-            if skip >= rows.len() {
-                continue;
+            for (start, indent, image) in images::regions(&visible.layout) {
+                let top = start.max(visible.row);
+                let bottom = (start + usize::from(image.rows)).min(visible.row + rows.len());
+                if top >= bottom
+                    || !image.fits(
+                        self.area.width.saturating_sub(indent),
+                        self.cache.cell_size(),
+                    )
+                {
+                    continue;
+                }
+                placements.push(crate::transcript_image::ImagePlacement {
+                    image: Arc::clone(image),
+                    area: Rect::new(
+                        self.area.x + indent,
+                        entry_y + (top - visible.row) as u16,
+                        image.columns,
+                        (bottom - top) as u16,
+                    ),
+                    first_row: top - start,
+                    file: None,
+                    terminal_id: None,
+                });
             }
-            let area = Rect::new(
-                self.area.x + self.area.width.saturating_sub(image.columns) / 2,
-                entry_y + skip as u16,
-                image.columns,
-                (rows.len() - skip) as u16,
-            );
-            placements.push(crate::transcript_image::ImagePlacement {
-                image: Arc::clone(image),
-                area,
-                first_row: visible.row.saturating_sub(image_start),
-                file: None,
-            });
         }
         placements
     }
@@ -382,8 +565,10 @@ impl TranscriptView {
         if self.detailed {
             self.sync_live_tail(width, /*key*/ None, lines);
         } else if let Some(row) = summary {
+            let bidi_layout = self.bidi_layout;
             self.sync_live_layout(width, /*key*/ None, |width| {
-                Some(row.layout(width, expanded, auxiliary.to_vec()))
+                let lines = bidi::session_lines(auxiliary.to_vec(), bidi_layout);
+                Some(row.layout(width, expanded, lines))
             });
         } else {
             self.sync_live_activity_tail(width, /*key*/ None, expanded && disclose, |width| {
@@ -412,7 +597,13 @@ impl TranscriptView {
                 })
             });
         }
+        let position = self.position;
         self.render(area, buffer, cells);
+        if self.is_select_mode() && self.position != position {
+            self.position = position;
+            // Reveal again if this pane becomes active without another resize.
+            self.select_reveal_pending = true;
+        }
         self.unseen_activity = unseen_activity;
     }
 
@@ -422,8 +613,10 @@ impl TranscriptView {
         key: Option<ActiveCellTranscriptKey>,
         lines: impl FnOnce(u16) -> Option<Vec<HyperlinkLine>>,
     ) -> bool {
+        let bidi_layout = self.bidi_layout;
         self.sync_live_layout(width, key, |width| {
-            lines(width).map(|lines| TextLayout::new(lines, width))
+            lines(width)
+                .map(|lines| TextLayout::new(bidi::session_lines(lines, bidi_layout), width))
         })
     }
 
@@ -438,8 +631,10 @@ impl TranscriptView {
             .disclosure
             .keymap
             .primary_hint(crate::keymap::KeymapContext::Global, "open_transcript");
+        let bidi_layout = self.bidi_layout;
         self.sync_live_layout(width, key, |width| {
-            lines(width).map(|lines| layout::activity_layout(lines, width, expanded, shortcut))
+            lines(width)
+                .map(|lines| layout::activity_layout(lines, width, expanded, bidi_layout, shortcut))
         })
     }
 
@@ -495,7 +690,7 @@ impl TranscriptView {
     }
 
     pub(crate) fn has_active_interaction(&self) -> bool {
-        self.select_mode.is_some()
+        self.is_select_mode()
             || self.selection.is_some()
             || self.search.is_active()
             || self.is_activity_focused()
@@ -529,6 +724,15 @@ impl TranscriptView {
         } else {
             self.jump_to_entry(cells, /*index*/ 0);
         }
+    }
+
+    pub(crate) fn jump_to_offset(&mut self, cells: &[Arc<dyn HistoryCell>], offset: usize) {
+        self.position = Position::Reading(Anchor {
+            key: self.entry_key(cells, /*index*/ 0),
+            index: 0,
+            offset,
+            row_bias: 0,
+        });
     }
 
     pub(crate) fn jump_to_latest(&mut self) {
@@ -572,8 +776,7 @@ impl TranscriptView {
         }
         // Anchor visible content, not a hidden header that stays ahead of every older page.
         let index = self.next_nonempty(cells, index).unwrap_or(index);
-        let bottom = self.bottom_start(cells);
-        if rows > 0 && (index, row) >= bottom {
+        if rows > 0 && (index, row) >= self.bottom_start(cells) {
             if self.selection.is_none() && !self.search.is_active() {
                 self.jump_to_latest();
             } else {
@@ -583,15 +786,25 @@ impl TranscriptView {
             return;
         }
         if let Some(layout) = self.layout(cells, index) {
-            let offset = layout.position_at(row, /*column*/ 0);
-            self.position = Position::Reading(Anchor {
-                key: self.entry_key(cells, index),
-                index,
-                offset,
-                row_bias: layout.row_for_offset(offset) as isize - row as isize,
-            });
+            self.read_from_row(cells, index, row, &layout);
             self.hold_live_reading(current_cells, layout);
         }
+    }
+
+    fn read_from_row(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        index: usize,
+        row: usize,
+        layout: &TextLayout,
+    ) {
+        let offset = layout.position_at(row, /*column*/ 0);
+        self.position = Position::Reading(Anchor {
+            key: self.entry_key(cells, index),
+            index,
+            offset,
+            row_bias: layout.row_for_offset(offset) as isize - row as isize,
+        });
     }
 
     pub(crate) fn jump_to_entry(&mut self, cells: &[Arc<dyn HistoryCell>], index: usize) {
@@ -666,10 +879,7 @@ impl TranscriptView {
             Position::Reading(anchor) => {
                 let index = self.resolve(cells, anchor);
                 let row = self.layout(cells, index).map_or(/*default*/ 0, |layout| {
-                    layout
-                        .row_for_offset(anchor.offset)
-                        .saturating_add_signed(anchor.row_bias.saturating_neg())
-                        .min(layout.row_count().saturating_sub(/*rhs*/ 1))
+                    layout.reading_row(anchor.offset, anchor.row_bias)
                 });
                 self.position = Position::Reading(Anchor {
                     key: self.entry_key(cells, index),

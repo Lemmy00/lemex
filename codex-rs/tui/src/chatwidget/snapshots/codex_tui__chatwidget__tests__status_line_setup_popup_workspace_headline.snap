@@ -1,5 +1,6 @@
 ---
 source: tui/src/chatwidget/tests/status_surface_previews.rs
+assertion_line: 246
 expression: status_line_popup_snapshot(&mut chat)
 ---
   Configure Status Line
@@ -9,12 +10,11 @@ expression: status_line_popup_snapshot(&mut chat)
 
 › [x] Use theme colors      Apply colors from the active /theme
   ───────────────────────
-  [x] workspace-headline    Workspace notification headline (Enterprise workspaces only; omitted wh…
   [ ] model                 Current model name
   [ ] model-with-reasoning  Current model name with reasoning level
   [ ] reasoning             Current reasoning level
   [ ] current-dir           Current working directory
   [ ] project-name          Project name (omitted when unavailable)
+  [ ] hostname              Current machine hostname (omitted when unavailable)
 ↓
-  Workspace maintenance starts at 5pm
   space toggle · ←/→ reorder · enter save · esc cancel

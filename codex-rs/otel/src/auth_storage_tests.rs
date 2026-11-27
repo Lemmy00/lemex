@@ -35,7 +35,7 @@ fn startup_fallback_exports_one_logical_operation_without_error_contents() -> cr
     if run_in_subprocess() {
         return Ok(());
     }
-    let mut telemetry = AuthStorageOriginator::from_client_name("Codex Desktop").sync_scope(|| {
+    let mut telemetry = AuthStorageOriginator::from_client_name("Lemex Desktop").sync_scope(|| {
         StorageTelemetry::new(
             CredentialKind::Codex,
             StoreMode::Auto,

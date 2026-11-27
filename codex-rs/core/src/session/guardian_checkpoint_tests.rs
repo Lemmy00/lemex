@@ -4,12 +4,31 @@ use crate::context_manager::ContextManager;
 use crate::session::tests::make_session_and_context;
 use codex_history::InitialHistory;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::TokenUsage;
-use codex_protocol_test_support::uuid_v7_item_id_generator_for_test;
+use codex_thread_context_ids_test_support::thread_context_ids;
+use core_test_support::responses::user_message_item;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use test_case::test_case;
+
+#[tokio::test]
+async fn guardian_root_version_changes_on_history_reset_but_not_on_append() {
+    let (mut root, turn) = make_session_and_context().await;
+    root.multi_agent_version = MultiAgentVersion::V2.into();
+    let before = root.guardian_root_history_version().await.unwrap();
+    assert_eq!(before.0, root.thread_id);
+
+    let message = user_message_item("Update the README.");
+    root.record_conversation_items(&turn, turn.model_info(), &[message])
+        .await;
+    assert_eq!(root.guardian_root_history_version().await, Some(before));
+
+    root.replace_history(Vec::new(), /*reference_context_item*/ None)
+        .await;
+    assert_ne!(root.guardian_root_history_version().await.unwrap(), before);
+}
 
 #[test_case(GuardianContextMode::Legacy, ThreadHistoryMode::Legacy; "legacy_context_legacy_storage")]
 #[test_case(GuardianContextMode::ThreadOwned, ThreadHistoryMode::Legacy; "thread_owned_context_legacy_storage")]
@@ -38,8 +57,10 @@ async fn guardian_checkpoint_preserves_live_context_without_storage(
         state.history = ContextManager::for_session(
             /*root_capabilities_restricted*/ false,
             &crate::config::ManagedFeatures::from(codex_features::Features::with_defaults()),
+            /*reuse_parent_compaction*/ true,
             codex_guardian_context::ContextBudgeting::Fixed,
-            uuid_v7_item_id_generator_for_test(),
+            thread_context_ids(),
+            /*retention*/ None,
         );
         state
             .history
@@ -111,8 +132,10 @@ async fn guardian_checkpoint_preserves_live_context_without_storage(
     fork.state.lock().await.history = ContextManager::for_session(
         /*root_capabilities_restricted*/ false,
         &crate::config::ManagedFeatures::from(codex_features::Features::with_defaults()),
+        /*reuse_parent_compaction*/ true,
         codex_guardian_context::ContextBudgeting::Fixed,
-        uuid_v7_item_id_generator_for_test(),
+        thread_context_ids(),
+        /*retention*/ None,
     );
     fork.record_initial_history(InitialHistory::Forked(items))
         .await;

@@ -125,7 +125,7 @@ async fn exec_custom_provider_daybreak_uses_capability() -> anyhow::Result<()> {
             };
             let assertion = test
                 .cmd_with_server(&server)
-                .env_remove("CODEX_ACCESS_TOKEN")
+                .env_remove("LEMEX_ACCESS_TOKEN")
                 .args([
                     "--skip-git-repo-check",
                     "-c",

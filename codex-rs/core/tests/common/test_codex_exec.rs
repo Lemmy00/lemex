@@ -15,6 +15,7 @@ impl TestCodexExecBuilder {
                 .expect("should find binary for codex-exec"),
         );
         cmd.current_dir(self.cwd.path())
+            .env("TOKIO_WORKER_THREADS", "2")
             .env("LEMEX_HOME", self.home.path())
             .env("LEMEX_SQLITE_HOME", self.home.path())
             .env(LEMEX_API_KEY_ENV_VAR, "dummy")

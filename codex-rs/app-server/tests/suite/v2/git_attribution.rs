@@ -119,7 +119,7 @@ async fn git_attribution_runtime_auth_uses_request_destination(
         )?;
         let mut app = TestAppServer::builder()
             .with_codex_home(home.path())
-            .with_env_overrides(&[("OPENAI_API_KEY", None), ("CODEX_ACCESS_TOKEN", None)])
+            .with_env_overrides(&[("OPENAI_API_KEY", None), ("LEMEX_ACCESS_TOKEN", None)])
             .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
             .await?;
         let id = app

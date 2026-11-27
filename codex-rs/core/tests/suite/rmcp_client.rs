@@ -789,32 +789,6 @@ async fn text_only_mcp_content_uses_content_items() -> anyhow::Result<()> {
         ])
     );
 
-    let request_body = request.body_json();
-    let first_turn_id = request_body["client_metadata"]["turn_id"].clone();
-    assert!(first_turn_id.is_string());
-    let expected_attribution = json!({
-        "status": "complete",
-        "sources": [{
-            "server_name": "rmcp",
-            "tool_name": "image_scenario",
-            "first_turn_id": first_turn_id,
-        }],
-    });
-    assert_eq!(
-        serde_json::to_value(codex_core::test_support::mcp_attribution_snapshot(
-            &fixture.codex
-        ))?,
-        expected_attribution,
-    );
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(
-            request_body["client_metadata"]["mcp_attribution"]
-                .as_str()
-                .context("MCP attribution should be included for the OpenAI provider")?,
-        )?,
-        expected_attribution,
-    );
-
     server.verify().await;
     Ok(())
 }
@@ -963,6 +937,7 @@ async fn environment_mcp_policy_filters_runtime_config_and_model_tools(
                 windows_sandbox_type: fixture.config.permissions.windows_sandbox_type,
                 use_legacy_landlock: fixture.config.features.use_legacy_landlock(),
                 exec_policy: None,
+                plugins: Default::default(),
                 mcp_policy: Some(mcp_policy),
                 network_policy: None,
                 selected_capability_roots: Vec::new(),
@@ -978,6 +953,7 @@ async fn environment_mcp_policy_filters_runtime_config_and_model_tools(
         .codex
         .call_mcp_tool(
             "allowed",
+            /*environment_id*/ None,
             "echo",
             Some(json!({ "message": "ready" })),
             /*meta*/ None,
@@ -1081,6 +1057,7 @@ async fn future_environment_mcp_policy_applies_on_the_next_turn() -> anyhow::Res
         windows_sandbox_type: fixture.config.permissions.windows_sandbox_type,
         use_legacy_landlock: fixture.config.features.use_legacy_landlock(),
         exec_policy: None,
+        plugins: Default::default(),
         mcp_policy: Some(EnvironmentMcpPolicy {
             servers: Some(BTreeMap::from([(
                 "environment_policy".to_string(),
@@ -2202,7 +2179,7 @@ async fn interrupt_during_mcp_startup_preserves_user_input_in_history(
             .iter()
             .any(|item| matches!(
                 item,
-                RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(applied))
+                RolloutItem::EventMsg { event: EventMsg::ThreadSettingsApplied(applied), .. }
                     if applied.thread_id == Some(fixture.session_configured.thread_id)
             ))
     );
@@ -2347,7 +2324,6 @@ async fn local_stdio_server_uses_runtime_fallback_cwd_when_config_omits_cwd() ->
             max_context_tokens: config.skill_max_context_tokens,
             bundled_skills_enabled: config.bundled_skills_enabled(),
             cloud_skill_enabled: config.cloud_skill_enabled,
-            shadow_selection_enabled: config.features.enabled(Feature::SkillSearch),
         }
     });
     let mut fixture = test_codex()
@@ -2441,7 +2417,7 @@ async fn local_stdio_server_uses_runtime_fallback_cwd_when_config_omits_cwd() ->
             .await?;
         fixture.codex = started.thread;
         fixture.session_configured = started.session_configured;
-        wait_for_mcp_server(&fixture.codex, server_name).await?;
+        // The catalog is warm; the optional server starts on its first tool call.
 
         // A fresh thread must still discover the primary executor's repository
         // skills; host routing must not silently replace them with local skills.
@@ -2586,8 +2562,8 @@ async fn stdio_mcp_tool_call_includes_sandbox_state_meta(
         .as_mut()
         .expect("bundled model messages");
     messages.confirmation_policies = Some(ConfirmationPolicies {
-        browser_use: browser_policy.map(str::to_owned),
-        computer_use: computer_policy.map(str::to_owned),
+        browser_use: browser_policy.map(Into::into),
+        computer_use: computer_policy.map(Into::into),
     });
     let models_mock = mount_models_once(&server, models).await;
 
@@ -2726,6 +2702,7 @@ async fn stdio_mcp_tool_call_includes_sandbox_state_meta(
                     windows_sandbox_type: fixture.config.permissions.windows_sandbox_type,
                     use_legacy_landlock: fixture.config.features.use_legacy_landlock(),
                     exec_policy: None,
+                    plugins: Default::default(),
                     mcp_policy: None,
                     network_policy: None,
                     selected_capability_roots: Vec::new(),
@@ -3369,6 +3346,7 @@ async fn stdio_image_responses_round_trip() -> anyhow::Result<()> {
             call_id: call_id.to_string(),
             invocation: McpInvocation {
                 server: server_name.to_string(),
+                environment_id: None,
                 tool: "image".to_string(),
                 arguments: Some(json!({})),
             },
@@ -3396,6 +3374,7 @@ async fn stdio_image_responses_round_trip() -> anyhow::Result<()> {
         end.invocation,
         McpInvocation {
             server: server_name.to_string(),
+            environment_id: None,
             tool: "image".to_string(),
             arguments: Some(json!({})),
         }
@@ -3679,7 +3658,6 @@ async fn stdio_image_responses_are_sanitized_for_text_only_model() -> anyhow::Re
                 availability_nux: None,
                 apply_patch_tool_type: None,
                 web_search_tool_type: Default::default(),
-                web_search_provider: None,
                 truncation_policy: TruncationPolicyConfig::bytes(/*limit*/ 10_000),
                 supports_image_detail_original: false,
                 context_window: Some(272_000),
@@ -3701,6 +3679,7 @@ async fn stdio_image_responses_are_sanitized_for_text_only_model() -> anyhow::Re
                 tool_mode: None,
                 multi_agent_version: None,
                 multi_agent_reasoning_effort: None,
+                multi_agent_tools_in_code_mode: None,
             }],
         },
     )

@@ -33,12 +33,12 @@ use codex_execpolicy::Policy;
 use codex_execpolicy::RuleMatch;
 use codex_features::Feature;
 use codex_model_provider::create_model_provider;
-use codex_network_proxy::EnvironmentNetworkPolicy;
 use codex_network_proxy::NetworkDecision;
 use codex_network_proxy::NetworkDecisionSource;
 use codex_network_proxy::NetworkPolicyDecision;
 use codex_network_proxy::NetworkPolicyRequest;
 use codex_network_proxy::NetworkProtocol;
+use codex_network_proxy::environment_policy_from_config;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::models::AdditionalPermissionProfile as PermissionProfile;
@@ -63,6 +63,7 @@ use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::sse_response;
 use core_test_support::responses::start_mock_server;
+use futures::FutureExt;
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::sync::Arc;
@@ -71,6 +72,61 @@ use tempfile::tempdir;
 use test_case::test_case;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
+
+#[tokio::test]
+async fn guardian_saves_forwarded_user_instructions_after_interruption() -> anyhow::Result<()> {
+    let (mut session, turn) = make_session_and_context().await;
+    let path = attach_thread_persistence(&mut session).await;
+    session.preserve_review_writes = true;
+    let instructions = codex_history::SenderUserMessages {
+        receiver_turn_id: turn.sub_id.clone(),
+        receiver_message_id: "delivery".to_owned(),
+        text: "Stop the release.".to_owned(),
+    };
+    let delivery = ResponseItemEnvelope {
+        item: serde_json::from_value(json!({
+            "type": "function_call_output", "id": "delivery",
+            "name": "send_message_to_thread", "namespace": "codex_app", "output": "Inspect."
+        }))?,
+        metadata: Some(CodexHarnessMetadata {
+            sender_user_messages: Some(Box::new(instructions.clone())),
+            ..Default::default()
+        }),
+    };
+
+    // Block the writer, then drop the turn's future once it hands off the append.
+    let live = session.live_thread().unwrap();
+    let flush = tokio::task::unconstrained(live.flush());
+    tokio::pin!(flush);
+    assert!(futures::poll!(&mut flush).is_pending());
+    let recording = session.record_prepared_conversation_items(
+        &turn,
+        turn.model_info(),
+        vec![delivery],
+        Vec::new(),
+    );
+    assert!(
+        tokio::task::unconstrained(recording)
+            .now_or_never()
+            .is_none()
+    );
+    flush.await?;
+    session.drain_code_mode_messages().await;
+    live.flush().await?;
+
+    let history = RolloutRecorder::get_rollout_history(&path).await?;
+    let saved = history
+        .get_rollout_items()
+        .iter()
+        .find_map(|item| match item {
+            RolloutItem::ResponseItem(item) => {
+                item.metadata.as_ref()?.sender_user_messages.as_deref()
+            }
+            _ => None,
+        });
+    assert_eq!(saved, Some(&instructions));
+    Ok(())
+}
 
 fn expect_text_output<T>(output: &T) -> String
 where
@@ -616,7 +672,7 @@ async fn guardian_allows_exec_command_additional_permissions_requests_past_polic
             step_context,
             cancellation_token: CancellationToken::new(),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            call_id: "test-call".to_string(),
+            call_id: "test-call".into(),
             tool_name: codex_tools::ToolName::plain("exec_command"),
             source: crate::tools::context::ToolCallSource::Direct,
             native_call: None,
@@ -742,7 +798,7 @@ async fn strict_auto_review_turn_grant_forces_guardian_for_exec_command_policy_s
             step_context,
             cancellation_token: CancellationToken::new(),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            call_id: "strict-shell-command-call".to_string(),
+            call_id: "strict-shell-command-call".into(),
             tool_name: codex_tools::ToolName::plain("exec_command"),
             source: ToolCallSource::Direct,
             native_call: None,
@@ -896,7 +952,7 @@ async fn delayed_exec_command_uses_its_captured_authority_after_next_turn_starts
         step_context,
         cancellation_token: CancellationToken::new(),
         tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-        call_id: call_id.to_string(),
+        call_id: call_id.into(),
         tool_name: codex_tools::ToolName::plain("exec_command"),
         source: ToolCallSource::Direct,
         native_call: None,
@@ -1026,7 +1082,7 @@ async fn sandbox_denied_retry_uses_the_action_policy_and_reviewer() {
         .primary()
         .expect("primary environment")
         .clone();
-    environment.config_mut().network_policy = Some(EnvironmentNetworkPolicy::from_config(
+    environment.config_mut().network_policy = Some(environment_policy_from_config(
         &NetworkProxyConfig {
             enabled: true,
             ..Default::default()
@@ -1104,7 +1160,7 @@ async fn guardian_allows_unified_exec_additional_permissions_requests_past_polic
             step_context,
             cancellation_token: CancellationToken::new(),
             tracker: Arc::clone(&tracker),
-            call_id: "exec-call".to_string(),
+            call_id: "exec-call".into(),
             tool_name: codex_tools::ToolName::plain("exec_command"),
             source: crate::tools::context::ToolCallSource::Direct,
             native_call: None,
@@ -1230,7 +1286,7 @@ async fn exec_command_allows_sticky_turn_permissions_without_inline_request_perm
             step_context,
             cancellation_token: CancellationToken::new(),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            call_id: "sticky-turn-grant".to_string(),
+            call_id: "sticky-turn-grant".into(),
             tool_name: codex_tools::ToolName::plain("exec_command"),
             source: crate::tools::context::ToolCallSource::Direct,
             native_call: None,
@@ -1330,9 +1386,11 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
     let mut thread_extension_init = codex_extension_api::ExtensionDataInit::default();
     thread_extension_init.insert(codex_extension_api::SessionIsolation::Isolated);
     let (session, io) = Session::spawn(SessionSpawnArgs {
+        child_service_tier: None,
         attached_thread: false,
         startup: None,
         config,
+        request_country: Default::default(),
         prompt_cache_key: PromptCacheKey::default(),
         allow_provider_model_fallback: false,
         instructions: Default::default(),

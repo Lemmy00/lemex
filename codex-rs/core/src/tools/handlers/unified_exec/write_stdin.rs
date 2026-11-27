@@ -57,10 +57,7 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
         true
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(self.handle_call(invocation))
     }
 }
@@ -87,8 +84,12 @@ impl WriteStdinHandler {
             ));
         };
         let args = WriteStdinArgs::parse(&payload)?;
-        let context =
-            UnifiedExecContext::new(session.clone(), step_context, cancellation_token, call_id);
+        let context = UnifiedExecContext::new(
+            session.clone(),
+            step_context,
+            cancellation_token,
+            call_id.into(),
+        );
         let response = session
             .services
             .unified_exec_manager

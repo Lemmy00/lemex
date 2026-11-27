@@ -288,7 +288,7 @@ async fn executor_concurrent_rotation_checks_identity_before_refresh() {
                     "--nocapture",
                 ])
                 .env(CHILD_MODE, mode)
-                .env_remove("CODEX_ACCESS_TOKEN")
+                .env_remove("LEMEX_ACCESS_TOKEN")
                 .env("NO_PROXY", "127.0.0.1,localhost")
                 .env("no_proxy", "127.0.0.1,localhost")
                 .env("CODEX_AUTHAPI_BASE_URL", server.uri())
@@ -421,7 +421,7 @@ async fn executor_refresh_survives_cancelled_caller() {
                 let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", "exec_server_auth::tests::executor_refresh_survives_cancelled_caller", "--nocapture"])
                     .env(CHILD_MODE, mode)
-                    .env_remove("CODEX_ACCESS_TOKEN")
+                    .env_remove("LEMEX_ACCESS_TOKEN")
                     .env("CODEX_REFRESH_TOKEN_URL_OVERRIDE", endpoint)
                     .env("NO_PROXY", "127.0.0.1,localhost")
                     .env("no_proxy", "127.0.0.1,localhost")

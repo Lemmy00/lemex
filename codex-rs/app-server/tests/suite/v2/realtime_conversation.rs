@@ -6,6 +6,8 @@ use app_test_support::create_command_execution_sse_response;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use codex_app_server_protocol::CommandExecutionStatus;
+use codex_app_server_protocol::ExperimentalFeatureEnablementSetParams;
+use codex_app_server_protocol::ExperimentalFeatureEnablementSetResponse;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCError;
@@ -418,7 +420,6 @@ impl RealtimeE2eHarness {
                     sdp: offer_sdp.to_string(),
                 }),
                 version: Some(version),
-                voice: None,
             })
             .await?;
         let _: ThreadRealtimeStartResponse =
@@ -479,7 +480,6 @@ impl RealtimeE2eHarness {
                 voice_session_id: None,
                 transport: None,
                 version: None,
-                voice: None,
             })
             .await?;
         let _: ThreadRealtimeStartResponse =
@@ -518,7 +518,6 @@ impl RealtimeE2eHarness {
                 voice_session_id: None,
                 transport: None,
                 version: Some(RealtimeConversationVersion::V3),
-                voice: None,
             })
             .await?;
         let _: ThreadRealtimeStartResponse =
@@ -706,6 +705,7 @@ async fn realtime_conversation_streams_timeline_items() -> Result<()> {
         .await?;
     mcp.initialize().await?;
     login_with_api_key(&mut mcp, "sk-test-key").await?;
+    enable_local_realtime_frames(&mut mcp).await?;
 
     let thread_request = mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
@@ -737,7 +737,6 @@ async fn realtime_conversation_streams_timeline_items() -> Result<()> {
             voice_session_id: None,
             transport: None,
             version: None,
-            voice: None,
         })
         .await?;
     let _: ThreadRealtimeStartResponse =
@@ -755,8 +754,11 @@ async fn realtime_conversation_streams_timeline_items() -> Result<()> {
     .await?;
     assert_eq!(session_started.item, session_completed.item);
     assert_eq!(
-        Uuid::parse_str(&session_started.item.id)?.get_version_num(),
-        7
+        session_started.item.id,
+        format!(
+            "realtime-session-start:{}",
+            session_started.item.realtime_session_id
+        )
     );
     assert!(matches!(
         session_completed.item.content,
@@ -936,7 +938,6 @@ async fn realtime_conversation_streams_v2_notifications() -> Result<()> {
             voice_session_id: None,
             transport: None,
             version: None,
-            voice: Some(RealtimeVoice::Cedar),
         })
         .await?;
     let _: ThreadRealtimeStartResponse =
@@ -958,7 +959,7 @@ async fn realtime_conversation_streams_v2_notifications() -> Result<()> {
     );
     assert_eq!(
         startup_context_request.body_json()["session"]["audio"]["output"]["voice"],
-        "cedar"
+        "marin"
     );
     assert_eq!(
         realtime_server.single_handshake().uri(),
@@ -1247,6 +1248,7 @@ async fn realtime_timeline_splits_accepted_steering_and_persists_promoted_artifa
         ])]),
     )
     .await?;
+    enable_local_realtime_frames(&mut harness.mcp).await?;
     let thread_request = harness
         .mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
@@ -1427,7 +1429,17 @@ async fn realtime_timeline_splits_accepted_steering_and_persists_promoted_artifa
     );
     for entry in &page.data {
         if let ThreadTimelineEntry::Realtime { item, .. } = entry {
-            assert_eq!(Uuid::parse_str(&item.id)?.get_version_num(), 7);
+            if matches!(
+                item.content,
+                ThreadRealtimeItemContent::RealtimeSessionStarted
+            ) {
+                assert_eq!(
+                    item.id,
+                    format!("realtime-session-start:{}", item.realtime_session_id)
+                );
+            } else {
+                assert_eq!(Uuid::parse_str(&item.id)?.get_version_num(), 7);
+            }
         }
     }
 
@@ -1519,7 +1531,6 @@ async fn realtime_start_can_skip_startup_context() -> Result<()> {
             voice_session_id: None,
             transport: None,
             version: None,
-            voice: None,
         })
         .await?;
     let _: ThreadRealtimeStartResponse =
@@ -1618,7 +1629,6 @@ async fn realtime_text_output_modality_requests_text_output_and_final_transcript
             voice_session_id: None,
             transport: None,
             version: None,
-            voice: None,
         })
         .await?;
     let _: ThreadRealtimeStartResponse =
@@ -1785,6 +1795,7 @@ async fn realtime_conversation_stop_emits_closed_notification(
         .build_initialized_with_timeout(DEFAULT_TIMEOUT)
         .await?;
     login_with_api_key(&mut mcp, "sk-test-key").await?;
+    enable_local_realtime_frames(&mut mcp).await?;
 
     let thread_start_request_id = mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
@@ -1832,11 +1843,10 @@ async fn realtime_conversation_stop_emits_closed_notification(
             realtime_start_instructions: None,
             realtime_end_instructions: None,
             prompt: Some(Some("backend prompt".to_string())),
-            realtime_session_id: None,
+            realtime_session_id: Some("call:Voice/one".into()),
             voice_session_id: None,
             transport: None,
             version: Some(RealtimeConversationVersion::V1),
-            voice: None,
         })
         .await?;
     let _: ThreadRealtimeStartResponse =
@@ -1884,15 +1894,60 @@ async fn realtime_conversation_stop_emits_closed_notification(
             .await?;
         let items: ThreadItemsListResponse =
             timeout(DEFAULT_TIMEOUT, mcp.read_response(request)).await??;
-        let tails = items.data.iter().filter(|entry| matches!(
+        let has_tail = items.data.iter().any(|entry| matches!(
             &entry.item.payload, ThreadItemPayload::UserMessage { content, .. }
             if content.iter().any(|part| matches!(part, V2UserInput::Text { text, .. }
                 if text.contains("<source>transcript_tail_flush</source>") && text.contains("user: final words")))
-        )).collect::<Vec<_>>();
-        assert_eq!(tails.len(), 1);
-        if let Some(id) = &running_turn_id {
-            assert_eq!(&tails[0].turn_id, id);
-        }
+        ));
+        assert!(has_tail, "protocol V1 keeps its legacy carryover behavior");
+        let request = mcp
+            .send_request(
+                "thread/realtime/list",
+                Some(serde_json::json!({"threadId": started.thread_id})),
+            )
+            .await?;
+        let history: codex_app_server_protocol::ThreadRealtimeListResponse =
+            timeout(DEFAULT_TIMEOUT, mcp.read_response(request)).await??;
+        let start_id = "realtime-session-start:call:Voice/one";
+        let request = mcp
+            .send_request(
+                "thread/realtime/list",
+                Some(serde_json::json!({"threadId": started.thread_id, "eventId": start_id})),
+            )
+            .await?;
+        let start: codex_app_server_protocol::ThreadRealtimeListResponse =
+            timeout(DEFAULT_TIMEOUT, mcp.read_response(request)).await??;
+        let [start] = start.data.as_slice() else {
+            panic!("the known call ID should resolve its opening marker");
+        };
+        assert_eq!(start.item.id, start_id);
+        assert!(matches!(
+            start.item.content,
+            ThreadRealtimeItemContent::RealtimeSessionStarted
+        ));
+        let end = history
+            .data
+            .iter()
+            .find(|entry| {
+                matches!(
+                    entry.item.content,
+                    ThreadRealtimeItemContent::RealtimeSessionClosed { .. }
+                )
+            })
+            .expect("a closed call has a closing marker");
+        assert!(start.position < end.position);
+        let realtime = history
+            .data
+            .iter()
+            .map(|entry| &entry.item)
+            .collect::<Vec<_>>();
+        assert!(
+            realtime.iter().any(|item| matches!(
+                &item.content, ThreadRealtimeItemContent::Frame { channels }
+                    if channels.voice_transcript.text == "final words"
+            )),
+            "sealed speech is readable immediately after Closed"
+        );
         let request = mcp
             .send_thread_turns_list_request(ThreadTurnsListParams {
                 thread_id: started.thread_id.clone(),
@@ -1904,7 +1959,6 @@ async fn realtime_conversation_stop_emits_closed_notification(
             .await?;
         let turns: ThreadTurnsListResponse =
             timeout(DEFAULT_TIMEOUT, mcp.read_response(request)).await??;
-        assert_eq!(tails[0].turn_id, turns.data[0].id);
         turns.data
     } else {
         let request = mcp
@@ -1923,15 +1977,20 @@ async fn realtime_conversation_stop_emits_closed_notification(
         history.thread.turns
     };
     assert_eq!(turns.len(), 1);
-    assert_eq!(
-        turns[0].status,
-        if running {
-            TurnStatus::InProgress
-        } else {
-            TurnStatus::Completed
+    if let Some(turn) = turns.first() {
+        assert_eq!(
+            turn.status,
+            if running {
+                TurnStatus::InProgress
+            } else {
+                TurnStatus::Completed
+            }
+        );
+        assert_eq!(Uuid::parse_str(&turn.id)?.get_version_num(), 7);
+        if let Some(id) = &running_turn_id {
+            assert_eq!(&turn.id, id);
         }
-    );
-    assert_eq!(Uuid::parse_str(&turns[0].id)?.get_version_num(), 7);
+    }
 
     response_tx.send(())?;
     if running {
@@ -1996,7 +2055,6 @@ async fn realtime_mode_uses_client_instructions_on_entry_and_exit() -> Result<()
             voice_session_id: None,
             transport: None,
             version: None,
-            voice: None,
         })
         .await?;
     let _: ThreadRealtimeStartResponse =
@@ -2285,7 +2343,6 @@ async fn realtime_webrtc_start_emits_sdp_notification() -> Result<()> {
                 sdp: "v=offer\r\n".to_string(),
             }),
             version: Some(RealtimeConversationVersion::V1),
-            voice: None,
         })
         .await?;
     let _: ThreadRealtimeStartResponse =
@@ -2400,12 +2457,19 @@ async fn webrtc_v1_start_posts_offer_returns_sdp_and_joins_sideband() -> Result<
     // Phase 2: start through app-server and assert the app receives both the started notification
     // and the answer SDP.
     let started = harness.start_webrtc_realtime("v=offer\r\n").await?;
+    let call_request = harness.call_capture.single_request();
+    let session_id = call_request
+        .headers
+        .get("x-session-id")
+        .context("call session ID")?
+        .to_str()?;
+    assert_ne!(session_id, harness.thread_id);
     assert_eq!(
         started,
         StartedWebrtcRealtime {
             started: ThreadRealtimeStartedNotification {
                 thread_id: harness.thread_id.clone(),
-                realtime_session_id: Some(harness.thread_id.clone()),
+                realtime_session_id: Some(session_id.to_string()),
                 version: RealtimeConversationVersion::V1,
             },
             sdp: ThreadRealtimeSdpNotification {
@@ -2506,7 +2570,6 @@ async fn existing_call_attaches_without_reinitializing_the_client_session(
                 call_id: "rtc_existing".to_string(),
             }),
             version,
-            voice: None,
         })
         .await?;
     let _: ThreadRealtimeStartResponse =
@@ -2531,7 +2594,7 @@ async fn existing_call_attaches_without_reinitializing_the_client_session(
         started,
         ThreadRealtimeStartedNotification {
             thread_id: harness.thread_id.clone(),
-            realtime_session_id: realtime_session_id.map(str::to_string),
+            realtime_session_id: Some(realtime_session_id.unwrap_or("rtc_existing").to_string()),
             version: expected_version,
         }
     );
@@ -2569,7 +2632,6 @@ async fn existing_call_attaches_without_reinitializing_the_client_session(
 #[test_case("prompt"; "rejects prompt")]
 #[test_case("initialItems"; "rejects initial items")]
 #[test_case("model"; "rejects model")]
-#[test_case("voice"; "rejects voice")]
 #[test_case("delegationAckFiller"; "rejects delegation acknowledgement filler")]
 #[tokio::test]
 async fn existing_call_rejects_client_owned_session_configuration(option: &str) -> Result<()> {
@@ -2604,7 +2666,6 @@ async fn existing_call_rejects_client_owned_session_configuration(option: &str) 
             call_id: "rtc_existing".to_string(),
         }),
         version: Some(RealtimeConversationVersion::V3),
-        voice: None,
     };
     match option {
         "includeStartupContext" => params.include_startup_context = Some(true),
@@ -2616,7 +2677,6 @@ async fn existing_call_rejects_client_owned_session_configuration(option: &str) 
             }]);
         }
         "model" => params.model = Some("another-model".to_string()),
-        "voice" => params.voice = Some(RealtimeVoice::Cove),
         "delegationAckFiller" => params.delegation_ack_filler = Some(true),
         option => anyhow::bail!("unsupported test option: {option}"),
     }
@@ -2663,12 +2723,19 @@ async fn webrtc_v3_start_posts_live_session_and_joins_without_session_update() -
             RealtimeConversationVersion::V3,
         )
         .await?;
+    let call_request = harness.call_capture.single_request();
+    let session_id = call_request
+        .headers
+        .get("x-session-id")
+        .context("call session ID")?
+        .to_str()?;
+    assert_ne!(session_id, harness.thread_id);
     assert_eq!(
         started,
         StartedWebrtcRealtime {
             started: ThreadRealtimeStartedNotification {
                 thread_id: harness.thread_id.clone(),
-                realtime_session_id: Some(harness.thread_id.clone()),
+                realtime_session_id: Some(session_id.to_string()),
                 version: RealtimeConversationVersion::V3,
             },
             sdp: ThreadRealtimeSdpNotification {
@@ -2681,7 +2748,7 @@ async fn webrtc_v3_start_posts_live_session_and_joins_without_session_update() -
     assert_call_create_multipart(
         harness.call_capture.single_request(),
         "v=offer\r\n",
-        r#"{"audio":{"output":{"voice":"cove"}},"delegation":{"ack_filler":false,"type":"client"},"instructions":"backend prompt\n\nstartup context","model":"gpt-live-1-codex"}"#,
+        r#"{"delegation":{"ack_filler":false,"type":"client"},"instructions":"backend prompt\n\nstartup context","model":"gpt-live-1.1-codex"}"#,
         "/v1/live",
     )?;
     assert!(
@@ -4158,7 +4225,6 @@ async fn realtime_webrtc_start_surfaces_backend_error() -> Result<()> {
                 sdp: "v=offer\r\n".to_string(),
             }),
             version: Some(RealtimeConversationVersion::V1),
-            voice: None,
         })
         .await?;
     let _: ThreadRealtimeStartResponse =
@@ -4253,12 +4319,19 @@ async fn realtime_starts_on_forked_and_resumed_threads(
     }
 
     let started = harness.start_webrtc_realtime("v=offer\r\n").await?;
+    let call_request = harness.call_capture.single_request();
+    let session_id = call_request
+        .headers
+        .get("x-session-id")
+        .context("call session ID")?
+        .to_str()?;
+    assert_ne!(session_id, harness.thread_id);
     assert_eq!(
         started,
         StartedWebrtcRealtime {
             started: ThreadRealtimeStartedNotification {
                 thread_id: harness.thread_id.clone(),
-                realtime_session_id: Some(harness.thread_id.clone()),
+                realtime_session_id: Some(session_id.to_string()),
                 version: RealtimeConversationVersion::V1,
             },
             sdp: ThreadRealtimeSdpNotification {
@@ -4293,6 +4366,17 @@ async fn login_with_api_key(mcp: &mut TestAppServer, api_key: &str) -> Result<()
         timeout(DEFAULT_TIMEOUT, mcp.read_response(request_id)).await??;
     assert_eq!(login, LoginAccountResponse::ApiKey {});
 
+    Ok(())
+}
+
+async fn enable_local_realtime_frames(mcp: &mut TestAppServer) -> Result<()> {
+    let request = mcp
+        .send_experimental_feature_enablement_set_request(ExperimentalFeatureEnablementSetParams {
+            enablement: BTreeMap::from([("realtime_frames_local".to_string(), true)]),
+        })
+        .await?;
+    let _: ExperimentalFeatureEnablementSetResponse =
+        timeout(DEFAULT_TIMEOUT, mcp.read_response(request)).await??;
     Ok(())
 }
 
@@ -4677,7 +4761,6 @@ async fn realtime_requests_use_runtime_auth(transport: &str, mode: &str) -> Resu
                     } else {
                         RealtimeConversationVersion::V2
                     }),
-                    voice: None,
                 })
                 .await?;
             let _: ThreadRealtimeStartResponse =

@@ -6,12 +6,23 @@ use std::time::Instant;
 
 use codex_utils_sleep_inhibitor::SleepInhibitor;
 
+/// State of the interrupt-and-send hint in the last terminal frame.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SteerHint {
+    Hidden,
+    Pending,
+    Acknowledged,
+}
+
 #[derive(Debug)]
 pub(super) struct TurnLifecycleState {
     pub(super) sleep_inhibitor: SleepInhibitor,
     /// Tracks whether codex-core currently considers an agent turn to be in progress.
     pub(super) agent_turn_running: bool,
+    pub(super) running_from_history: bool,
+    pub(super) elapsed_at_idle: Option<(String, std::time::Duration)>,
     pub(super) last_turn_id: Option<String>,
+    pub(super) steer_hint: SteerHint,
     /// A live or restored turn makes the parent available for side-chat creation.
     pub(super) has_turn_history: bool,
     /// Cloud confirmed admission to a turn whose live start we have yet to process.
@@ -19,6 +30,7 @@ pub(super) struct TurnLifecycleState {
     pub(super) budget_limited_turn_ids: HashSet<String>,
     /// False records an untimed turn boundary that may still receive a completion label.
     pub(super) rendered_completion_turn_ids: HashMap<String, bool>,
+    pub(super) generated_images: crate::history_cell::PendingGeneratedImages,
     pub(super) goal_status_active_turn_started_at: Option<Instant>,
 }
 
@@ -27,23 +39,31 @@ impl TurnLifecycleState {
         Self {
             sleep_inhibitor: SleepInhibitor::new(prevent_idle_sleep),
             agent_turn_running: false,
+            running_from_history: false,
+            elapsed_at_idle: None,
             last_turn_id: None,
+            steer_hint: SteerHint::Hidden,
             has_turn_history: false,
             admitted_turn_id: None,
             budget_limited_turn_ids: HashSet::new(),
             rendered_completion_turn_ids: HashMap::new(),
+            generated_images: Default::default(),
             goal_status_active_turn_started_at: None,
         }
     }
 
     pub(super) fn start(&mut self, now: Instant) {
+        self.steer_hint = SteerHint::Hidden;
         self.agent_turn_running = true;
+        self.running_from_history = false;
         self.goal_status_active_turn_started_at = Some(now);
         self.sleep_inhibitor.set_turn_running(/*turn_running*/ true);
     }
 
     pub(super) fn finish(&mut self) {
+        self.steer_hint = SteerHint::Hidden;
         self.agent_turn_running = false;
+        self.running_from_history = false;
         self.goal_status_active_turn_started_at = None;
         self.sleep_inhibitor
             .set_turn_running(/*turn_running*/ false);
@@ -54,6 +74,7 @@ impl TurnLifecycleState {
     }
 
     pub(super) fn restore_running(&mut self, running: bool, now: Instant) {
+        self.steer_hint = SteerHint::Hidden;
         self.agent_turn_running = running;
         self.goal_status_active_turn_started_at = running.then_some(now);
         self.sleep_inhibitor.set_turn_running(running);
@@ -62,10 +83,12 @@ impl TurnLifecycleState {
     pub(super) fn reset_thread(&mut self) {
         self.finish();
         self.last_turn_id = None;
+        self.elapsed_at_idle = None;
         self.has_turn_history = false;
         self.admitted_turn_id = None;
         self.budget_limited_turn_ids.clear();
         self.rendered_completion_turn_ids.clear();
+        self.generated_images = Default::default();
     }
 
     pub(super) fn set_prevent_idle_sleep(&mut self, enabled: bool) {

@@ -2,8 +2,74 @@
 
 use super::*;
 use crate::ElasticSectionLimits;
+use crate::estimate_input_tokens;
 use codex_protocol::models::ImageReference;
+use codex_protocol::models::ResponseItem;
+use codex_protocol::models::input_text;
+use codex_thread_context_ids_test_support::thread_context_ids;
 use pretty_assertions::assert_eq;
+
+#[test]
+fn id_budget_accounts_for_json_escaping() {
+    let id = ResponseItemId::from_server("\"".repeat(32));
+    let wire = format!(r#","id":{}"#, serde_json::to_string(id.as_str()).unwrap());
+    assert_eq!(
+        id_token_budget(&id),
+        TruncationPolicy::Bytes(wire.len()).token_budget()
+    );
+}
+
+#[test]
+fn reserves_ids_for_user_messages_and_native_call_outputs() {
+    let call: ResponseItem = serde_json::from_value(serde_json::json!({
+        "type": "function_call",
+        "id": "fc_committed",
+        "call_id": "call",
+        "name": "read_file",
+        "arguments": "{}",
+    }))
+    .unwrap();
+    let call_id = call.id().cloned();
+    let sections = [
+        SectionOutput {
+            id: "conversation_transcript",
+            delivery: SectionDelivery::user_content(vec![Budgeted::required(input_text("before"))]),
+        },
+        SectionOutput {
+            id: "conversation_transcript",
+            delivery: SectionDelivery::Message(Budgeted::required(Box::new(call.into()))),
+        },
+        SectionOutput {
+            id: "budget_omission",
+            delivery: SectionDelivery::user_content(vec![Budgeted::required(input_text("after"))]),
+        },
+    ];
+    let prepared = PreparedElasticContext {
+        context: ComposedContext {
+            sections: sections.to_vec(),
+            ..Default::default()
+        },
+        config: &ElasticBudgetConfig::default(),
+        delivered_omissions: None,
+    };
+    let reserved = ReservedElasticItemIds::reserve(&prepared, &thread_context_ids());
+    let mut suffix = prepared.context.into_annotated_messages();
+    let measure = |items: &[ResponseItemEnvelope]| {
+        items
+            .iter()
+            .map(|item| estimate_input_tokens(&item.item))
+            .sum::<usize>()
+    };
+    let before = measure(&suffix);
+    reserved.assign(&mut suffix).unwrap();
+    assert!(suffix.iter().all(|item| item.id().is_some()));
+    let delivered_call = suffix
+        .iter()
+        .find(|item| matches!(item.item, ResponseItem::FunctionCall { .. }))
+        .unwrap();
+    assert_eq!(delivered_call.id(), call_id.as_ref());
+    assert!(measure(&suffix) - before <= reserved.tokens());
+}
 
 #[test]
 fn groups_select_recent_whole_entries_and_redistribute_packing_gaps() {
@@ -45,6 +111,7 @@ fn groups_select_recent_whole_entries_and_redistribute_packing_gaps() {
         let limits = ElasticSectionLimits::new(minimum, minimum).unwrap();
         let mut config = ElasticBudgetConfig {
             sections: groups.map(|group| (group, limits)).into(),
+            ..Default::default()
         };
         config.sections.insert(
             groups[1],
@@ -163,7 +230,7 @@ fn whole_images_use_defaults_and_charge_shared_framing_once() {
             delivery: SectionDelivery::UserContent(items),
         })
         .into(),
-        truncations: Vec::new(),
+        ..Default::default()
     };
     {
         let mut future = std::pin::pin!(crate::prepare_sync_images(
@@ -200,8 +267,10 @@ fn whole_images_use_defaults_and_charge_shared_framing_once() {
             (ElasticSection::TranscriptImages, limits),
         ]),
     ] {
-        let config =
-            crate::budget::tests::complete_minimum_budget(ElasticBudgetConfig { sections });
+        let config = crate::budget::tests::complete_minimum_budget(ElasticBudgetConfig {
+            sections,
+            ..Default::default()
+        });
         let mut demand = collect_demand(&context).unwrap();
         let allowance = context.estimated_tokens() - demand.protected_tokens;
         let expected_selection = demand
@@ -288,6 +357,7 @@ fn whole_images_use_defaults_and_charge_shared_framing_once() {
                         .unwrap(),
                 ),
             ]),
+            ..Default::default()
         });
         let budget = RequestBudget {
             max_input_tokens: context.estimated_tokens() + HISTORY_TOKENS,

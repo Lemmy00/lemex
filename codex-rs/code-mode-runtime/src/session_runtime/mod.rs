@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
+use codex_code_mode_protocol::CodeModeToolResult;
 pub(crate) use codex_code_mode_protocol::FunctionCallOutputContentItem as OutputItem;
 use opentelemetry::context::FutureExt;
 use serde_json::Value as JsonValue;
@@ -22,7 +23,7 @@ pub(crate) use self::types::NestedToolCall;
 pub(crate) use self::types::Observation;
 pub(crate) use self::types::ObserveMode;
 pub(crate) use self::types::SessionRuntimeDelegate;
-pub(crate) use self::types::ToolDefinition;
+pub(crate) use self::types::ToolCatalog;
 pub(crate) use self::types::ToolKind;
 pub(crate) use self::types::ToolName;
 use crate::TaskFailureHandler;
@@ -153,7 +154,7 @@ impl SessionRuntime {
     fn allocate_cell_id(&self) -> Result<CellId, Error> {
         self.inner
             .next_cell_id
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next_cell_id| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next_cell_id| {
                 next_cell_id.checked_add(1)
             })
             .map(|cell_id| CellId::new(cell_id.to_string()))
@@ -256,7 +257,7 @@ impl<D: SessionRuntimeDelegate> CellHost for RuntimeCellHost<D> {
         &self,
         invocation: CellToolCall,
         cancellation_token: CancellationToken,
-    ) -> Result<JsonValue, String> {
+    ) -> Result<CodeModeToolResult, String> {
         self.delegate
             .invoke_tool(
                 NestedToolCall {

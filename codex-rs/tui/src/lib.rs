@@ -38,6 +38,9 @@ use codex_app_server_client::InProcessClientStartArgs;
 use codex_app_server_client::RemoteAppServerClient;
 use codex_app_server_client::RemoteAppServerConnectArgs;
 pub use codex_app_server_client::RemoteAppServerEndpoint;
+use codex_app_server_client::TypedRequestError;
+pub use codex_app_server_client::resolve_remote_addr;
+pub use codex_app_server_client::resolve_remote_endpoint;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::Thread as AppServerThread;
@@ -81,6 +84,7 @@ pub use session_archive_commands::run_session_archive_command;
 pub use session_queue_commands::run_session_queue_command;
 use std::fs::OpenOptions;
 use std::io::IsTerminal;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -92,8 +96,6 @@ use tracing::warn;
 use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
-use url::Url;
-use uuid::Uuid;
 
 pub(crate) use codex_app_server_client::legacy_core;
 
@@ -124,6 +126,7 @@ mod clipboard_paste;
 mod clock_format;
 mod collaboration_modes;
 mod color;
+mod command_output;
 mod config_panel;
 mod config_update;
 mod copy_input_guard;
@@ -134,6 +137,7 @@ mod experimental_features;
 mod image_decode;
 mod markdown_copy;
 mod permission_discovery;
+mod realtime_call;
 mod security_setup;
 mod terminal_image;
 mod worktree_browser;
@@ -191,12 +195,12 @@ mod notifications;
 #[cfg(any(not(debug_assertions), test))]
 mod npm_registry;
 pub(crate) mod onboarding;
+mod open_in_codex;
 mod oss_selection;
 mod pager_overlay;
 mod projectless;
 pub(crate) mod public_widgets;
 mod render;
-mod resize_reflow_cap;
 mod resume_permissions;
 mod resume_picker;
 mod screen_reader;
@@ -210,9 +214,11 @@ mod session_start;
 mod session_state;
 mod shortcut_help;
 mod sidebar_chooser;
+mod sidebar_image;
 mod sidebar_tab_strip;
 mod skills_helpers;
 mod slash_command;
+mod slash_command_settings;
 mod startup_draft;
 mod startup_error;
 mod startup_hooks_review;
@@ -222,21 +228,28 @@ mod startup_presentation;
 mod startup_recovery;
 mod status;
 mod status_indicator_widget;
+mod statusline_metrics;
+mod statusline_provider;
 mod streaming;
 mod style;
 mod subscription;
 mod system_motion;
 mod task_mentions;
 mod temporary_structured_request;
+mod terminal_capabilities;
+pub use terminal_capabilities::interactive_terminal_warning;
+pub use terminal_capabilities::stdout_supports_color;
 mod terminal_hyperlinks;
 mod terminal_palette;
-mod terminal_probe;
+use terminal_capabilities::terminal_probe;
 mod terminal_title;
 mod terminal_visualization_instructions;
 mod text_formatting;
 mod text_selection;
 mod theme_picker;
 mod thread_color;
+mod thread_label;
+mod thread_links;
 mod thread_transcript;
 mod token_usage;
 mod tool_output;
@@ -279,6 +292,7 @@ use crate::startup_hooks_review::load_startup_hooks_review_entry;
 use crate::startup_hooks_review::maybe_run_startup_hooks_review;
 use crate::tui::Tui;
 pub use cli::Cli;
+pub use cli::ResumeApprovalPreset;
 use codex_arg0::Arg0DispatchPaths;
 pub use markdown_render::render_markdown_text;
 pub use public_widgets::composer_input::ComposerAction;
@@ -427,93 +441,6 @@ fn remove_legacy_tui_log_file(codex_home: &Path) {
     // Shared append-only TUI logs could grow without bound. Existing processes
     // may still hold the file open, so startup cleanup is best effort.
     let _ = std::fs::remove_file(codex_home.join("log").join(TUI_LOG_FILE_NAME));
-}
-
-fn remote_addr_has_explicit_port(addr: &str, parsed: &Url) -> bool {
-    let Some(host) = parsed.host_str() else {
-        return false;
-    };
-    if parsed.port().is_some() {
-        return true;
-    }
-
-    let Some((_, rest)) = addr.split_once("://") else {
-        return false;
-    };
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..authority_end];
-    let host_and_port = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host_and_port)| host_and_port);
-    let explicit_default_port = match parsed.scheme() {
-        "ws" => 80,
-        "wss" => 443,
-        _ => return false,
-    };
-    let expected_host = if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host.to_string()
-    };
-    host_and_port == format!("{expected_host}:{explicit_default_port}")
-}
-
-fn websocket_url_supports_auth_token(parsed: &Url) -> bool {
-    match (parsed.scheme(), parsed.host()) {
-        ("wss", Some(_)) => true,
-        ("ws", Some(url::Host::Domain(domain))) => domain.eq_ignore_ascii_case("localhost"),
-        ("ws", Some(url::Host::Ipv4(addr))) => addr.is_loopback(),
-        ("ws", Some(url::Host::Ipv6(addr))) => addr.is_loopback(),
-        _ => false,
-    }
-}
-
-pub fn resolve_remote_addr(addr: &str) -> color_eyre::Result<RemoteAppServerEndpoint> {
-    if let Some(socket_path) = addr.strip_prefix("unix://") {
-        let socket_path = if socket_path.is_empty() {
-            let codex_home = find_codex_home().wrap_err("failed to resolve LEMEX_HOME")?;
-            codex_app_server_client::app_server_control_socket_path(&codex_home)
-                .map_err(color_eyre::Report::new)?
-        } else {
-            AbsolutePathBuf::relative_to_current_dir(socket_path)
-                .map_err(color_eyre::Report::new)?
-        };
-        return Ok(RemoteAppServerEndpoint::UnixSocket { socket_path });
-    }
-
-    let parsed = match Url::parse(addr) {
-        Ok(parsed) => parsed,
-        Err(_) => {
-            color_eyre::eyre::bail!(
-                "invalid remote address `{addr}`; expected `ws://host:port`, `wss://host:port`, `unix://`, or `unix://PATH`"
-            );
-        }
-    };
-    if matches!(parsed.scheme(), "ws" | "wss")
-        && parsed.host_str().is_some()
-        && remote_addr_has_explicit_port(addr, &parsed)
-        && parsed.path() == "/"
-        && parsed.query().is_none()
-        && parsed.fragment().is_none()
-    {
-        return Ok(RemoteAppServerEndpoint::WebSocket {
-            websocket_url: parsed.to_string(),
-            auth_token: None,
-        });
-    }
-
-    color_eyre::eyre::bail!(
-        "invalid remote address `{addr}`; expected `ws://host:port`, `wss://host:port`, `unix://`, or `unix://PATH`"
-    );
-}
-
-pub fn remote_addr_supports_auth_token(endpoint: &RemoteAppServerEndpoint) -> bool {
-    match endpoint {
-        RemoteAppServerEndpoint::WebSocket { websocket_url, .. } => {
-            Url::parse(websocket_url).is_ok_and(|parsed| websocket_url_supports_auth_token(&parsed))
-        }
-        RemoteAppServerEndpoint::UnixSocket { .. } => false,
-    }
 }
 
 async fn connect_remote_app_server(
@@ -823,35 +750,34 @@ async fn lookup_session_target_with_app_server(
     id_or_name: &str,
     include_non_interactive: bool,
 ) -> color_eyre::Result<Option<resume_picker::SessionTarget>> {
-    if Uuid::parse_str(id_or_name).is_ok() {
-        let thread_id = match ThreadId::from_string(id_or_name) {
-            Ok(thread_id) => thread_id,
-            Err(err) => {
-                warn!(
-                    session = id_or_name,
-                    %err,
-                    "Failed to parse session id during TUI lookup"
-                );
-                return Ok(None);
-            }
-        };
-        return match app_server
+    if let Ok(thread_id) = ThreadId::from_string(id_or_name) {
+        let thread = match app_server
             .thread_read(thread_id, /*include_turns*/ false)
             .await
         {
-            Ok(thread) => Ok(session_target_from_app_server_thread(
-                app_server.backend_id(),
-                thread,
-            )),
+            Ok(thread) => thread,
             Err(err) => {
-                warn!(
-                    session = id_or_name,
-                    %err,
-                    "thread/read failed during TUI session lookup"
-                );
-                Ok(None)
+                // Startup displays only the outer error. Expose the RPC failure without raw data.
+                let mut err = err.downcast::<TypedRequestError>()?;
+                if let TypedRequestError::Server { source, .. } = &mut err {
+                    if source.code == app_server_session::JSONRPC_INVALID_REQUEST
+                        && source.message == format!("thread not loaded: {thread_id}")
+                    {
+                        return Ok(None);
+                    }
+                    source.data = None;
+                }
+                return Err(err.into());
             }
         };
+        let target = session_target_from_app_server_thread(app_server.backend_id(), thread)
+            .filter(|target| target.thread_id == thread_id)
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "thread/read returned an unexpected session ID for {thread_id}"
+                )
+            })?;
+        return Ok(Some(target));
     }
 
     let model_providers = match action {
@@ -935,6 +861,7 @@ fn latest_session_lookup_params(
     ThreadListParams {
         include_attached_threads: false,
         current_account_only: true,
+        included_thread_ids: None,
         excluded_thread_ids: None,
         attached_to_thread_id: None,
         originators: None,
@@ -1130,6 +1057,7 @@ async fn cloud_config_bundle_for_app_server_target(
     bootstrap_config: &ConfigTomlLoadResult,
     codex_home: &Path,
     embedded_network_policy: &codex_app_server_client::EmbeddedNetworkPolicy,
+    resolution: Option<&codex_config::ConfigServerResolution>,
 ) -> std::io::Result<CloudConfigBundleLoader> {
     managed_config_bundle_loader_for_storage(
         embedded_network_policy
@@ -1138,6 +1066,7 @@ async fn cloud_config_bundle_for_app_server_target(
             )),
         bootstrap_config.config_layer_stack.requirements_toml(),
         /*enable_codex_api_key_env*/ false,
+        resolution,
     )
     .await
 }
@@ -1205,6 +1134,7 @@ pub async fn run_main(
                 token_usage: TokenUsage::default(),
                 thread_id: None,
                 resume_hint: None,
+                archive_warnings: Vec::new(),
                 disconnect_info: None,
                 update_action: None,
                 exit_reason: ExitReason::UserRequested,
@@ -1232,6 +1162,7 @@ async fn run_ratatui_app(
     mut app_server_target: AppServerTarget,
     remote_cwd_override: Option<PathBuf>,
     initial_config: Config,
+    statusline_metrics: statusline_metrics::StatuslineMetrics,
     manually_selected_oss_provider: Option<String>,
     overrides: ConfigOverrides,
     cli_kv_overrides: Vec<(String, toml::Value)>,
@@ -1294,6 +1225,7 @@ async fn run_ratatui_app(
                         token_usage: crate::token_usage::TokenUsage::default(),
                         thread_id: None,
                         resume_hint: None,
+                        archive_warnings: Vec::new(),
                         disconnect_info: None,
                         update_action: Some(action),
                         exit_reason: ExitReason::UserRequested,
@@ -1326,6 +1258,17 @@ async fn run_ratatui_app(
         )
         .await
     };
+    if cli.resume_picker {
+        tui.draw(/*height*/ 1, |frame| {
+            frame.render_widget_ref(&resume_picker::loading_sessions_line(), frame.area());
+        })?;
+    }
+    let clear_inline_loading = |tui: &mut Tui| {
+        if cli.resume_picker && !tui.is_alt_screen_active() {
+            // Draw so the viewport follows the shell cursor after suspend/resume.
+            let _ = tui.draw(/*height*/ 0, |_| {});
+        }
+    };
     let startup_app_server = startup_draft
         .run_until(
             &mut tui,
@@ -1353,11 +1296,13 @@ async fn run_ratatui_app(
             .with_local_codex_home(&initial_config.codex_home)
         }
         Ok(Err(err)) => {
+            clear_inline_loading(&mut tui);
             terminal_restore_guard.restore_silently();
             session_log::log_session_end();
             return Err(err);
         }
         Err(err) => {
+            clear_inline_loading(&mut tui);
             terminal_restore_guard.restore_silently();
             session_log::log_session_end();
             return Err(err.into());
@@ -1384,6 +1329,7 @@ async fn run_ratatui_app(
                 );
             }
             Err(err) => {
+                clear_inline_loading(&mut tui);
                 shutdown_startup_session(Some(app_server_session), &mut terminal_restore_guard)
                     .await;
                 return Err(err.into());
@@ -1445,6 +1391,7 @@ async fn run_ratatui_app(
                 token_usage: crate::token_usage::TokenUsage::default(),
                 thread_id: None,
                 resume_hint: None,
+                archive_warnings: Vec::new(),
                 disconnect_info: None,
                 update_action: None,
                 exit_reason: ExitReason::Fatal(format!(
@@ -1484,11 +1431,11 @@ async fn run_ratatui_app(
                     ),
                 )
                 .await;
-            let target_session = match lookup {
-                Ok(result) => result?,
+            let target_session = match lookup.map_err(color_eyre::Report::from).flatten() {
+                Ok(result) => result,
                 Err(err) => {
                     shutdown_startup_session(app_server.take(), &mut terminal_restore_guard).await;
-                    return Err(err.into());
+                    return Err(err);
                 }
             };
             match target_session {
@@ -1563,6 +1510,7 @@ async fn run_ratatui_app(
                         token_usage: crate::token_usage::TokenUsage::default(),
                         thread_id: None,
                         resume_hint: None,
+                        archive_warnings: Vec::new(),
                         disconnect_info: None,
                         update_action: None,
                         exit_reason: ExitReason::UserRequested,
@@ -1589,11 +1537,11 @@ async fn run_ratatui_app(
                 ),
             )
             .await;
-        let target_session = match lookup {
-            Ok(result) => result?,
+        let target_session = match lookup.map_err(color_eyre::Report::from).flatten() {
+            Ok(result) => result,
             Err(err) => {
                 shutdown_startup_session(app_server.take(), &mut terminal_restore_guard).await;
-                return Err(err.into());
+                return Err(err);
             }
         };
         match target_session {
@@ -1668,6 +1616,7 @@ async fn run_ratatui_app(
                     token_usage: crate::token_usage::TokenUsage::default(),
                     thread_id: None,
                     resume_hint: None,
+                    archive_warnings: Vec::new(),
                     disconnect_info: None,
                     update_action: None,
                     exit_reason: ExitReason::UserRequested,
@@ -1719,6 +1668,7 @@ async fn run_ratatui_app(
                 token_usage: crate::token_usage::TokenUsage::default(),
                 thread_id: None,
                 resume_hint: None,
+                archive_warnings: Vec::new(),
                 disconnect_info: None,
                 update_action: None,
                 exit_reason: ExitReason::UserRequested,
@@ -1945,6 +1895,14 @@ async fn run_ratatui_app(
                 trust_decision_was_made = true;
             }
         } else if consent.should_exit {
+            // Startup cannot return to the overview's reconnect loop until bootstrap completes.
+            if let codex_app_server_client::AppServerRequestHandle::Remote(handle) =
+                app_server.request_handle()
+                && handle.is_closed()
+            {
+                shutdown_startup_session(Some(app_server), &mut terminal_restore_guard).await;
+                color_eyre::eyre::bail!(onboarding::SETUP_CONNECTION_LOST);
+            }
             if !uses_remote_workspace {
                 config = load_config_or_exit_with_fallback_cwd(
                     cli_kv_overrides.clone(),
@@ -1981,13 +1939,18 @@ async fn run_ratatui_app(
             /*inc*/ 1,
             &[("enabled", &config.tui_fullscreen_transcript.to_string())],
         );
+        let _ = metrics.counter(
+            "codex.tui.collapse_turn_details",
+            /*inc*/ 1,
+            &[("enabled", &config.tui_collapse_turn_details.to_string())],
+        );
     }
 
     // Cloud configuration and session selection can change screen policy after first paint.
     let use_alt_screen = determine_alt_screen_mode(
         cli.no_alt_screen,
         config.tui_alternate_screen,
-        tui.terminal_app_over_ssh,
+        tui.prefer_inline_screen,
     );
     let mode = crate::transcript_mode::TranscriptMode::resolve(
         config.tui_fullscreen_transcript,
@@ -2003,6 +1966,10 @@ async fn run_ratatui_app(
 
     let local_settings = crate::local_settings::LocalSettings::for_tui(&config, &tui);
     crate::markdown_render::preferences::init(local_settings.tui.rendering);
+    crate::markdown_render::preferences::set_document_links(
+        local_settings.workspace_enabled(&config)
+            && app_server_target.thread_params_mode() != ThreadParamsMode::Cloud,
+    );
     // Configure syntax highlighting theme from the final config — onboarding
     // and resume/fork can both reload config with a different tui_theme, so
     // this must happen after the last possible reload.
@@ -2019,6 +1986,56 @@ async fn run_ratatui_app(
     let should_prompt_windows_sandbox_nux_at_startup = trust_decision_was_made;
     #[cfg(not(target_os = "windows"))]
     let should_prompt_windows_sandbox_nux_at_startup = false;
+
+    let initial_resume_config = if let Some(preset) = &cli.resume_approval_preset {
+        if !matches!(
+            session_selection,
+            resume_picker::SessionSelection::Resume(_)
+        ) {
+            color_eyre::eyre::bail!("No conversation selected to resume with --approve-for-me.");
+        }
+        if app_server.thread_params_mode() != ThreadParamsMode::Embedded {
+            return Err(color_eyre::eyre::eyre!(
+                "Permission overrides are not supported when resuming a remote task."
+            ));
+        }
+        // Resolve the preset under the destination's trust and managed requirements.
+        // Keep it out of the launch config used by /new and subsequent /resume commands.
+        let mut scoped_overrides = overrides.clone();
+        if preset.overrides_root_permissions {
+            scoped_overrides.sandbox_mode = None;
+            scoped_overrides.approval_policy = None;
+        }
+        let scoped_config = startup_draft
+            .run_until(
+                &mut tui,
+                load_config_with_worktree_source_policy(
+                    preset
+                        .config
+                        .parse_overrides()
+                        .map_err(color_eyre::Report::msg)?,
+                    scoped_overrides,
+                    loader_overrides.clone(),
+                    cloud_config_bundle.clone(),
+                    strict_config,
+                    Some(config.cwd.to_path_buf()),
+                    managed_worktree.as_ref(),
+                ),
+            )
+            .await??;
+        if let Some(warning) = add_dir_warning_message(
+            &cli.add_dir,
+            &scoped_config.permissions.effective_permission_profile(),
+            scoped_config.cwd.as_path(),
+        ) {
+            return Err(color_eyre::eyre::eyre!(
+                "Error adding directories: {warning}"
+            ));
+        }
+        Some(Box::new(scoped_config))
+    } else {
+        None
+    };
 
     let Cli {
         prompt,
@@ -2159,6 +2176,7 @@ async fn run_ratatui_app(
         &mut tui,
         initial_backends,
         config,
+        statusline_metrics,
         current_cwd.to_path_buf(),
         backend_preference_context,
         cli_kv_overrides.clone(),
@@ -2168,6 +2186,7 @@ async fn run_ratatui_app(
         prompt,
         images,
         session_selection,
+        initial_resume_config,
         feedback,
         is_first_run,
         should_prompt_windows_sandbox_nux_at_startup,
@@ -2192,13 +2211,10 @@ async fn run_ratatui_app(
     app_result
 }
 
-#[expect(
-    clippy::print_stderr,
-    reason = "TUI should no longer be displayed, so we can write to stderr."
-)]
 fn report_restore_error(result: color_eyre::Result<()>) {
     if let Err(err) = result {
-        eprintln!(
+        let _ = writeln!(
+            std::io::stderr().lock(),
             "failed to restore terminal. Run `reset` or restart your terminal to recover: {err}"
         );
     }
@@ -2247,7 +2263,7 @@ impl Drop for TerminalRestoreGuard {
 fn determine_alt_screen_mode(
     no_alt_screen: bool,
     tui_alternate_screen: AltScreenMode,
-    terminal_app_over_ssh: bool,
+    prefer_inline_screen: bool,
 ) -> bool {
     if no_alt_screen {
         return false;
@@ -2256,7 +2272,7 @@ fn determine_alt_screen_mode(
     match tui_alternate_screen {
         AltScreenMode::Always => true,
         AltScreenMode::Never => false,
-        AltScreenMode::Auto => !terminal_app_over_ssh,
+        AltScreenMode::Auto => !prefer_inline_screen,
     }
 }
 

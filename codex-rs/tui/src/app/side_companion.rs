@@ -14,7 +14,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadItemPayload;
 use codex_app_server_protocol::TurnStatus;
 use codex_protocol::items::AsyncUserInputQuestion;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -30,7 +30,7 @@ pub(super) struct SideCompanion {
 pub(super) struct SideAnswer {
     turn_id: String,
     item_id: String,
-    index: usize,
+    pub(super) index: usize,
     pending: String,
 }
 
@@ -50,14 +50,24 @@ impl SideAnswer {
 }
 
 impl SideCompanion {
-    pub(super) fn empty(cwd: AbsolutePathBuf) -> Self {
+    pub(super) fn can_scroll_without_refresh(&self) -> bool {
+        self.answer
+            .as_ref()
+            .is_none_or(|answer| answer.pending.is_empty())
+            && self
+                .view
+                .can_scroll_without_refresh(&self.cells, /*live_key*/ None)
+    }
+
+    pub(super) fn empty(cwd: PathBuf) -> Self {
         Self {
             display: CapturedSideDisplay {
                 rendered_completion_turn_ids: Default::default(),
+                generated_images: Default::default(),
                 active: None,
                 auxiliary: Vec::new(),
                 draft: Box::default(),
-                status: None,
+                status_line: None,
                 work: None,
                 last_completed_agent_message: None,
                 cwd,
@@ -150,6 +160,13 @@ impl SideCompanion {
                     self.flush_answer();
                     self.answer = None;
                 }
+                self.cells.extend(
+                    self.display
+                        .generated_images
+                        .take(&turn.id)
+                        .into_iter()
+                        .map(|image| Arc::new(image) as Arc<dyn HistoryCell>),
+                );
                 let work = self.display.work.take_if(|work| work.turn_id == turn.id);
                 if turn.status == TurnStatus::Completed
                     && (work.is_some() || store.active_turn_id() == Some(turn.id.as_str()))
@@ -215,6 +232,17 @@ impl SideCompanion {
                 }
                 self.display.last_completed_agent_message = Some((turn.to_owned(), id.clone()));
             }
+            ThreadItemPayload::ImageGeneration(item)
+                if item.status == "completed" && item.saved_path.is_some() =>
+            {
+                let image = crate::history_cell::new_image_generation_call(
+                    item.id.clone(),
+                    &item.status,
+                    item.revised_prompt.clone(),
+                    item.saved_path.clone(),
+                );
+                self.display.generated_images.record(turn.to_owned(), image);
+            }
             ThreadItemPayload::CommandExecution {
                 id,
                 status,
@@ -224,15 +252,11 @@ impl SideCompanion {
                 duration_ms,
                 ..
             } => {
-                let Some(cell) = self.display.active.as_mut().and_then(|active| {
-                    active
-                        .as_any_mut()
-                        .downcast_mut::<crate::exec_cell::ExecCell>()
-                }) else {
+                if *status == codex_app_server_protocol::CommandExecutionStatus::InProgress {
                     return false;
-                };
-                if *status == codex_app_server_protocol::CommandExecutionStatus::InProgress
-                    || !cell.complete_call(
+                }
+                let complete = |cell: &mut crate::exec_cell::ExecCell| {
+                    cell.complete_call(
                         id,
                         crate::exec_cell::CommandOutput::from_execution(
                             status.clone(),
@@ -242,9 +266,28 @@ impl SideCompanion {
                         ),
                         Duration::from_millis(duration_ms.unwrap_or_default().max(0) as u64),
                     )
-                {
-                    return false;
-                }
+                };
+                let active = self.display.active.as_mut().and_then(|active| {
+                    active
+                        .as_any_mut()
+                        .downcast_mut::<crate::exec_cell::ExecCell>()
+                });
+                let Some(cell) =
+                    active.filter(|cell| cell.iter_calls().any(|call| call.call_id == *id))
+                else {
+                    let Some((index, _, mut group)) =
+                        super::activity_groups::pending_command_group(&self.cells, id)
+                    else {
+                        return false;
+                    };
+                    complete(&mut group);
+                    let group: Arc<dyn HistoryCell> = Arc::new(group);
+                    self.view
+                        .replace_group(&self.cells, index..index + 1, &group);
+                    self.cells[index] = group;
+                    return true;
+                };
+                complete(cell);
                 if !cell.is_active()
                     && let Some(active) = self.display.active.take()
                 {
@@ -302,3 +345,7 @@ impl SideCompanion {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "side_companion_tests.rs"]
+mod tests;

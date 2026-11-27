@@ -3,6 +3,7 @@
 //! Layout code measures and wraps ordinary ratatui lines. Hyperlink annotations are applied only
 //! when text reaches a terminal buffer or scrollback writer so OSC 8 bytes never affect geometry.
 
+pub(crate) mod bidi;
 mod paragraph;
 mod source;
 
@@ -33,6 +34,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
 
 use crate::line_truncation::line_width;
+use crate::markdown_render::FileLink;
+use crate::markdown_render::SourceLocation;
 use crate::render::line_utils::line_to_borrowed;
 use crate::render::line_utils::line_to_static;
 use crate::width::display_width;
@@ -41,18 +44,61 @@ use crate::wrapping::RtOptions;
 // Destinations are repeated in every linked buffer cell. Leave oversized URLs as plain text.
 const MAX_HYPERLINK_DESTINATION_BYTES: usize = 8 * 1024;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq)]
 pub(crate) struct TerminalHyperlink {
     pub(crate) columns: Range<usize>,
     pub(crate) destination: String,
     destination_kind: DestinationKind,
+    /// Source offset identifying one Markdown link occurrence across wrapped rows.
+    pub(crate) markdown_source: Option<usize>,
+}
+
+// Rendering equality excludes source provenance, which can differ between streaming and full renders.
+impl PartialEq for TerminalHyperlink {
+    fn eq(&self, other: &Self) -> bool {
+        self.columns == other.columns
+            && self.destination == other.destination
+            && self.destination_kind == other.destination_kind
+    }
+}
+
+// The link offset is layout metadata, like HyperlinkLine source provenance.
+impl std::fmt::Debug for TerminalHyperlink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalHyperlink")
+            .field("columns", &self.columns)
+            .field("destination", &self.destination)
+            .field("destination_kind", &self.destination_kind)
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DestinationKind {
+    Agent(codex_protocol::ThreadId),
     Web,
     /// A generated visualization, validated workspace artifact, or locally viewed image.
     TrustedFile,
+    /// A local document target used only by an enabled workspace transcript.
+    Document(Option<SourceLocation>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ReaderLink {
+    Agent(codex_protocol::ThreadId),
+    External(String),
+    Document(FileLink),
+}
+
+#[cfg(test)]
+impl ReaderLink {
+    pub(crate) fn into_destination(self) -> String {
+        match self {
+            Self::Agent(id) => format!("codex-agent:{id}"),
+            Self::External(url) => url,
+            Self::Document(link) => link.path,
+        }
+    }
 }
 
 /// An existing, inert source file proven to remain inside its session workspace.
@@ -103,6 +149,7 @@ impl TerminalHyperlink {
             columns,
             destination,
             destination_kind: DestinationKind::Web,
+            markdown_source: None,
         }
     }
 
@@ -144,6 +191,7 @@ impl TerminalHyperlink {
             columns,
             destination: url.into(),
             destination_kind: DestinationKind::TrustedFile,
+            markdown_source: None,
         })
     }
 
@@ -155,6 +203,47 @@ impl TerminalHyperlink {
             columns,
             destination: file.0.to_string(),
             destination_kind: DestinationKind::TrustedFile,
+            markdown_source: None,
+        }
+    }
+
+    pub(crate) fn agent(columns: Range<usize>, id: codex_protocol::ThreadId) -> Self {
+        Self {
+            columns,
+            destination: id.to_string(),
+            destination_kind: DestinationKind::Agent(id),
+            markdown_source: None,
+        }
+    }
+
+    pub(crate) fn agent_id(&self) -> Option<codex_protocol::ThreadId> {
+        match self.destination_kind {
+            DestinationKind::Agent(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn document(columns: Range<usize>, link: FileLink) -> Self {
+        Self {
+            columns,
+            destination: link.path,
+            destination_kind: DestinationKind::Document(link.location),
+            markdown_source: None,
+        }
+    }
+
+    pub(crate) fn is_document(&self) -> bool {
+        matches!(self.destination_kind, DestinationKind::Document(_))
+    }
+
+    pub(crate) fn reader_destination(&self, documents: bool) -> Option<ReaderLink> {
+        if documents && let DestinationKind::Document(location) = self.destination_kind {
+            Some(ReaderLink::Document(FileLink {
+                path: self.destination.clone(),
+                location,
+            }))
+        } else {
+            self.terminal_destination().map(ReaderLink::External)
         }
     }
 
@@ -163,11 +252,29 @@ impl TerminalHyperlink {
             columns,
             destination: self.destination.clone(),
             destination_kind: self.destination_kind,
+            markdown_source: self.markdown_source,
         }
+    }
+
+    pub(crate) fn sidebar_destination(&self) -> Option<ReaderLink> {
+        match self.destination_kind {
+            DestinationKind::TrustedFile | DestinationKind::Agent(_) => None,
+            DestinationKind::Document(_) | DestinationKind::Web => {
+                self.reader_destination(/*documents*/ true)
+            }
+        }
+    }
+
+    pub(crate) fn interaction_destination(&self) -> Option<String> {
+        if crate::thread_links::thread_id(&self.destination).is_some() {
+            return Some(self.destination.clone());
+        }
+        self.terminal_destination()
     }
 
     pub(crate) fn terminal_destination(&self) -> Option<String> {
         match self.destination_kind {
+            DestinationKind::Document(_) | DestinationKind::Agent(_) => None,
             DestinationKind::Web => web_destination(&self.destination),
             DestinationKind::TrustedFile => trusted_file_destination(&self.destination),
         }
@@ -204,15 +311,27 @@ impl Eq for HyperlinkLine {}
 /// Cache equality also tracks source whitespace hidden by display wrapping.
 pub(crate) fn lines_with_sources_eq(left: &[HyperlinkLine], right: &[HyperlinkLine]) -> bool {
     left == right
-        && left
-            .iter()
-            .map(|line| &line.source)
-            .eq(right.iter().map(|line| &line.source))
+        && left.iter().zip(right).all(|(left, right)| {
+            left.source == right.source
+                && left
+                    .hyperlinks
+                    .iter()
+                    .zip(&right.hyperlinks)
+                    .all(|(left, right)| left.markdown_source == right.markdown_source)
+        })
 }
 
 pub(crate) fn source_span_width(span: &Span<'_>) -> usize {
-    span.content
-        .graphemes(/*is_extended*/ true)
+    source_text_width(&span.content)
+}
+
+/// Link columns count painted graphemes, even when adjacent letters (lam-alef)
+/// measure as a single ligature in the whole string.
+pub(crate) fn source_text_width(text: &str) -> usize {
+    if text.is_ascii() {
+        return display_width(text);
+    }
+    text.graphemes(/*is_extended*/ true)
         .map(display_width)
         .sum()
 }
@@ -236,7 +355,7 @@ impl HyperlinkLine {
     }
 
     pub(crate) fn push_span(&mut self, span: Span<'static>, destination: Option<&str>) {
-        if let Some(destination) = destination.and_then(web_destination) {
+        if let Some(destination) = destination.and_then(markdown_destination) {
             self.push_linked_span(span, self.source_width(), destination);
         } else {
             self.source = None;
@@ -472,18 +591,21 @@ pub(crate) fn remap_source_wrapped_line(
         .map(|wrapped| {
             let line = line_to_static(&wrapped.line);
             let displayed = line_text(&line);
-            let prefix_columns = display_width(&displayed[..wrapped.prefix_bytes]);
+            let prefix_columns = source_text_width(&displayed[..wrapped.prefix_bytes]);
             // Some wrapping paths retain a one-past-the-end cursor sentinel. Span slicing already
             // clips that sentinel to the visible line; keep hyperlink and source projection on the
             // same bounded range instead of indexing past the flattened text.
             let range = wrapped.range.start.min(text.len())..wrapped.range.end.min(text.len());
-            source_column += display_width(&text[source_byte..range.start]);
-            let start = source_column;
-            let end = start + display_width(&text[range.clone()]);
-            source_byte = range.end;
-            source_column = end;
-            let hyperlinks =
-                project_hyperlink_columns(&source.hyperlinks, start..end, prefix_columns);
+            let hyperlinks = if source.hyperlinks.is_empty() {
+                Vec::new()
+            } else {
+                source_column += source_text_width(&text[source_byte..range.start]);
+                let start = source_column;
+                let end = start + source_text_width(&text[range.clone()]);
+                source_byte = range.end;
+                source_column = end;
+                project_hyperlink_columns(&source.hyperlinks, start..end, prefix_columns)
+            };
             HyperlinkLine {
                 line,
                 hyperlinks,
@@ -601,6 +723,7 @@ fn push_link_range(line: &mut HyperlinkLine, range: Range<usize>, link: &Termina
     if let Some(previous) = line.hyperlinks.last_mut()
         && previous.destination == link.destination
         && previous.destination_kind == link.destination_kind
+        && previous.markdown_source == link.markdown_source
         && previous.columns.end == range.start
     {
         previous.columns.end = range.end;
@@ -609,15 +732,10 @@ fn push_link_range(line: &mut HyperlinkLine, range: Range<usize>, link: &Termina
     line.hyperlinks.push(link.with_columns(range));
 }
 
-pub(crate) fn web_links_in_text(text: &str) -> Vec<TerminalHyperlink> {
-    let mut links = Vec::new();
-    let mut search_from = 0usize;
-    let mut source_byte = 0usize;
-    let mut source_column = 0usize;
-    for raw_token in text.split_whitespace() {
-        let Some(relative_start) = text[search_from..].find(raw_token) else {
-            continue;
-        };
+fn web_link_ranges(text: &str) -> impl Iterator<Item = (Range<usize>, String)> + '_ {
+    let mut search_from = 0;
+    text.split_whitespace().filter_map(move |raw_token| {
+        let relative_start = text[search_from..].find(raw_token)?;
         let raw_start = search_from + relative_start;
         search_from = raw_start + raw_token.len();
         let trimmed_start = raw_token
@@ -625,17 +743,24 @@ pub(crate) fn web_links_in_text(text: &str) -> Vec<TerminalHyperlink> {
             .unwrap_or(raw_token.len());
         let trimmed_end = trailing_url_end(&raw_token[trimmed_start..]) + trimmed_start;
         if trimmed_start >= trimmed_end {
-            continue;
+            return None;
         }
-        let candidate = &raw_token[trimmed_start..trimmed_end];
-        let Some(destination) = web_destination(candidate) else {
-            continue;
-        };
-        let candidate_start = raw_start + trimmed_start;
+        let range = raw_start + trimmed_start..raw_start + trimmed_end;
+        let destination = web_destination(&text[range.clone()])?;
+        Some((range, destination))
+    })
+}
+
+pub(crate) fn web_links_in_text(text: &str) -> Vec<TerminalHyperlink> {
+    let mut links = Vec::new();
+    let mut source_byte = 0usize;
+    let mut source_column = 0usize;
+    for (range, destination) in web_link_ranges(text) {
+        let candidate_start = range.start;
         // Measure disjoint prefixes so scanning a draft with many URLs stays linear.
-        source_column += display_width(&text[source_byte..candidate_start]);
+        source_column += source_text_width(&text[source_byte..candidate_start]);
         source_byte = candidate_start;
-        let end = source_column + display_width(candidate);
+        let end = source_column + source_text_width(&text[range]);
         links.push(TerminalHyperlink::web(source_column..end, destination));
     }
     links
@@ -698,6 +823,13 @@ fn trailing_url_end(candidate: &str) -> usize {
         end -= ch.len_utf8();
     }
     end
+}
+
+pub(crate) fn markdown_destination(destination: &str) -> Option<String> {
+    if crate::thread_links::thread_id(destination).is_some() {
+        return Some(destination.to_string());
+    }
+    web_destination(destination)
 }
 
 pub(crate) fn web_destination(destination: &str) -> Option<String> {

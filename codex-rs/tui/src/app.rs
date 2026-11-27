@@ -28,6 +28,7 @@ use crate::app_server_session::app_server_rate_limit_snapshots;
 use crate::bottom_pane::AppLinkViewParams;
 use crate::bottom_pane::ApplyPatchApprovalRequest;
 use crate::bottom_pane::ApprovalRequest;
+use crate::bottom_pane::BottomPaneView;
 use crate::bottom_pane::ExecApprovalRequest;
 use crate::bottom_pane::FeedbackAudience;
 use crate::bottom_pane::McpElicitationApprovalRequest;
@@ -79,6 +80,7 @@ use crate::resume_picker::SessionSelection;
 use crate::resume_picker::SessionTarget;
 use crate::session_state::ThreadSessionState;
 use crate::startup_draft::StartupDraftPump;
+use crate::terminal_capabilities::user_agent;
 #[cfg(test)]
 use crate::test_support::PathBufExt;
 #[cfg(test)]
@@ -108,8 +110,6 @@ use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::HooksListEntry;
 use codex_app_server_protocol::ListMcpServerStatusParams;
 use codex_app_server_protocol::ListMcpServerStatusResponse;
-#[cfg(test)]
-use codex_app_server_protocol::McpAuthStatus;
 use codex_app_server_protocol::McpServerStatus;
 use codex_app_server_protocol::McpServerStatusDetail;
 use codex_app_server_protocol::MergeStrategy;
@@ -158,7 +158,6 @@ use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelUpgrade;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_rollout::StateDbHandle;
-use codex_terminal_detection::user_agent;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_approval_presets::builtin_permission_profile_for_active_permission_profile;
 use color_eyre::eyre::Result;
@@ -216,6 +215,7 @@ pub(crate) mod app_server_requests;
 mod app_server_thread_ownership;
 mod backend_banner_fallback;
 mod backend_events;
+mod backend_registry;
 pub(crate) mod backend_selection;
 pub(crate) mod backend_sessions;
 mod background_requests;
@@ -226,6 +226,7 @@ mod composer_hints;
 mod config_panel;
 mod config_persistence;
 mod connector_mentions;
+mod conversation_workspace;
 mod daemon_menu;
 mod daybreak;
 mod empty_state_policy;
@@ -244,8 +245,10 @@ mod misalignment_policy;
 mod model_defaults;
 mod new_session;
 mod quick_dials;
+pub(crate) mod remote_control;
 mod turn_tips;
 pub(crate) use new_session::has_launch_setting;
+mod archived_thread;
 mod clipboard;
 mod footer_selection;
 mod native_history;
@@ -266,6 +269,8 @@ mod resize_reflow;
 mod resume_config;
 mod resume_preparation;
 mod right_click_paste;
+mod status_line_settings;
+mod statusline_picker;
 pub(crate) use right_click_paste::PasteEnvironment;
 mod pane_motion;
 mod safety_buffering;
@@ -279,7 +284,16 @@ mod side_focus;
 mod side_pane;
 mod sidebar;
 mod sidebar_close;
+mod sidebar_document;
+mod sidebar_files;
+mod sidebar_input;
 pub(crate) mod sidebar_loading;
+mod sidebar_model_documents;
+#[cfg(all(test, not(windows)))]
+#[path = "app/sidebar_open_in_codex_tests.rs"]
+mod sidebar_open_in_codex_tests;
+mod sidebar_subagents;
+mod sidebar_visibility;
 mod startup;
 pub(crate) mod startup_bootstrap;
 mod startup_prompts;
@@ -288,6 +302,7 @@ pub(crate) mod thread_attachment;
 mod thread_event_buffer;
 mod thread_events;
 mod thread_goal_actions;
+mod thread_links;
 mod thread_routing;
 mod thread_session_state;
 mod thread_settings;
@@ -481,6 +496,7 @@ pub struct AppExitInfo {
     pub thread_id: Option<ThreadId>,
     pub resume_hint: Option<ResumableThread>,
     pub disconnect_info: Option<DisconnectInfo>,
+    pub archive_warnings: Vec<String>,
     pub update_action: Option<UpdateAction>,
     pub exit_reason: ExitReason,
 }
@@ -491,6 +507,7 @@ impl AppExitInfo {
             token_usage: TokenUsage::default(),
             thread_id: None,
             resume_hint: None,
+            archive_warnings: Vec::new(),
             disconnect_info: None,
             update_action: None,
             exit_reason: ExitReason::Fatal(message.into()),
@@ -500,6 +517,12 @@ impl AppExitInfo {
 
 pub use exit_summary::DisconnectInfo;
 pub use exit_summary::ResumableThread;
+
+#[derive(Clone, Copy)]
+enum ThreadTransition {
+    PromptReverted(ThreadId),
+    DiscardTypeahead,
+}
 
 #[derive(Debug)]
 pub(crate) enum AppRunControl {
@@ -531,15 +554,6 @@ fn rollout_path_is_resumable(rollout_path: &Path) -> bool {
     std::fs::metadata(rollout_path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
 }
 
-fn errors_for_cwd(cwd: &Path, response: &SkillsListResponse) -> Vec<SkillErrorInfo> {
-    response
-        .data
-        .iter()
-        .find(|entry| entry.cwd.as_path() == cwd)
-        .map(|entry| entry.errors.clone())
-        .unwrap_or_default()
-}
-
 #[derive(Debug, Default)]
 struct InitialHistoryReplayBuffer {
     retained_lines: VecDeque<crate::terminal_hyperlinks::HyperlinkLine>,
@@ -548,17 +562,22 @@ struct InitialHistoryReplayBuffer {
 }
 
 pub(crate) struct App {
+    statusline_picker: Option<statusline_picker::StatuslinePicker>,
+    statusline_metrics: crate::statusline_metrics::StatuslineMetrics,
     provider_writes: HashMap<crate::backend_id::BackendId, crate::model_catalog::ProviderWrite>,
     feature_write_lock: Arc<tokio::sync::Mutex<()>>,
+    voice_settings_pending: bool,
     config_notification_test_generation: u64,
     config_notification_test_pending: Option<u64>,
     model_catalog: Arc<ModelCatalog>,
     pub(crate) session_telemetry: SessionTelemetry,
     pub(crate) app_event_tx: AppEventSender,
+    backend_registry: backend_registry::BackendRegistry,
     pub(crate) chat_widget: ChatWidget,
     workspace_command_runner: Option<WorkspaceCommandRunner>,
     /// Legacy bootstrap and server-setting inputs; local preferences live in `local_settings`.
     pub(crate) config: Config,
+    realtime_call_client: Arc<crate::realtime_call::Client>,
     pub(crate) local_settings: crate::local_settings::LocalSettings,
     backend_preference_context: backend_selection::BackendPreferenceContext,
     launch_cwd: PathBuf,
@@ -597,6 +616,7 @@ pub(crate) struct App {
     transcript_reflow: TranscriptReflowState,
     initial_history_replay_buffer: Option<InitialHistoryReplayBuffer>,
     pending_thread_switch_resets: usize,
+    pending_input_drain: Option<ThreadTransition>,
     pub(crate) scrollback_has_older_history: bool,
 
     pub(crate) enhanced_keys_supported: bool,
@@ -623,6 +643,7 @@ pub(crate) struct App {
     feedback_audience: FeedbackAudience,
     environment_manager: Arc<EnvironmentManager>,
     app_server_target: AppServerTarget,
+    app_server_backend_id: Option<crate::backend_id::BackendId>,
     reconnect: reconnect::ReconnectState,
     pending_right_click_paste: Option<right_click_paste::PendingPaste>,
     right_click_paste_environment: right_click_paste::PasteEnvironment,
@@ -631,6 +652,7 @@ pub(crate) struct App {
     pub(crate) pending_update_action: Option<UpdateAction>,
     /// Retained through all loop exits so shutdown cannot interrupt stop followed by start.
     daemon_restart: Option<JoinHandle<anyhow::Result<codex_app_server_daemon::LifecycleOutput>>>,
+    remote_control_pending: bool,
 
     /// Tracks the thread we intentionally shut down while exiting the app.
     ///
@@ -651,7 +673,13 @@ pub(crate) struct App {
     realtime_replay_order: VecDeque<ThreadId>,
     background_voice: Option<Box<ChatWidget>>,
     background_voice_error: Option<(ThreadId, String)>,
-    temporary_structured_requests: HashMap<ThreadId, mpsc::UnboundedSender<ServerNotification>>,
+    temporary_structured_requests: HashMap<
+        ThreadId,
+        (
+            crate::temporary_structured_request::TemporaryThreadKind,
+            mpsc::UnboundedSender<ServerNotification>,
+        ),
+    >,
     /// Track title generation across thread switches and deduplicate automatic requests.
     pending_thread_titles: HashMap<(ThreadId, ThreadTitleDestination), CancellationToken>,
     thread_event_listener_tasks: HashMap<ThreadId, JoinHandle<()>>,
@@ -660,6 +688,7 @@ pub(crate) struct App {
     side_threads: HashMap<ThreadId, SideThreadState>,
     saved_openings: sidebar_loading::Openings,
     sidebars: HashMap<Option<ThreadId>, sidebar::SidebarPane>,
+    model_preview_load: Option<uuid::Uuid>,
     /// A parked parent view survives child cleanup until its own replay finishes.
     side_companions: HashMap<ThreadId, SideCompanion>,
     zoomed_thread: Option<ThreadId>,
@@ -668,9 +697,9 @@ pub(crate) struct App {
     divider_drag: Option<side_pane::DividerDrag>,
     pane_resize: Option<side_pane::PaneResize>,
     passive_link_drag: Option<(ThreadId, Rect)>,
+    sidebar_press: Option<side_focus::SidebarPress>,
     abandoned_side_threads: HashSet<ThreadId>,
     active_thread_id: Option<ThreadId>,
-    active_thread_rx: Option<mpsc::Receiver<ThreadBufferedEvent>>,
     primary_thread_id: Option<ThreadId>,
     last_subagent_backfill_attempt: Option<ThreadId>,
     primary_session_configured: Option<ThreadSessionState>,
@@ -704,8 +733,8 @@ pub(crate) struct App {
     rate_limit_hard_stop_generation: u64,
     rate_limit_refresh_state: rate_limit_refresh::RateLimitRefreshState,
     pending_mcp_login_start: Option<PendingMcpLoginStart>,
-    // Latest accepted attempt per server; stale retry completions must not update the UI.
-    active_mcp_login_ids: HashMap<String, String>,
+    // Login ID -> requested server and environment. Retrying one target keeps other logins alive.
+    active_mcp_login_ids: HashMap<String, (String, Option<String>)>,
     // Serialize plugin enablement writes per plugin so stale completions cannot
     // overwrite a newer toggle, even if the plugin is toggled from different
     // cwd contexts.
@@ -722,6 +751,7 @@ pub(crate) struct App {
 struct PendingMcpLoginStart {
     request_id: String,
     name: String,
+    environment_id: Option<String>,
     thread_id: ThreadId,
     completions: Vec<codex_app_server_protocol::McpServerOauthLoginCompletedNotification>,
 }
@@ -834,7 +864,7 @@ impl App {
             feedback: self.feedback.clone(),
             is_first_run: false,
             status_account_display: self.chat_widget.status_account_display().cloned(),
-            initial_plan_type: self.chat_widget.current_plan_type(),
+            initial_plan_type: self.chat_widget.account_plan,
             model: Some(self.chat_widget.current_model().to_string()),
             startup_tooltip_override: None,
             status_line_invalid_items_warned: self.status_line_invalid_items_warned.clone(),
@@ -843,16 +873,60 @@ impl App {
         }
     }
 
+    fn shortcut_guide_owns_input(&self, tui: &tui::Tui) -> bool {
+        self.overlay.is_none()
+            && self.chat_widget.shortcut_overlay_visible()
+            && !self.focused_sidebar_chooser(tui)
+            && !(tui.is_owned_screen()
+                && (self.backtrack.overlay_preview_active
+                    || self.transcript_view.has_active_interaction()
+                    || self
+                        .transcript_view
+                        .owns_interaction_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))))
+    }
+
     pub(crate) async fn handle_tui_event(
         &mut self,
         tui: &mut tui::Tui,
         app_server: &mut AppServerSession,
         event: TuiEvent,
     ) -> Result<AppRunControl> {
+        if matches!(event, TuiEvent::Draw) && tui::mouse_capture_disabled() {
+            self.sidebar_press = None;
+            self.chat_widget.end_composer_drag();
+            self.chat_widget.rendered_selection.borrow_mut().end_drag();
+        }
+        match &event {
+            // A terminal can report focus between mouse-down and mouse-up.
+            TuiEvent::Draw
+            | TuiEvent::FocusGained
+            | TuiEvent::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Up(_) | MouseEventKind::Moved,
+                ..
+            }) => {}
+            TuiEvent::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Drag(_),
+                ..
+            }) => {
+                if self.sidebar_press.take().is_some() {
+                    return Ok(AppRunControl::Continue);
+                }
+            }
+            _ => self.sidebar_press = None,
+        }
+        self.transcript_view.primary_selection = tui.primary_selection_available();
+        self.transcript_view.bidi_layout = tui.terminal.bidi_layout;
+        self.transcript_view.agent_links = self
+            .side_retention_enabled(tui)
+            .then(|| app_server.backend_id());
+        self.transcript_view.document_links = self.document_preview_available(tui, app_server);
+        crate::markdown_render::preferences::set_document_links(
+            self.transcript_view.document_links,
+        );
         self.transcript_view
             .sync_patch_approval(self.chat_widget.current_patch_approval());
         // A chooser action must never decide a modal that has not been painted yet.
-        if (self.conversation_frame.chooser_area().is_some()
+        if (self.conversation_frame.panel_area().is_some()
             || self.sidebar().is_some_and(|pane| pane.close.is_some()))
             && self.chat_widget.has_active_modal()
             && matches!(
@@ -872,14 +946,7 @@ impl App {
             tui.frame_requester().schedule_frame();
             return Ok(AppRunControl::Continue);
         }
-        let previous = tui.link_hover.position();
-        tui.link_hover.observe(&event);
-        let current = tui.link_hover.position();
-        if previous != current
-            && self.hovered_sidebar_target(previous) != self.hovered_sidebar_target(current)
-        {
-            tui.frame_requester().schedule_frame();
-        }
+        self.observe_pointer(tui, &event);
         if Box::pin(sidebar_close::handle(self, tui, app_server, &event)).await {
             return Ok(AppRunControl::Continue);
         }
@@ -902,9 +969,15 @@ impl App {
             return Ok(AppRunControl::Continue);
         }
         self.refresh_link_hover(tui)?;
+        if self.guard_pending_paste_submission(tui, &event) {
+            return Ok(AppRunControl::Continue);
+        }
         self.invalidate_right_click_paste(&event);
         self.finish_clipboard(tui, &event);
+        // Clipboard reads started by the composer already have a validated target.
+        let composer_paste = matches!(event, TuiEvent::Draw);
         let event = self.finish_right_click_paste(tui, event);
+        let composer_paste = composer_paste && matches!(&event, TuiEvent::Paste(_));
         if self.startup_protected_input_boundary
             && self.startup_pending_protected_request
             && self.chat_widget.has_active_modal()
@@ -946,12 +1019,47 @@ impl App {
         {
             return Ok(AppRunControl::Continue);
         }
+        if self.workspace_center_owns_input() {
+            match &event {
+                TuiEvent::Key(key) => {
+                    Box::pin(self.handle_workspace_key(tui, app_server, *key)).await;
+                    if !self.agents_overview.workspace.is_open() {
+                        if self.reconnect.presentation == reconnect::ReconnectPresentation::Overview
+                        {
+                            self.reconnect.presentation =
+                                reconnect::ReconnectPresentation::Conversation;
+                        }
+                    }
+                    return Ok(AppRunControl::Continue);
+                }
+                TuiEvent::Paste(text) if !composer_paste => {
+                    self.cancel_pending_key_chord();
+                    if let Some(view) = &mut self.agents_overview.workspace.view {
+                        view.handle_paste(text.clone());
+                    }
+                    tui.frame_requester().schedule_frame();
+                    return Ok(AppRunControl::Continue);
+                }
+                _ => {}
+            }
+        }
+        if let TuiEvent::Mouse(mouse) = &event
+            && self.handle_workspace_mouse(tui, *mouse)
+        {
+            return Ok(AppRunControl::Continue);
+        }
         if matches!(&event, TuiEvent::Key(_))
             && self.handle_composer_copy_event(tui, &event, |tui, text| {
                 tui.copy_transcript_selection(text, crate::clipboard_copy::CopyFormat::PlainText)
             })
         {
             return Ok(AppRunControl::Continue);
+        }
+        if matches!(&event, TuiEvent::Resize(_) | TuiEvent::Resume) {
+            self.chat_widget
+                .empty_state_animation
+                .borrow_mut()
+                .invalidate_window_size();
         }
         // Resume arrives after suspension; retain the last painted phase across hidden owners.
         if matches!(&event, TuiEvent::Resume) || !tui.is_owned_screen() || self.overlay.is_some() {
@@ -960,10 +1068,22 @@ impl App {
                 .borrow_mut()
                 .pause_clock();
         }
+        if self.reconnect.offline
+            && self.conversation_focus_available(tui)
+            && let TuiEvent::Key(key) = &event
+            && crate::text_selection::is_copy_key(*key)
+            && self.focused_document().is_some_and(|doc| {
+                doc.backend == app_server.backend_id() && doc.owns_interaction_key(*key)
+            })
+        {
+            self.cancel_pending_key_chord();
+            Box::pin(self.handle_document_input(tui, app_server, &event)).await;
+            return Ok(AppRunControl::Continue);
+        }
         let transcript_owns_input = match (&event, &self.overlay) {
-            (TuiEvent::Key(key), Some(Overlay::Transcript(overlay))) => {
-                overlay.owns_interaction_key(*key)
-            }
+            (TuiEvent::Key(key), Some(overlay)) => overlay
+                .input_transcript()
+                .is_some_and(|view| view.owns_interaction_key(*key)),
             (TuiEvent::Key(key), None) => {
                 tui.is_owned_screen()
                     && self.chat_widget.no_modal_or_popup_active()
@@ -993,22 +1113,52 @@ impl App {
                 .active_view_accepts_input_when_disconnected()
             && let TuiEvent::Key(key) = &event
             && matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
-            && key.modifiers.contains(KeyModifiers::CONTROL)
             && let KeyCode::Char(character) = key.code
-            && (character.eq_ignore_ascii_case(&'c')
-                || (character.eq_ignore_ascii_case(&'d')
-                    && self.chat_widget.composer_is_empty()
-                    && self.chat_widget.no_modal_or_popup_active()))
         {
-            return Ok(AppRunControl::Exit(ExitReason::UserRequested));
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && (character.eq_ignore_ascii_case(&'c')
+                    || (character.eq_ignore_ascii_case(&'d')
+                        && self.chat_widget.composer_is_empty()
+                        && self.chat_widget.no_modal_or_popup_active()))
+            {
+                return Ok(AppRunControl::Exit(ExitReason::UserRequested));
+            }
+            if crate::key_hint::ctrl(KeyCode::Char('r')).is_press(*key)
+                && self.overlay.is_none()
+                && self.can_retry_reconnect()
+                && !self.key_chord_matcher.is_pending()
+                && self.chat_widget.accepts_reconnect_shortcut()
+                && !self
+                    .chat_widget
+                    .active_view_is(agents_overview::AGENTS_OVERVIEW_VIEW_ID)
+            {
+                self.retry_reconnect();
+                return Ok(AppRunControl::Continue);
+            }
         }
         let screen_size = tui.screen_size_for_event(&event)?;
-        if !matches!(
-            &event,
-            TuiEvent::Key(_) | TuiEvent::Mouse(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost
-        ) {
+        let draws_history = matches!(
+            event,
+            TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained
+        );
+        if draws_history && self.model_preview_load.is_none() {
+            self.model_preview_load = self
+                .start_queued_model_document(tui, app_server, screen_size.width)
+                .await;
+        }
+        // Reflow and paint must agree on width. Final inserts still use the last
+        // painted width until consolidation completes. Offline sessions drop those events.
+        let defer_inline_draw = draws_history
+            && self.overlay.is_none()
+            && !self.reconnect.offline
+            && !tui.is_owned_screen()
+            && self.chat_widget.has_pending_stream_consolidation()
+            && !self.chat_widget.has_active_modal();
+        if draws_history {
             self.expire_pending_key_chord(tui);
-            self.handle_draw_pre_render(tui, screen_size)?;
+            if !defer_inline_draw {
+                self.handle_draw_pre_render(tui, screen_size)?;
+            }
         }
 
         let dismiss_chord = match &event {
@@ -1056,6 +1206,12 @@ impl App {
             let Some(key_event) = self.route_key_chord_event(tui, key_event) else {
                 return Ok(AppRunControl::Continue);
             };
+            if self.routed_key_activation.is_none()
+                && self.shortcut_guide_owns_input(tui)
+                && self.chat_widget.handle_shortcut_view_key(key_event)
+            {
+                return Ok(AppRunControl::Continue);
+            }
             TuiEvent::Key(key_event)
         } else {
             event
@@ -1066,7 +1222,7 @@ impl App {
         {
             return Ok(AppRunControl::Continue);
         }
-        if Box::pin(self.handle_sidebar_input(tui, app_server, &event)).await {
+        if !composer_paste && Box::pin(self.handle_sidebar_input(tui, app_server, &event)).await {
             return Ok(AppRunControl::Continue);
         }
         if let TuiEvent::Mouse(press) = &event
@@ -1080,15 +1236,26 @@ impl App {
             if let Some(current) = side_pane::layout(self, tui, size.into())
                 && current.passive_thread == painted.passive_thread
                 && let Some(peer) = self.current_displayed_thread_id()
-                && painted.passive.union(painted.focused) == Rect::from(size)
+                && painted.passive.union(painted.focused) == self.workspace_chat_area(size.into())
             {
                 let painted_area = painted.passive;
-                if let Some(url) = self.transcript_link_at(*press) {
+                if let Some(link) = self.transcript_link_at(*press) {
+                    use crate::terminal_hyperlinks::ReaderLink;
                     if press.modifiers.is_empty() {
                         self.passive_link_drag = Some((current.passive_thread, painted.passive));
                         self.handle_passive_transcript_event(tui, current.passive_thread, &event);
                     } else {
-                        self.open_url_in_browser(url);
+                        match link {
+                            ReaderLink::Agent(agent) => {
+                                self.app_event_tx.send(AppEvent::OpenSidebarAgent {
+                                    backend: app_server.backend_id(),
+                                    source: current.passive_thread,
+                                    agent,
+                                });
+                            }
+                            ReaderLink::External(url) => self.open_url_in_browser(url),
+                            ReaderLink::Document(link) => self.open_url_in_browser(link.path),
+                        }
                     }
                     return Ok(AppRunControl::Continue);
                 }
@@ -1119,22 +1286,13 @@ impl App {
             return Ok(AppRunControl::Continue);
         }
         self.cancel_primed_browsing_for_event(&event);
-        let voice_toggle = |app: &Self, key: KeyEvent| {
-            key.kind == KeyEventKind::Press
-                && app
-                    .active_keymap_contexts()
-                    .contains_action(crate::keymap::KeymapActionId {
-                        context: crate::keymap::KeymapContext::Chat,
-                        action: "toggle_voice",
-                    })
-                && app.keymap.chat.toggle_voice.is_pressed(key)
-        };
         // Transcript interactions consume otherwise-unhandled keys; let enabled voice controls
         // reach App.
         if !matches!(&event, TuiEvent::Key(key)
-            if voice_toggle(self, *key)
+            if self.voice_toggle_pressed(*key)
                 && (!self.transcript_view.owns_interaction_key(*key)
                     || self.transcript_view.is_select_mode()))
+            && !composer_paste
             && self.handle_owned_transcript_event(tui, app_server, &event)?
         {
             return Ok(AppRunControl::Continue);
@@ -1162,12 +1320,8 @@ impl App {
             }
         }
         if let TuiEvent::Key(key_event) = &event
-            && voice_toggle(self, *key_event)
+            && self.handle_voice_toggle_key(tui, *key_event).await
         {
-            self.cancel_transcript_browsing(tui);
-            if !self.chat_widget.handle_startup_submission_key(*key_event) {
-                self.control_voice(crate::app_event::VoiceControl::Toggle);
-            }
             return Ok(AppRunControl::Continue);
         }
         if let TuiEvent::Key(key_event) = &event
@@ -1178,7 +1332,8 @@ impl App {
             && self.keymap.chat.toggle_voice_mute.is_pressed(*key_event)
         {
             if !self.chat_widget.handle_startup_submission_key(*key_event) {
-                self.control_voice(crate::app_event::VoiceControl::Mute);
+                self.control_voice(crate::app_event::VoiceControl::Mute)
+                    .await;
             }
             return Ok(AppRunControl::Continue);
         }
@@ -1192,10 +1347,11 @@ impl App {
         {
             if self.overlay.is_none()
                 && self.chat_widget.no_modal_or_popup_active()
-                && self.chat_widget.is_external_writer_view()
-                && (crate::key_hint::plain(KeyCode::Esc).is_press(*key)
-                    || (crate::key_hint::plain(KeyCode::Left).is_press(*key)
-                        && self.chat_widget.agents_navigation_key_available()))
+                && ((self.chat_widget.is_read_only_view()
+                    && crate::key_hint::plain(KeyCode::Esc).is_press(*key))
+                    || self
+                        .chat_widget
+                        .blocked_thread_command_center_key_pressed(*key))
             {
                 self.open_agents_overview(app_server);
             } else if self
@@ -1247,10 +1403,11 @@ impl App {
             _ => {}
         }
 
-        let draws_history = matches!(
-            event,
-            TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained
-        );
+        if defer_inline_draw {
+            tui.defer_screen_size(screen_size);
+            tui.frame_requester().schedule_frame();
+            return Ok(AppRunControl::Continue);
+        }
         if self.overlay.is_some() {
             let _ = self
                 .handle_backtrack_overlay_event(tui, app_server, event)
@@ -1258,7 +1415,18 @@ impl App {
         } else {
             match event {
                 TuiEvent::Key(key_event) => {
+                    let overview_id = agents_overview::AGENTS_OVERVIEW_VIEW_ID;
+                    let overview_was_open = self
+                        .chat_widget
+                        .selected_index_for_present_view(overview_id)
+                        .is_some();
                     self.handle_key_event(tui, app_server, key_event).await;
+                    if overview_was_open
+                        && self
+                            .chat_widget
+                            .selected_index_for_present_view(overview_id)
+                            .is_none()
+                    {}
                 }
                 TuiEvent::Paste(pasted) => {
                     // Pasted text may contain CRLF pairs or bare CRs (e.g., from iTerm2),
@@ -1309,7 +1477,7 @@ impl App {
                     }
                     self.chat_widget.pre_draw_tick();
                     self.refresh_agents_overview_usage(app_server, tui.frame_requester());
-                    self.render_chat_widget_frame(tui, screen_size)?;
+                    self.render_chat_frame(tui, screen_size)?;
                     if tui.is_owned_screen()
                         && self.transcript_view.history
                             != crate::pager_overlay::TranscriptHistoryState::Failed
@@ -1338,7 +1506,8 @@ impl App {
             let frozen = self.chat_widget.is_external_writer_view();
             let visible = self.current_displayed_thread_id().filter(|&id| {
                 tui.is_terminal_focused()
-                    && !self.conversation_frame.chooser_covers_transcript()
+                    && !self.conversation_frame.panel_covers_transcript()
+                    && !self.conversation_area(screen_size.into()).is_empty()
                     && matches!(self.overlay, None | Some(Overlay::Transcript(_)))
                     && self.chat_widget.no_modal_or_popup_active()
                     && self.initial_history_replay_buffer.is_none()
@@ -1377,6 +1546,7 @@ impl App {
         }
         // Both transcript owners must consume completions before automatic work advances.
         if idle_draw {
+            self.cancel_hidden_sidebar_primary(tui);
             tui.clipboard.advance(tui.frame_requester());
         }
         Ok(AppRunControl::Continue)
@@ -1384,33 +1554,48 @@ impl App {
 
     pub(super) fn show_shutdown_feedback(&mut self, tui: &mut tui::Tui) -> Result<()> {
         self.chat_widget.show_shutdown_in_progress();
-        let screen_size = tui.terminal.last_known_screen_size;
+        let screen_size = tui.prepare_draw_size()?;
         self.handle_draw_pre_render(tui, screen_size)?;
         self.chat_widget.pre_draw_tick();
         self.render_chat_widget_frame(tui, screen_size)?;
         Ok(())
     }
 
-    fn prepare_frame_images(&mut self) -> Option<crate::terminal_image::ImageProtocol> {
-        let protocol = self
-            .chat_widget
-            .terminal_image_support()
-            .protocol()
-            .filter(|_| {
-                !self.app_server_target.uses_remote_workspace()
-                    && crate::projectless::has_only_local_environments(&self.environment_manager)
-            });
+    fn preview_image_protocol(
+        &self,
+        tui: &tui::Tui,
+    ) -> Option<crate::terminal_image::ImageProtocol> {
+        match tui.probed_kitty_graphics {
+            Some(true) => Some(crate::terminal_image::ImageProtocol::Kitty),
+            Some(false) => None,
+            None => self.chat_widget.terminal_image_support().protocol(),
+        }
+    }
+
+    fn prepare_frame_images(
+        &mut self,
+        tui: &tui::Tui,
+    ) -> Option<crate::terminal_image::ImageProtocol> {
+        let protocol = self.preview_image_protocol(tui).filter(|_| {
+            !self.app_server_target.uses_remote_workspace()
+                && crate::projectless::has_only_local_environments(&self.environment_manager)
+        });
         self.chat_widget.prepare_composer_images(protocol);
         protocol
     }
 
     fn render_chat_widget_frame(&mut self, tui: &mut tui::Tui, screen_size: Size) -> Result<Rect> {
+        self.render_chat_frame(tui, screen_size)
+    }
+
+    fn render_chat_frame(&mut self, tui: &mut tui::Tui, screen_size: Size) -> Result<Rect> {
+        self.chat_widget.bidi_layout = tui.terminal.bidi_layout;
         self.chat_widget
             .set_sparkle_terminal_focus(tui.is_terminal_focused());
         if tui.is_owned_screen() {
-            return self.render_owned_transcript(tui, screen_size);
+            return self.render_owned_frame(tui, screen_size);
         }
-        self.prepare_frame_images();
+        self.prepare_frame_images(tui);
         self.chat_widget
             .empty_state_animation
             .borrow_mut()
@@ -1435,13 +1620,14 @@ impl App {
             self.maybe_run_resize_reflow(tui, screen_size)?;
         }
         let hud = self.workspace_hud(tui, screen_size.into());
+        self.chat_widget.begin_steer_hint_draw();
+        let mut rendered_area = Rect::default();
         self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
             let desired_height = if dashboard_visible {
                 screen_size.height
             } else {
                 desired_height
             };
-            let mut rendered_area = Rect::default();
             tui.draw_with_resize_reflow(desired_height, screen_size, hud, |frame| {
                 let area = frame.area();
                 rendered_area = area;
@@ -1454,9 +1640,10 @@ impl App {
                     frame.set_cursor_style(chat_widget.cursor_style(area));
                     frame.set_cursor_position((x, y));
                 }
-            })?;
-            Ok(rendered_area)
-        })
+            })
+        })?;
+        self.chat_widget.finish_steer_hint_draw();
+        Ok(rendered_area)
     }
 
     fn with_chat_widget_frame<T>(
@@ -1464,7 +1651,17 @@ impl App {
         width: u16,
         render: impl FnOnce(u16, &dyn Renderable) -> T,
     ) -> T {
-        let chat_widget = self.chat_widget.as_renderable();
+        let footer = self.scrollback_cycle_footer(width);
+        let chat_widget = match &footer {
+            Some(footer) => self.chat_widget.as_renderable_with_options(
+                crate::bottom_pane::ComposerRenderOptions {
+                    footer: Some(footer),
+                    command_popup_placement: crate::bottom_pane::CommandPopupPlacement::Hidden,
+                    ..Default::default()
+                },
+            ),
+            None => self.chat_widget.as_renderable(),
+        };
         render(chat_widget.desired_height(width), &chat_widget)
     }
 }

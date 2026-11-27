@@ -1,5 +1,6 @@
 use super::*;
 use crate::tools::handlers::multi_agents_spec::create_close_agent_tool_v1;
+use codex_otel::SubagentStopAction;
 use codex_tools::ToolSpec;
 
 pub(crate) struct Handler;
@@ -20,10 +21,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
         )
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(async move { handle_close_agent(invocation).await.map(boxed_tool_output) })
     }
 }
@@ -51,7 +49,7 @@ async fn handle_close_agent(
         .emit_turn_item_started(
             &turn,
             &TurnItem::CollabAgentToolCall(CollabAgentToolCallItem {
-                id: call_id.clone(),
+                id: call_id.to_string(),
                 tool: CollabAgentTool::CloseAgent,
                 status: CollabAgentToolCallStatus::InProgress,
                 sender_thread_id: session.thread_id,
@@ -68,17 +66,31 @@ async fn handle_close_agent(
     let previous_status = local_agent_control.get_status(agent_id).await;
     let result = local_agent_control.close_agent(agent_id).await;
     let (status, receiver_agent) = match &result {
-        Ok(snapshot) => (
-            snapshot.status().cloned().unwrap_or(AgentStatus::NotFound),
-            snapshot.metadata().clone(),
-        ),
+        Ok(snapshot) => {
+            // Legacy close can also address unrelated loaded threads.
+            if snapshot.metadata().agent_id.is_some()
+                && agent_id != ThreadId::from(session.session_id())
+            {
+                turn.session_telemetry.record_multi_agent_stop_accepted(
+                    session.session_id(),
+                    agent_id,
+                    &call_id,
+                    SubagentStopAction::Close,
+                    snapshot.status(),
+                );
+            }
+            (
+                snapshot.status().cloned().unwrap_or(AgentStatus::NotFound),
+                snapshot.metadata().clone(),
+            )
+        }
         Err(_) => (previous_status, receiver_agent),
     };
     session
         .emit_turn_item_completed(
             &turn,
             TurnItem::CollabAgentToolCall(CollabAgentToolCallItem {
-                id: call_id,
+                id: call_id.into(),
                 tool: CollabAgentTool::CloseAgent,
                 status: collab_tool_call_status(&status, Some(agent_id)),
                 sender_thread_id: session.thread_id,
@@ -126,7 +138,7 @@ impl ToolOutput for CloseAgentResult {
         tool_output_response_item(call_id, payload, self, Some(true), "close_agent")
     }
 
-    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+    fn code_mode_result(&self, _payload: &ToolPayload) -> CodeModeToolResult {
         tool_output_code_mode_result(self, "close_agent")
     }
 }

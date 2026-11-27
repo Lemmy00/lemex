@@ -65,13 +65,7 @@ pub(super) fn endpoint_check(inspection: EndpointInspection) -> DoctorCheck {
             .detail(format!("endpoint products: {detail}"));
     }
 
-    let targets = if cfg!(target_os = "windows") {
-        "signed Lemex app; codex.exe; codex-windows-sandbox-setup.exe; codex-command-runner.exe; lemex-code-mode-host.exe"
-    } else if cfg!(target_os = "macos") {
-        "signing team 2DC432GLL2 plus the installed Lemex app identity, signed codex agent, and required helpers"
-    } else {
-        "verified Lemex app, codex agent, and required helpers"
-    };
+    let targets = "installed Lemex CLI and its packaged runtime helpers";
     let mut check = DoctorCheck::new(
         "security.endpoint",
         "security",

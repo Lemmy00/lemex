@@ -24,17 +24,21 @@ use crate::app_event_sender::AppEventSender;
 use crate::key_hint;
 use crate::key_hint::ShortcutHint;
 use crate::line_truncation::line_width;
+use crate::line_truncation::truncate_line_with_ellipsis;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::motion::MotionMode;
 use crate::motion::ReducedMotionIndicator;
 use crate::motion::activity_indicator;
 use crate::render::renderable::Renderable;
 use crate::text_formatting::capitalize_first;
+use crate::text_formatting::contains_rtl_or_arabic_number;
 use crate::tui::FrameRequester;
 use crate::width::display_width;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_lines;
 
+mod header;
+pub(crate) use header::StatusHeader;
 mod timer;
 pub(crate) use timer::StatusTimer;
 
@@ -44,6 +48,14 @@ use summary_shimmer::summary_shimmer;
 
 pub(crate) const STATUS_DETAILS_DEFAULT_MAX_LINES: usize = 3;
 const DETAILS_PREFIX: &str = "  └ ";
+const HEADING_INTERVAL: Duration = Duration::from_millis(/*millis*/ 3500);
+
+#[derive(Clone, Debug)]
+struct HeaderSample {
+    header: StatusHeader,
+    outgoing: Option<String>,
+    next_sample: Option<Instant>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StatusDetailsCapitalization {
@@ -55,8 +67,10 @@ pub(crate) enum StatusDetailsCapitalization {
 #[derive(Clone, Debug)]
 pub(crate) struct StatusIndicatorWidget {
     /// Animated header text (defaults to "Working").
-    header: String,
+    header: StatusHeader,
     header_started_at: Instant,
+    prepared_at: Option<Instant>,
+    sample: Option<HeaderSample>,
     details: Option<String>,
     details_max_lines: usize,
     /// Optional suffix rendered after the elapsed/interrupt segment.
@@ -97,8 +111,10 @@ impl StatusIndicatorWidget {
         effects: codex_config::types::TuiEffects,
     ) -> Self {
         Self {
-            header: String::from("Working"),
+            header: String::from("Working").into(),
             header_started_at: Instant::now(),
+            prepared_at: None,
+            sample: None,
             details: None,
             details_max_lines: STATUS_DETAILS_DEFAULT_MAX_LINES,
             inline_message: None,
@@ -121,11 +137,65 @@ impl StatusIndicatorWidget {
         self.effects = tui.effects;
     }
 
+    fn shimmer_motion(&self) -> MotionMode {
+        MotionMode::from_animations_enabled(self.animations_enabled && self.effects.shimmer)
+    }
+
+    /// Use the same heading and transition time for layout and painting.
+    pub(crate) fn prepare_frame(&mut self, now: Instant) {
+        self.prepared_at = Some(now);
+        if self.shimmer_motion() == MotionMode::Reduced
+            || summary_shimmer::palette(self.header()).is_none()
+        {
+            self.sample = None;
+            return;
+        }
+        let sample = self.sample.get_or_insert_with(|| HeaderSample {
+            header: self.header.clone(),
+            outgoing: None,
+            next_sample: None,
+        });
+        let due = sample.next_sample.unwrap_or(now);
+        if !self.header.is_reasoning() || now < due {
+            return;
+        }
+        // Keep the first heading's clock even when a frame is drawn late.
+        let late = (now.duration_since(due).as_nanos() % HEADING_INTERVAL.as_nanos()) as u64;
+        sample.next_sample = Some(now + HEADING_INTERVAL - Duration::from_nanos(late));
+        if sample.header != self.header {
+            let previous = std::mem::replace(&mut sample.header, self.header.clone());
+            if previous.text != self.header.text {
+                sample.outgoing = Some(previous.text);
+                self.header_started_at = now;
+            }
+        }
+    }
+
+    fn header_spans(&self, now: Instant, columns: usize) -> Vec<Span<'static>> {
+        summary_shimmer(
+            self.header(),
+            now.saturating_duration_since(self.header_started_at),
+            self.shimmer_motion(),
+            columns,
+            self.sample.as_ref(),
+        )
+    }
+
     /// Update the animated header label (left of the brackets).
-    pub(crate) fn update_header(&mut self, header: String) {
-        if self.header != header {
-            self.header = header;
+    pub(crate) fn update_header(&mut self, header: impl Into<StatusHeader>) {
+        let header = header.into();
+        if !header.is_reasoning() && self.header != header {
+            self.sample = None;
+        }
+        if self.sample.is_none() && self.header.text != header.text {
             self.header_started_at = Instant::now();
+        }
+        self.header = header;
+    }
+
+    pub(crate) fn extend_reasoning(&mut self, item_id: Option<&str>, part: usize, summary: &str) {
+        if let Some(sample) = &mut self.sample {
+            sample.header.extend(item_id, part, summary);
         }
     }
 
@@ -164,7 +234,7 @@ impl StatusIndicatorWidget {
     }
 
     pub(crate) fn header(&self) -> &str {
-        &self.header
+        &self.header.text
     }
 
     #[cfg(test)]
@@ -203,13 +273,8 @@ impl StatusIndicatorWidget {
 
         if out.len() > self.details_max_lines {
             out.truncate(self.details_max_lines);
-            let content_width = usize::from(width).saturating_sub(prefix_width).max(1);
-            let max_base_len = content_width.saturating_sub(1);
-            if let Some(last) = out.last_mut()
-                && let Some(span) = last.spans.last_mut()
-            {
-                let trimmed: String = span.content.as_ref().chars().take(max_base_len).collect();
-                *span = format!("{trimmed}…").dim();
+            if let Some(last) = out.last_mut() {
+                *last = truncate_line_with_ellipsis(std::mem::take(last), usize::from(width)).dim();
             }
         }
 
@@ -227,31 +292,23 @@ impl StatusIndicator<'_> {
     // wide Unicode characters, remapped interrupt hints, and elapsed-time text.
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
         let row = self.row;
-        let now = Instant::now();
-        let elapsed_duration = self.timer.display_started_at.map_or_else(
-            || self.timer.elapsed_at(now),
-            |started_at| now.saturating_duration_since(started_at),
-        );
+        let now = row.prepared_at.unwrap_or_else(Instant::now);
+        let elapsed_duration = self.timer.display_elapsed_at(now);
         let pretty_elapsed = fmt_elapsed_compact(elapsed_duration.as_secs());
         let progress =
             MotionMode::from_animations_enabled(row.animations_enabled && row.effects.progress);
-        let shimmer =
-            MotionMode::from_animations_enabled(row.animations_enabled && row.effects.shimmer);
-
         let mut spans = Vec::with_capacity(5);
+        let mut label_columns = usize::from(width);
         if let Some(indicator) = activity_indicator(
             Some(self.timer.last_resume_at),
             progress,
             ReducedMotionIndicator::Hidden,
         ) {
+            label_columns = label_columns.saturating_sub(indicator.width() + 1);
             spans.push(indicator);
             spans.push(" ".into());
         }
-        spans.extend(summary_shimmer(
-            &row.header,
-            now.saturating_duration_since(row.header_started_at),
-            shimmer,
-        ));
+        spans.extend(row.header_spans(now, label_columns));
         if !spans.is_empty() {
             spans.push(" ".into());
         }
@@ -305,17 +362,16 @@ impl Renderable for StatusIndicator<'_> {
         if area.is_empty() {
             return;
         }
-        if self.row.animations_enabled || self.timer.display_started_at.is_some() {
-            let interval_ms = if self.row.animations_enabled
-                && (self.row.effects.progress || self.row.effects.shimmer)
-            {
-                32
-            } else {
-                1_000
-            };
-            self.row
-                .frame_requester
-                .schedule_frame_in(Duration::from_millis(interval_ms));
+        let animated = self.row.animations_enabled
+            && (self.row.effects.progress
+                || (self.row.effects.shimmer && !contains_rtl_or_arabic_number(self.row.header())));
+        let delay = if animated {
+            Some(Duration::from_millis(32))
+        } else {
+            self.timer.next_tick_delay(Instant::now())
+        };
+        if let Some(delay) = delay {
+            self.row.frame_requester.schedule_frame_in(delay);
         }
         Paragraph::new(Text::from(self.lines(area.width))).render(area, buf);
     }
@@ -347,6 +403,40 @@ mod tests {
         assert_eq!(row.header_started_at, previous);
         row.update_header("Mapping the app structure".to_owned());
         assert!(row.header_started_at > previous);
+    }
+
+    #[test]
+    fn static_headers_schedule_clock_ticks_and_animated_headers_schedule_faster_frames() {
+        for (header, animations, progress, expected_ms) in [
+            ("Working", false, true, 1_000),
+            ("שלום עולם", true, false, 1_000),
+            ("Checking lines ١٢-٣٤", true, false, 1_000),
+            ("Working", true, false, 32),
+            ("שלום עולם", true, true, 32),
+        ] {
+            let (tx, _rx) = unbounded_channel();
+            let (requester, mut requests) = FrameRequester::test_channel();
+            let mut row = StatusIndicatorWidget::new(
+                AppEventSender::new(tx),
+                requester,
+                animations,
+                codex_config::types::TuiEffects {
+                    progress,
+                    shimmer: true,
+                    ..Default::default()
+                },
+            );
+            row.update_header(header.to_owned());
+            let timer = StatusTimer::default();
+            let area = Rect::new(0, 0, 80, 1);
+            let before = timer.last_resume_at;
+            row.with_timer(&timer)
+                .render(area, &mut Buffer::empty(area));
+            let after = Instant::now();
+            let requested = requests.try_recv().expect("scheduled frame");
+            let interval = Duration::from_millis(expected_ms);
+            assert!((before + interval..=after + interval).contains(&requested));
+        }
     }
 
     #[test]
@@ -444,7 +534,7 @@ mod tests {
             Default::default(),
         );
         let mut timer = StatusTimer::default();
-        timer.pause_at(timer.last_resume_at);
+        timer.pause_at(timer.last_resume_at + Duration::from_secs(1));
 
         let mut terminal = Terminal::new(TestBackend::new(80, 1)).expect("terminal");
         terminal
@@ -455,7 +545,7 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect::<String>();
 
-        assert!(line.starts_with("Working (0s • esc to interrupt)"));
+        insta::assert_snapshot!(line.trim_end(), @"Working (1s • esc to interrupt)");
     }
 
     #[test]
@@ -546,8 +636,24 @@ mod tests {
         assert_eq!(lines.len(), STATUS_DETAILS_DEFAULT_MAX_LINES);
         let last = lines.last().expect("expected last details line");
         assert!(
-            last.spans[1].content.as_ref().ends_with("…"),
+            last.to_string().ends_with('…'),
             "expected ellipsis in last line: {last:?}"
+        );
+
+        w.update_details(
+            Some("界".repeat(20)),
+            StatusDetailsCapitalization::Preserve,
+            STATUS_DETAILS_DEFAULT_MAX_LINES,
+        );
+        let lines = w.wrapped_details_lines(/*width*/ 10);
+        assert!(lines.iter().all(|line| line_width(line) <= 10));
+        insta::assert_snapshot!(
+            lines.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n"),
+            @r###"
+          └ 界界界
+            界界界
+            界界…
+        "###
         );
     }
 

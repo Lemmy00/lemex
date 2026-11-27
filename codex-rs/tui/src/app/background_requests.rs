@@ -1,7 +1,7 @@
 //! Background app-server requests launched by the TUI app.
 //!
 //! This module owns fire-and-forget fetch/write helpers for MCP inventory, skills, plugins, rate
-//! limits, add-credit nudges, and feedback uploads. Results are routed back through `AppEvent` so
+//! limits and local diagnostic records. Results are routed back through `AppEvent` so
 //! the main event loop remains single-threaded.
 
 use super::feedback_upload::deliver_feedback;
@@ -16,8 +16,6 @@ use crate::config_update::format_config_error;
 use codex_app_server_protocol::AppsListParams;
 use codex_app_server_protocol::AppsListResponse;
 use codex_app_server_protocol::GetAccountRateLimitsParams;
-use codex_app_server_protocol::GetAccountTokenUsageParams;
-use codex_app_server_protocol::GetAccountTokenUsageResponse;
 use codex_app_server_protocol::MarketplaceAddParams;
 use codex_app_server_protocol::MarketplaceAddResponse;
 use codex_app_server_protocol::MarketplaceRemoveParams;
@@ -37,8 +35,6 @@ pub(super) const THREAD_USAGE_FETCH_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(/*secs*/ 65);
 const RATE_LIMIT_RESET_REQUEST_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(/*secs*/ 15);
-const WORKSPACE_HEADLINE_FETCH_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_millis(/*millis*/ 2000);
 
 impl App {
     pub(super) fn start_mcp_login(
@@ -46,6 +42,7 @@ impl App {
         app_server: &AppServerSession,
         request_id: String,
         name: String,
+        environment_id: Option<String>,
         thread_id: ThreadId,
     ) {
         let request_handle = app_server.request_handle();
@@ -55,6 +52,7 @@ impl App {
                 .request_typed(ClientRequest::McpServerOauthLogin {
                     request_id: RequestId::String(request_id.clone()),
                     params: McpServerOauthLoginParams {
+                        environment_id,
                         name,
                         thread_id: Some(thread_id.to_string()),
                         client_registration: None,
@@ -150,8 +148,14 @@ impl App {
         &mut self,
         app_server: &AppServerSession,
         thread_id: ThreadId,
-        request_id: u64,
+        request_id: Uuid,
     ) {
+        if !self
+            .chat_widget
+            .is_pending_thread_usage(thread_id, request_id)
+        {
+            return;
+        }
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
@@ -172,25 +176,18 @@ impl App {
 
     pub(super) fn refresh_status_line_workspace_headline(
         &mut self,
-        app_server: &AppServerSession,
-        request_id: u64,
+        _app_server: &AppServerSession,
+        request_id: Uuid,
     ) {
-        let request_handle = app_server.request_handle();
-        let app_event_tx = self.app_event_tx.clone();
-        tokio::spawn(async move {
-            let result = tokio::time::timeout(
-                WORKSPACE_HEADLINE_FETCH_TIMEOUT,
-                fetch_workspace_messages(request_handle),
-            )
-            .await
-            .map_err(|_| "account/workspaceMessages/read timed out in TUI".to_string())
-            .and_then(|result| {
-                result
-                    .map(crate::workspace_messages::workspace_headline_from_response)
-                    .map_err(|err| err.to_string())
-            });
-            app_event_tx.send(AppEvent::StatusLineWorkspaceHeadlineUpdated { request_id, result });
-        });
+        if self.chat_widget.is_pending_workspace_headline(request_id) {
+            self.app_event_tx
+                .send(AppEvent::StatusLineWorkspaceHeadlineUpdated {
+                    request_id,
+                    result: Ok(
+                        crate::workspace_messages::WorkspaceHeadlineFetchResult::FeatureDisabled,
+                    ),
+                });
+        }
     }
 
     /// Starts the initial skills refresh without delaying the first interactive frame.
@@ -201,20 +198,24 @@ impl App {
     /// app-server RPC finishes. User-initiated skills refreshes still use the blocking app command path so
     /// callers that explicitly asked for fresh skill state do not race ahead of their own refresh.
     pub(super) fn refresh_startup_skills(&mut self, app_server: &AppServerSession) {
-        if app_server.thread_params_mode() == crate::ThreadParamsMode::Cloud {
+        // A remote session refreshes its skills when thread/start supplies its cwd.
+        if app_server.thread_params_mode() == crate::ThreadParamsMode::Cloud
+            || (app_server.thread_params_mode() == crate::ThreadParamsMode::Remote
+                && self.chat_widget.thread_id().is_none())
+        {
             self.skill_load_warnings.startup_complete = true;
             return;
         }
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
-        let cwd = self.config.cwd.to_path_buf();
+        let cwd = self.chat_widget.session_cwd().clone();
         tokio::spawn(async move {
             let request_id = RequestId::String(format!("startup-skills-list-{}", Uuid::new_v4()));
             let result = fetch_skills_list(
                 request_handle,
                 request_id,
                 SkillsListParams {
-                    cwds: vec![cwd.clone()],
+                    cwds: vec![cwd.to_path_buf()],
                     force_reload: true,
                 },
             )
@@ -766,6 +767,7 @@ pub(super) async fn fetch_all_mcp_server_statuses(
             .request_typed(ClientRequest::McpServerStatusList {
                 request_id,
                 params: ListMcpServerStatusParams {
+                    environment_id: None,
                     cursor: cursor.clone(),
                     limit: Some(100),
                     detail: Some(detail),
@@ -819,36 +821,11 @@ pub(super) async fn fetch_account_rate_limits(
 }
 
 pub(super) async fn fetch_thread_usage(
-    request_handle: AppServerRequestHandle,
-    thread_id: ThreadId,
+    _request_handle: AppServerRequestHandle,
+    _thread_id: ThreadId,
 ) -> Result<ThreadUsageOutcome> {
-    let request_id = RequestId::String(format!("thread-usage-{}", Uuid::new_v4()));
-    let response: GetAccountTokenUsageResponse = request_handle
-        .request_typed(ClientRequest::GetAccountTokenUsage {
-            request_id,
-            params: Some(GetAccountTokenUsageParams {
-                thread_id: Some(thread_id.to_string()),
-            }),
-        })
-        .await
-        .wrap_err("account/usage/read failed for thread usage in TUI")?;
-    Ok(response
-        .thread_usage
-        .map(ThreadUsageOutcome::Available)
-        .unwrap_or(ThreadUsageOutcome::Disabled))
-}
-
-pub(super) async fn fetch_workspace_messages(
-    request_handle: AppServerRequestHandle,
-) -> Result<codex_app_server_protocol::GetWorkspaceMessagesResponse> {
-    let request_id = RequestId::String(format!("workspace-messages-{}", Uuid::new_v4()));
-    request_handle
-        .request_typed(ClientRequest::GetWorkspaceMessages {
-            request_id,
-            params: None,
-        })
-        .await
-        .wrap_err("account/workspaceMessages/read failed in TUI")
+    // Keep compatibility with remote-session views without requesting account reports.
+    Ok(ThreadUsageOutcome::Disabled)
 }
 
 pub(super) async fn fetch_skills_list(
@@ -1245,47 +1222,6 @@ pub(super) fn build_feedback_params(
     }
 }
 
-/// Convert flat `McpServerStatus` responses into the per-server maps used by the
-/// in-process MCP subsystem (tools keyed as `mcp__{server}__{tool}`, plus
-/// per-server resource/template/auth maps). Test-only because the TUI
-/// renders directly from `McpServerStatus` rather than these maps.
-#[cfg(test)]
-pub(super) type McpInventoryMaps = (
-    HashMap<String, codex_protocol::mcp::Tool>,
-    HashMap<String, Vec<codex_protocol::mcp::Resource>>,
-    HashMap<String, Vec<codex_protocol::mcp::ResourceTemplate>>,
-    HashMap<String, McpAuthStatus>,
-);
-
-#[cfg(test)]
-pub(super) fn mcp_inventory_maps_from_statuses(statuses: Vec<McpServerStatus>) -> McpInventoryMaps {
-    let mut tools = HashMap::new();
-    let mut resources = HashMap::new();
-    let mut resource_templates = HashMap::new();
-    let mut auth_statuses = HashMap::new();
-
-    for status in statuses {
-        let server_name = status.name;
-        auth_statuses.insert(
-            server_name.clone(),
-            match status.auth_status {
-                codex_app_server_protocol::McpAuthStatus::Unknown => McpAuthStatus::Unknown,
-                codex_app_server_protocol::McpAuthStatus::Unsupported => McpAuthStatus::Unsupported,
-                codex_app_server_protocol::McpAuthStatus::NotLoggedIn => McpAuthStatus::NotLoggedIn,
-                codex_app_server_protocol::McpAuthStatus::BearerToken => McpAuthStatus::BearerToken,
-                codex_app_server_protocol::McpAuthStatus::OAuth => McpAuthStatus::OAuth,
-            },
-        );
-        resources.insert(server_name.clone(), status.resources);
-        resource_templates.insert(server_name.clone(), status.resource_templates);
-        for (tool_name, tool) in status.tools {
-            tools.insert(format!("mcp__{server_name}__{tool_name}"), tool);
-        }
-    }
-
-    (tools, resources, resource_templates, auth_statuses)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1293,14 +1229,12 @@ mod tests {
     use app_test_support::ChatGptAuthFixture;
     use app_test_support::write_chatgpt_auth;
     use codex_app_server_protocol::PluginMarketplaceEntry;
-    use codex_app_server_protocol::ThreadUsage;
     use codex_config::types::AuthCredentialsStoreMode;
-    use codex_protocol::mcp::Tool;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 
     #[tokio::test]
-    async fn fetch_thread_usage_uses_app_server_auth_after_persisted_account_changes() {
+    async fn fetch_thread_usage_keeps_account_reporting_disabled_with_legacy_auth() {
         let mut app = make_test_app().await;
         let server = wiremock::MockServer::start().await;
         let thread_id = ThreadId::new();
@@ -1369,7 +1303,7 @@ mod tests {
                     }]
                 }),
             ))
-            .expect(/*r*/ 1)
+            .expect(/*r*/ 0)
             .mount(&server)
             .await;
 
@@ -1377,13 +1311,7 @@ mod tests {
             fetch_thread_usage(app_server.request_handle(), thread_id)
                 .await
                 .expect("read thread usage through the authenticated app server"),
-            ThreadUsageOutcome::Available(ThreadUsage {
-                native_usage_usd_micros: Some(750_000),
-                thread_id: thread_id.to_string(),
-                estimated_usage_credits_micros: 0,
-                estimated_usage_usd_micros: Some(0),
-                groups: Vec::new(),
-            })
+            ThreadUsageOutcome::Disabled
         );
     }
 
@@ -1533,70 +1461,6 @@ mod tests {
                 message: "Enable plugin sharing for this Lemex session to load shared plugins"
                     .to_string(),
             }
-        );
-    }
-
-    #[test]
-    fn mcp_inventory_maps_prefix_tool_names_by_server() {
-        let statuses = vec![
-            McpServerStatus {
-                server_capabilities: None,
-                tool_list_meta: None,
-                tools_error: None,
-                name: "docs".to_string(),
-                runtime_status: None,
-                plugin_id: None,
-                http_origin: None,
-                server_info: None,
-                tools: HashMap::from([(
-                    "list".to_string(),
-                    Tool {
-                        description: None,
-                        name: "list".to_string(),
-                        title: None,
-                        input_schema: serde_json::json!({"type": "object"}),
-                        output_schema: None,
-                        annotations: None,
-                        icons: None,
-                        meta: None,
-                    },
-                )]),
-                resources: Vec::new(),
-                resource_templates: Vec::new(),
-                auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
-            },
-            McpServerStatus {
-                server_capabilities: None,
-                tool_list_meta: None,
-                tools_error: None,
-                name: "disabled".to_string(),
-                runtime_status: None,
-                plugin_id: None,
-                http_origin: None,
-                server_info: None,
-                tools: HashMap::new(),
-                resources: Vec::new(),
-                resource_templates: Vec::new(),
-                auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
-            },
-        ];
-
-        let (tools, resources, resource_templates, auth_statuses) =
-            mcp_inventory_maps_from_statuses(statuses);
-        let mut resource_names = resources.keys().cloned().collect::<Vec<_>>();
-        resource_names.sort();
-        let mut template_names = resource_templates.keys().cloned().collect::<Vec<_>>();
-        template_names.sort();
-
-        assert_eq!(
-            tools.keys().cloned().collect::<Vec<_>>(),
-            vec!["mcp__docs__list".to_string()]
-        );
-        assert_eq!(resource_names, vec!["disabled", "docs"]);
-        assert_eq!(template_names, vec!["disabled", "docs"]);
-        assert_eq!(
-            auth_statuses.get("disabled"),
-            Some(&McpAuthStatus::Unsupported)
         );
     }
 

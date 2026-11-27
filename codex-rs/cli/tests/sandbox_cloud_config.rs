@@ -133,7 +133,7 @@ async fn run_cloud_sandbox(args: &[&str], bundle: Value) -> Result<Option<TempDi
         .mount(&server)
         .await;
 
-    let codex = codex_utils_cargo_bin::cargo_bin("codex")?;
+    let codex = codex_utils_cargo_bin::cargo_bin("lemex")?;
     let chatgpt_base_url_override = format!("chatgpt_base_url=\"{chatgpt_base_url}\"");
     let output = Command::new(&codex)
         .current_dir(codex_home.path())
@@ -161,18 +161,20 @@ async fn run_cloud_sandbox(args: &[&str], bundle: Value) -> Result<Option<TempDi
         .map(|request| request.url.path().to_string())
         .collect();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let nested_macos_sandbox_unavailable = cfg!(target_os = "macos")
+    let nested_sandbox_unavailable = (cfg!(target_os = "macos")
         && output.status.code() == Some(71)
-        && stderr.contains("sandbox-exec: sandbox_apply: Operation not permitted");
+        && stderr.contains("sandbox-exec: sandbox_apply: Operation not permitted"))
+        || (cfg!(target_os = "linux")
+            && stderr.contains("bwrap: Failed to make / slave: Permission denied"));
 
     assert!(
-        output.status.success() || nested_macos_sandbox_unavailable,
+        output.status.success() || nested_sandbox_unavailable,
         "cloud-managed sandbox profile was not enforced: status={:?}; stdout={}; stderr={}; cloud bundle requests={cloud_bundle_request_paths:?}",
         output.status.code(),
         String::from_utf8_lossy(&output.stdout),
         stderr,
     );
-    if !nested_macos_sandbox_unavailable {
+    if !nested_sandbox_unavailable {
         assert!(
             String::from_utf8(output.stdout)?.starts_with("codex"),
             "expected the sandboxed Lemex version command to run",

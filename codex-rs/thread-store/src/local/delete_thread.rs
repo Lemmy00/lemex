@@ -36,15 +36,25 @@ struct ThreadRollouts {
 }
 
 impl LocalThreadStore {
-    /// Reject deletion while any candidate has attached threads. Call before stopping live work;
-    /// deletion repeats this check under existing writer ownership to cover concurrent creation.
-    pub async fn ensure_no_attached_threads(
+    /// Check dependencies before stopping live threads. The store rechecks under writer ownership.
+    pub async fn preflight_delete_threads(
         &self,
         thread_ids: &[ThreadId],
+        include_fork_references: bool,
     ) -> ThreadStoreResult<()> {
         ensure_diagnostic_logs_available(self)?;
         let reference_index = scan_reference_index(self).await?;
-        check_attached_children(&reference_index, thread_ids)
+        check_attached_children(&reference_index, thread_ids)?;
+        if include_fork_references {
+            ensure_no_external_references(
+                &reference_index,
+                &thread_ids
+                    .iter()
+                    .map(|id| ThreadRollouts::from_index(&reference_index, *id))
+                    .collect::<Vec<_>>(),
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -65,7 +75,7 @@ fn check_attached_children(
     reference_index: &RolloutReferenceIndex,
     thread_ids: &[ThreadId],
 ) -> ThreadStoreResult<()> {
-    let Some(child) = reference_index.attached_child(thread_ids) else {
+    let Some(child) = reference_index.external_attached_child(thread_ids) else {
         return Ok(());
     };
     Err(ThreadStoreError::InvalidRequest {
@@ -284,9 +294,8 @@ async fn delete_thread_after_reference_check(
         }
     }
     thread_rollouts.rollout_ids.insert(thread_id);
-    for rollout_id in thread_rollouts.rollout_ids {
-        super::thread_history::delete_thread(store, rollout_id).await?;
-    }
+    // An existing history database must be accessible before any rollout is removed.
+    let _ = super::thread_history::history_db_for_delete(store).await?;
 
     // Stop queued file work before removing files, retaining ownership until cleanup finishes.
     let live_entry = store.live_recorders.lock().await.remove(&thread_id);
@@ -303,6 +312,11 @@ async fn delete_thread_after_reference_check(
     let found_rollout_path = !thread_rollouts.paths.is_empty();
     for rollout_path in thread_rollouts.paths {
         delete_rollout_file(store, rollout_path.as_path())?;
+    }
+    // History readers can project while a thread is live. Unlink the rollouts before
+    // clearing the projection checkpoint so queued batches cannot recreate deleted rows.
+    for rollout_id in thread_rollouts.rollout_ids {
+        super::thread_history::delete_thread(store, rollout_id).await?;
     }
     remove_thread_name_entries(store.config.codex_home.as_path(), thread_id)
         .await
@@ -844,7 +858,7 @@ SELECT
             .resume_thread(ResumeThreadParams {
                 history_revision: None,
                 thread_id,
-                rollout_path: Some(rollout_path),
+                rollout_path: Some(rollout_path.clone()),
                 history: None,
                 include_archived: false,
                 metadata: ThreadPersistenceMetadata {
@@ -866,6 +880,21 @@ SELECT
             .await
             .expect("delete thread");
         assert!(!lock_path.exists());
+
+        let stale_projection = super::super::thread_history::apply_projection(
+            &store,
+            thread_id,
+            Some(rollout_path.as_path()),
+            /*start_offset*/ 0,
+            /*next_offset*/ 3,
+            /*initial_ordinal*/ 0,
+            Vec::new(),
+        )
+        .await;
+        assert!(matches!(
+            stale_projection,
+            Err(ThreadStoreError::ThreadNotFound { thread_id: deleted }) if deleted == thread_id
+        ));
 
         let counts = sqlx::query_as::<_, (i64, i64, i64, i64)>(
             r#"

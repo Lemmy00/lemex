@@ -176,11 +176,10 @@ async fn strict_tool_collisions_fail_the_turn_before_sampling(
         })
         .await?;
     let attribution = history.items.iter().find_map(|item| match item {
-        codex_history::RolloutItem::EventMsg(EventMsg::TurnStarted(event))
-            if event.turn_id == completed.turn_id =>
-        {
-            event.root_turn_id.as_deref()
-        }
+        codex_history::RolloutItem::EventMsg {
+            event: EventMsg::TurnStarted(event),
+            ..
+        } if event.turn_id == completed.turn_id => event.root_turn_id.as_deref(),
         _ => None,
     });
     assert_eq!(attribution, Some("root-turn"));
@@ -688,7 +687,7 @@ async fn sandbox_denied_exec_command_returns_original_output() -> Result<()> {
         "printf {sentinel:?} >&2; printf {content:?} > {path:?}",
         sentinel = format!("{sentinel}\n"),
         content = "sandbox denied",
-        path = &target_path
+        path = target_path
     );
     let args = json!({
         "cmd": command,

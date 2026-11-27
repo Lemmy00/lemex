@@ -198,3 +198,10 @@ use fixed quick-xml versions. No new vulnerability exception is added.
 Rustix is updated to 1.1.6 for RUSTSEC-2026-0486. The async-trait dependency
 allowance follows Hickory's move from hickory-proto to hickory-net; first-party
 traits remain subject to the existing native-async rule.
+
+Reviewed again on 2026-11-27 for the next upstream refresh: the locked
+cryptography path remains `elliptic-curve 0.13.8` → `crypto-bigint 0.5.5`.
+The advisory still requires 0.7.6 or later, which those parent constraints do
+not accept. The existing owner-approved exception remains limited to
+RUSTSEC-2026-0387; this review adds no vulnerability exception. Review again
+before each release, with the next scheduled review on 2026-12-11.

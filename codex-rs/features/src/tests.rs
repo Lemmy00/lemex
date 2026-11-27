@@ -252,6 +252,60 @@ fn guardian_v3_feature_config_resolves_base_and_profile_toggles() {
 }
 
 #[test]
+fn guardian_v3_shadow_does_not_enable_live_review() {
+    let features: FeaturesToml =
+        toml::from_str("[guardianv3]\nshadow_enabled = true").expect("Guardian V3 shadow settings");
+    assert_eq!(
+        features.entries(),
+        BTreeMap::from([("guardianv3.shadow_enabled".to_owned(), true)])
+    );
+}
+
+#[test]
+fn guardian_v3_prompt_settings_do_not_implicitly_enable_the_feature() {
+    let features: FeaturesToml = toml::from_str(
+        r#"
+[guardianv3]
+message_board_in_memory = true
+shadow_board_limit_mib = 32
+[guardianv3.housekeeper]
+routing_instructions = "Group related deployment evidence."
+batch_timeout_ms = 15000
+[guardianv3.reviewer]
+retrieval_instructions = "Search before assessing deployments."
+"#,
+    )
+    .expect("Guardian V3 settings should deserialize");
+
+    assert!(features.entries().is_empty());
+    assert_eq!(
+        features.guardianv3,
+        Some(FeatureToml::Config(crate::GuardianV3ConfigToml {
+            shadow_board_limit_mib: std::num::NonZeroU32::new(32),
+            shadow_enabled: None,
+            enabled: None,
+            message_board_in_memory: Some(true),
+            housekeeper: Some(crate::GuardianV3HousekeeperConfigToml {
+                routing_instructions: Some("Group related deployment evidence.".to_owned()),
+                batch_timeout_ms: std::num::NonZeroU32::new(15_000),
+            }),
+            reviewer: Some(crate::GuardianV3ReviewerConfigToml {
+                retrieval_instructions: Some("Search before assessing deployments.".to_owned()),
+            }),
+            max_instruction_tokens: None,
+        }))
+    );
+}
+
+#[test]
+fn guardian_v3_rejects_zero_limits() {
+    assert!(toml::from_str::<FeaturesToml>("[guardianv3]\nshadow_board_limit_mib = 0").is_err());
+    assert!(
+        toml::from_str::<FeaturesToml>("[guardianv3.housekeeper]\nbatch_timeout_ms = 0").is_err()
+    );
+}
+
+#[test]
 fn guardian_thread_context_is_ignored_with_a_migration_notice() {
     let enabled_context = "[guardianv2]\nthread_context = true";
     let disabled_context = "[guardianv2]\nthread_context = false";
@@ -332,6 +386,8 @@ max_recent_non_user_entries = 12
     assert_eq!(
         features.guardianv2,
         Some(FeatureToml::Config(crate::GuardianV2ConfigToml {
+            async_elastic_budgeting: None,
+            async_elastic_sections: None,
             sync_elastic_budgeting: None,
             sync_elastic_sections: None,
             transcript_mode: None,
@@ -620,6 +676,28 @@ fn from_sources_applies_base_profile_and_overrides() {
 }
 
 #[test]
+fn code_mode_host_grpc_is_recognized_and_ignored() {
+    assert!(crate::is_known_feature_key("code_mode_host_grpc"));
+    for enabled in [false, true] {
+        let config: FeaturesToml = toml::from_str(&format!("code_mode_host_grpc = {enabled}"))
+            .expect("legacy transport setting should deserialize");
+        let mut features = Features::with_defaults();
+        features.apply_toml(&config);
+        assert_eq!(
+            features.enabled_features(),
+            Features::with_defaults().enabled_features()
+        );
+        assert_eq!(
+            features
+                .legacy_feature_usages()
+                .map(|usage| usage.feature)
+                .collect::<Vec<_>>(),
+            vec![Feature::CodeModeHostGrpc]
+        );
+    }
+}
+
+#[test]
 fn from_sources_ignores_removed_image_detail_original_feature_key() {
     let features_toml = FeaturesToml::from(BTreeMap::from([(
         "image_detail_original".to_string(),
@@ -725,10 +803,12 @@ fn from_sources_ignores_removed_apply_patch_freeform_feature_key() {
 }
 
 #[test]
-fn from_sources_accepts_and_ignores_removed_personality_feature_values() {
+fn from_sources_accepts_and_ignores_removed_boolean_feature_values() {
     for enabled in [false, true] {
-        let features_toml: FeaturesToml = toml::from_str(&format!("personality = {enabled}"))
-            .expect("legacy personality feature should deserialize");
+        let features_toml: FeaturesToml = toml::from_str(&format!(
+            "personality = {enabled}\nskill_search = {enabled}"
+        ))
+        .expect("legacy feature values should deserialize");
         let source = FeatureConfigSource {
             features: Some(&features_toml),
             ..Default::default()
@@ -824,6 +904,7 @@ multi_agent_mode_hint_text = "Custom mode guidance."
 tool_namespace = "agents"
 hide_spawn_agent_metadata = true
 expose_spawn_agent_model_overrides = true
+expose_spawn_agent_service_tier = true
 wait_agent_enabled = false
 disable_native_tools = true
 disable_direct_message = true
@@ -855,7 +936,9 @@ non_code_mode_only = true
             tool_namespace: Some("agents".to_string()),
             hide_spawn_agent_metadata: Some(true),
             expose_spawn_agent_model_overrides: Some(true),
+            expose_spawn_agent_service_tier: Some(true),
             wait_agent_enabled: Some(false),
+            interrupt_at_item_boundary: None,
             disable_native_tools: Some(true),
             disable_direct_message: Some(true),
             message_board_in_memory: Some(true),

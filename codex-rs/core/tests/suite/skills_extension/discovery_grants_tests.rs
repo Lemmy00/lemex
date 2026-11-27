@@ -2,6 +2,7 @@
 //! Exercises skill and plugin discovery before approval, after approval, and next turn.
 
 use super::*;
+use codex_mcp::McpServerKey;
 use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 use core_test_support::exec_server::ExecServerProcess;
 use core_test_support::test_codex::TestEnv;
@@ -62,7 +63,7 @@ async fn executor_discovery_uses_current_environment_grants(
         #[cfg(not(target_os = "linux"))]
         let sandbox_exe = None;
         let runtime_paths = codex_exec_server::ExecServerRuntimeOptions::new(
-            std::env::current_exe()?,
+            core_test_support::exec_server_helper_exe()?,
             sandbox_exe,
         )?;
         codex_mcp_extension::install_plugins(
@@ -87,7 +88,6 @@ async fn executor_discovery_uses_current_environment_grants(
             omit_descriptions: false,
             bundled_skills_enabled: false,
             cloud_skill_enabled: false,
-            shadow_selection_enabled: false,
         }
     });
     let mut builder = test_codex()
@@ -316,6 +316,7 @@ async fn executor_discovery_uses_current_environment_grants(
             },
         }]);
     }
+    let server_key = McpServerKey::in_environment(&selection.environment_id, plugin_mcp_server);
     let thread = test
         .thread_manager
         .start_thread(StartThreadOptions {
@@ -331,18 +332,16 @@ async fn executor_discovery_uses_current_environment_grants(
     let plugin_is_published = async || -> Result<bool> {
         let (config, status) = thread
             .mcp_server_status_snapshot(
-                plugin_mcp_server,
+                server_key.name(),
+                server_key.scoped_environment_id(),
                 codex_mcp::McpSnapshotDetail::ToolsAndAuthOnly,
                 /*expected_registration*/ None,
             )
             .await?;
-        let published = config
-            .mcp_server_catalog
-            .server(plugin_mcp_server)
-            .is_some();
+        let published = config.mcp_server_catalog.server(&server_key).is_some();
         let has_echo = status
             .tools_by_server
-            .get(plugin_mcp_server)
+            .get(&server_key)
             .is_some_and(|tools| tools.contains_key("echo"));
         assert_eq!(has_echo, published);
         Ok(published)

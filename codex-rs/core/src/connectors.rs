@@ -13,7 +13,7 @@ use codex_connectors::ConnectorDirectoryCacheKey;
 use codex_connectors::apps_config_from_layer_stack;
 use codex_connectors::connector_runtime_context_key;
 use codex_exec_server::EnvironmentManager;
-use codex_exec_server::ExecServerRuntimeOptions;
+use codex_tools::DiscoverableConnectorInfo;
 use codex_tools::DiscoverableTool;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
@@ -22,11 +22,12 @@ use tracing::warn;
 use crate::config::Config;
 use crate::mcp::McpManager;
 use crate::plugins::list_tool_suggest_discoverable_plugins;
-use crate::plugins::plugins_manager_for_config_with_runtime;
 use crate::session::INITIAL_SUBMIT_ID;
+use codex_config::ConfigRequirements;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::ToolSuggestDiscoverableType;
 use codex_core_plugins::PluginsManager;
+use codex_extension_api::McpServerContributionContext;
 use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -68,18 +69,6 @@ pub struct AccessibleConnectorsStatus {
     pub codex_apps_ready: bool,
 }
 
-pub async fn list_accessible_connectors_from_mcp_tools(
-    config: &Config,
-) -> anyhow::Result<Vec<AppInfo>> {
-    Ok(
-        list_accessible_connectors_from_mcp_tools_with_options_and_status(
-            config, /*force_refetch*/ false,
-        )
-        .await?
-        .connectors,
-    )
-}
-
 #[instrument(level = "trace", skip_all)]
 pub(crate) async fn list_tool_suggest_discoverable_tools_with_auth(
     config: &Config,
@@ -97,7 +86,14 @@ pub(crate) async fn list_tool_suggest_discoverable_tools_with_auth(
         )
         .await
         .into_iter()
-        .map(DiscoverableTool::from);
+        .map(|connector| {
+            DiscoverableTool::from(DiscoverableConnectorInfo {
+                id: connector.id,
+                name: connector.name,
+                description: connector.description,
+                install_url: connector.install_url,
+            })
+        });
     let discoverable_plugins = list_tool_suggest_discoverable_plugins(
         config,
         plugins_manager,
@@ -140,61 +136,6 @@ pub(crate) fn refresh_accessible_connectors_cache_from_mcp_tools(
     write_cached_accessible_connectors(cache_key, &accessible_connectors);
 }
 
-pub async fn list_accessible_connectors_from_mcp_tools_with_options(
-    config: &Config,
-    force_refetch: bool,
-) -> anyhow::Result<Vec<AppInfo>> {
-    Ok(
-        list_accessible_connectors_from_mcp_tools_with_options_and_status(config, force_refetch)
-            .await?
-            .connectors,
-    )
-}
-
-pub async fn list_accessible_connectors_from_mcp_tools_with_options_and_status(
-    config: &Config,
-    force_refetch: bool,
-) -> anyhow::Result<AccessibleConnectorsStatus> {
-    // TODO: Wire callers that already own an EnvironmentManager into
-    // list_accessible_connectors_from_mcp_tools_with_environment_manager instead
-    // of constructing a temporary manager here.
-    let local_runtime_paths = ExecServerRuntimeOptions::from_optional_paths(
-        config.codex_self_exe.clone(),
-        config.codex_linux_sandbox_exe.clone(),
-    )?;
-    let environment_manager = EnvironmentManager::from_codex_home(
-        config.codex_home.clone(),
-        Some(local_runtime_paths),
-        config.http_client_factory(),
-    )
-    .await?;
-    list_accessible_connectors_from_mcp_tools_with_environment_manager(
-        config,
-        force_refetch,
-        Arc::new(environment_manager),
-    )
-    .await
-}
-
-pub async fn list_accessible_connectors_from_mcp_tools_with_environment_manager(
-    config: &Config,
-    force_refetch: bool,
-    environment_manager: Arc<EnvironmentManager>,
-) -> anyhow::Result<AccessibleConnectorsStatus> {
-    let auth_manager =
-        AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ false).await?;
-    let plugins_manager =
-        Arc::new(plugins_manager_for_config_with_runtime(config, Arc::clone(&auth_manager)).await?);
-    let mcp_manager = Arc::new(McpManager::new(plugins_manager));
-    list_accessible_connectors_from_mcp_tools_with_mcp_manager(
-        config,
-        force_refetch,
-        environment_manager,
-        mcp_manager,
-    )
-    .await
-}
-
 pub async fn list_accessible_connectors_from_mcp_tools_with_mcp_manager(
     config: &Config,
     force_refetch: bool,
@@ -213,7 +154,9 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_mcp_manager(
         });
     }
     let cache_key = accessible_connectors_cache_key(config, auth.as_ref());
-    let mcp_config = mcp_manager.runtime_config(config).await;
+    let mcp_config = mcp_manager
+        .runtime_config(McpServerContributionContext::global(config))
+        .await;
     let tool_plugin_context = tool_plugin_context(&mcp_config);
     if !force_refetch && let Some(cached_connectors) = read_cached_accessible_connectors(&cache_key)
     {
@@ -225,7 +168,8 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_mcp_manager(
     }
 
     let mut mcp_servers = effective_mcp_servers(&mcp_config, auth.as_ref());
-    mcp_servers.retain(|name, _| name == CODEX_APPS_MCP_SERVER_NAME);
+    let codex_apps_server = codex_mcp::McpServerKey::unscoped(CODEX_APPS_MCP_SERVER_NAME);
+    mcp_servers.retain(|key, _| key == &codex_apps_server);
     let mcp_config = Arc::new(mcp_config.for_threadless_operations(&mcp_servers));
     if mcp_servers.is_empty() {
         return Ok(AccessibleConnectorsStatus {
@@ -292,7 +236,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_mcp_manager(
     let mut should_reload_tools = false;
     let codex_apps_ready = if refreshed_tools_succeeded {
         true
-    } else if let Some(cfg) = mcp_servers.get(CODEX_APPS_MCP_SERVER_NAME) {
+    } else if let Some(cfg) = mcp_servers.get(&codex_apps_server) {
         let immediate_ready = mcp_runtime
             .latest_wait_for_server_ready(CODEX_APPS_MCP_SERVER_NAME, Duration::ZERO)
             .await;
@@ -463,7 +407,7 @@ fn collect_accessible_connectors_from_mcp_tools<'a>(
     // ToolInfo already carries plugin provenance, so app-level plugin sources
     // can be derived here instead of requiring a separate enrichment pass.
     let tools = mcp_tools.filter_map(|tool| {
-        if tool.server_name != CODEX_APPS_MCP_SERVER_NAME {
+        if tool.server_name() != CODEX_APPS_MCP_SERVER_NAME {
             return None;
         }
         let connector_id = tool.connector_id.as_deref()?;
@@ -503,15 +447,17 @@ pub fn with_app_plugin_sources(
     connectors
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn mcp_approvals_reviewer_from_layers(
     config_layer_stack: &codex_config::ConfigLayerStack,
+    requirements: &ConfigRequirements,
     default_reviewer: ApprovalsReviewer,
     model: Option<&str>,
     server_name: &str,
     connector_id: Option<&str>,
     link_id: Option<&str>,
+    tool: Option<(&str, Option<&str>)>,
 ) -> ApprovalsReviewer {
-    let requirements = config_layer_stack.requirements();
     if model.is_some_and(|model| requirements.auto_review_required_for_model(model)) {
         return ApprovalsReviewer::AutoReview;
     }
@@ -519,9 +465,13 @@ pub(crate) fn mcp_approvals_reviewer_from_layers(
     let app_reviewer = if server_name == CODEX_APPS_MCP_SERVER_NAME {
         apps_config_from_layer_stack(config_layer_stack).and_then(|apps_config| {
             let app = connector_id.and_then(|connector_id| apps_config.apps.get(connector_id));
-            link_id
-                .and_then(|link_id| app?.links.as_ref()?.links.get(link_id))
-                .and_then(|link| link.approvals_reviewer)
+            tool.and_then(|(name, title)| app?.tools.as_ref()?.for_tool(name, title))
+                .and_then(|tool| tool.approvals_reviewer)
+                .or_else(|| {
+                    link_id
+                        .and_then(|link_id| app?.links.as_ref()?.links.get(link_id))
+                        .and_then(|link| link.approvals_reviewer)
+                })
                 .or_else(|| app.and_then(|app| app.approvals_reviewer))
                 .or_else(|| {
                     apps_config
@@ -539,7 +489,15 @@ pub(crate) fn mcp_approvals_reviewer_from_layers(
         return reviewer;
     }
 
-    default_reviewer
+    if requirements
+        .approvals_reviewer
+        .can_set(&default_reviewer)
+        .is_ok()
+    {
+        default_reviewer
+    } else {
+        requirements.approvals_reviewer.value()
+    }
 }
 
 #[cfg(test)]

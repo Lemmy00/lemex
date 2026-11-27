@@ -1,9 +1,10 @@
 //! Exercise editor handoff through a terminal, including editors that switch screens.
 
 use super::PtyCodex;
-use super::write_test_config;
+use super::write_test_config_with_bundled_models;
 use anyhow::Result;
 use anyhow::ensure;
+use std::os::fd::AsRawFd;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -18,13 +19,19 @@ fn external_editors_keep_the_screen_and_return_the_draft() -> Result<()> {
         ("", false),
     ] {
         let home = tempfile::tempdir()?;
-        write_test_config(home.path(), &repo_root)?;
+        write_test_config_with_bundled_models(home.path(), &repo_root)?;
         let editor = home.path().join("editor.sh");
         codex_utils_cargo_bin::write_executable(
             &editor,
             &format!(
                 "#!/bin/sh\n{editor_output}\n: > \"$0.ready\"\nIFS= read -r ignored\n\
-                 {exit_screen}\nprintf 'edited draft' > \"$1\"\n",
+                 {reset_mode}{exit_screen}\nprintf 'edited draft' > \"$1\"\n",
+                // Simulate an editor restoring canonical mode after suspend/resume.
+                reset_mode = if fullscreen {
+                    ""
+                } else {
+                    "stty sane || exit 1\n"
+                },
                 exit_screen = if editor_output.contains("1049h") {
                     "printf '\\033[?1049l'"
                 } else {
@@ -45,7 +52,7 @@ fn external_editors_keep_the_screen_and_return_the_draft() -> Result<()> {
             ]
         };
         let codex = codex_utils_cargo_bin::cargo_bin("codex-tui")
-            .or_else(|_| codex_utils_cargo_bin::cargo_bin("codex"))?;
+            .or_else(|_| codex_utils_cargo_bin::cargo_bin("lemex"))?;
         let mut terminal = PtyCodex::start_binary(&codex, &repo_root, home, &args, Some(&editor))?;
         terminal.wait_for_startup()?;
         terminal.wait_for_screen("GPT-5.6-Terra")?;
@@ -84,6 +91,7 @@ fn external_editors_keep_the_screen_and_return_the_draft() -> Result<()> {
                             line.contains("initial draft")
                                 || line.contains("Save and close external editor to continue.")
                         })
+                        .map(str::trim_end)
                         .collect::<Vec<_>>()
                         .join("\n"),
                 );
@@ -94,6 +102,12 @@ fn external_editors_keep_the_screen_and_return_the_draft() -> Result<()> {
 
         terminal.write_input(b"\n")?;
         terminal.wait_for_screen("edited draft")?;
+        let mut mode = std::mem::MaybeUninit::<libc::termios>::uninit();
+        // SAFETY: the PTY master is open and mode points to writable termios storage.
+        ensure!(unsafe { libc::tcgetattr(terminal.master.as_raw_fd(), mode.as_mut_ptr()) } == 0);
+        // SAFETY: tcgetattr succeeded and initialized mode.
+        let mode = unsafe { mode.assume_init() };
+        ensure!(mode.c_lflag & (libc::ICANON | libc::ECHO) == 0);
         ensure!(terminal.parser.screen().alternate_screen() == fullscreen);
         terminal.write_input(b"!")?;
         terminal.wait_for_screen("edited draft!")?;

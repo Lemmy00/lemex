@@ -7,6 +7,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use codex_code_mode_protocol::CodeModeOutputTruncation;
+use codex_code_mode_protocol::CodeModeToolResult;
+use codex_code_mode_protocol::grpc;
 use http_body_util::Full;
 use pretty_assertions::assert_eq;
 use tokio::sync::Notify;
@@ -23,8 +25,8 @@ use super::super::GrpcClient;
 use super::super::MAX_IN_FLIGHT_COMPLETIONS;
 use super::super::state::SessionState;
 use super::super::transport::SharedTransport;
+use super::super::wait_for_watch;
 use super::SessionInner;
-use crate::remote_session::wait_for_watch;
 
 #[tokio::test]
 async fn missing_invocation_completion_racing_cancellation_preserves_session() {
@@ -41,16 +43,38 @@ async fn missing_invocation_completion_racing_cancellation_preserves_session() {
         .complete_tool_call(
             "invocation".to_string(),
             cancellation,
-            Ok(serde_json::Value::Null),
+            Ok(CodeModeToolResult::from(serde_json::Value::Null)),
         )
         .await;
 
     assert_eq!(session.require_open(), Ok(()));
 }
 
+#[tokio::test]
+async fn tool_call_heartbeats_do_not_enter_callback_admission() {
+    let client = GrpcClient::new(BoxCloneSyncService::new(service_fn(|_request| async {
+        panic!("heartbeat must not send an RPC");
+    })));
+    let session = session(client);
+    let heartbeat = grpc::ToolCall {
+        session_id: session.id.clone(),
+        heartbeat: Some(grpc::StreamHeartbeat {}),
+        ..Default::default()
+    };
+    assert_eq!(session.handle_tool_call(heartbeat.clone()), Ok(()));
+    assert_eq!(
+        session.handle_tool_call(grpc::ToolCall {
+            invocation_id: "not-a-heartbeat".to_string(),
+            ..heartbeat
+        }),
+        Err("gRPC code-mode heartbeat carried a tool invocation".to_string())
+    );
+}
+
 fn session(client: GrpcClient) -> Arc<SessionInner> {
     let client = Arc::new(client);
     Arc::new(SessionInner {
+        catalog: None,
         id: "session".to_string(),
         output_truncation: CodeModeOutputTruncation::Client,
         route: None,
@@ -81,7 +105,7 @@ async fn cancelled_completion_does_not_wait_for_delivery_capacity() {
     let completion = session.complete_tool_call(
         "queued".to_string(),
         cancellation.clone(),
-        Ok(serde_json::Value::Null),
+        Ok(CodeModeToolResult::from(serde_json::Value::Null)),
     );
     tokio::pin!(completion);
     assert!(futures::poll!(completion.as_mut()).is_pending());

@@ -2,11 +2,13 @@ use super::bedrock_auth::BedrockProviderConfig;
 use super::bedrock_auth::clear_user_model_provider_if_bedrock;
 use super::bedrock_auth::prepare_bedrock_provider;
 use super::config_processor::map_error as map_config_error;
+use super::config_processor::refresh_guardian_policy;
 use super::*;
 use crate::auth_mode::auth_mode_to_api;
 use crate::model_catalog::ModelCatalog;
 use crate::outgoing_message::AccountNotification;
 use chrono::DateTime;
+use codex_app_server_protocol::BedrockProviderId;
 use codex_app_server_protocol::GetAccountRateLimitsParams;
 use codex_core::McpRefreshReason;
 use codex_login::login_with_bedrock_access_keys;
@@ -22,17 +24,13 @@ mod gateway_oauth;
 mod gcp_setup;
 mod rate_limit_resets;
 mod security_setup;
+mod voice_settings;
 mod workspace_routing;
 mod workspace_switching;
 
 pub(super) use enterprise_login::EnterpriseLoginCompletion;
 pub(super) use enterprise_login::EnterpriseLoginTarget;
 pub(crate) use gcp_setup::handle_gcp_setup;
-
-const ACCOUNT_TOKEN_USAGE_FETCH_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 10);
-const THREAD_USAGE_FETCH_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 60);
-const ACCOUNT_WORKSPACE_MESSAGES_FETCH_TIMEOUT: Duration =
-    Duration::from_millis(/*millis*/ 1000);
 
 enum RefreshTokenRequestOutcome {
     NotAttemptedOrSucceeded,
@@ -165,26 +163,26 @@ impl AccountRequestProcessor {
         &self,
         params: Option<GetAccountTokenUsageParams>,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.get_account_token_usage_response(params)
-            .await
-            .map(|response| Some(response.into()))
+        Err(invalid_request(
+            "Account reporting and credit promotions are unavailable in Lemex. Local coding token usage remains available in session history and /status.",
+        ))
     }
 
     pub(crate) async fn get_workspace_messages(
         &self,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.get_workspace_messages_response()
-            .await
-            .map(|response| Some(response.into()))
+        Err(invalid_request(
+            "Account reporting and credit promotions are unavailable in Lemex. Local coding token usage remains available in session history and /status.",
+        ))
     }
 
     pub(crate) async fn send_add_credits_nudge_email(
         &self,
         params: SendAddCreditsNudgeEmailParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.send_add_credits_nudge_email_response(params)
-            .await
-            .map(|response| Some(response.into()))
+        Err(invalid_request(
+            "Account reporting and credit promotions are unavailable in Lemex. Local coding token usage remains available in session history and /status.",
+        ))
     }
 
     pub(crate) async fn cancel_active_login(&self) {
@@ -200,6 +198,7 @@ impl AccountRequestProcessor {
     fn current_account_updated_notification(&self) -> AccountUpdatedNotification {
         let auth = self.auth_manager.auth_cached();
         AccountUpdatedNotification {
+            reason: None,
             auth_mode: auth
                 .as_ref()
                 .map(CodexAuth::api_auth_mode)
@@ -328,11 +327,16 @@ impl AccountRequestProcessor {
                 self.login_api_key_v2(request_id, LoginApiKeyParams { api_key })
                     .await;
             }
-            LoginAccountParams::AmazonBedrock { api_key, region } => {
+            LoginAccountParams::AmazonBedrock {
+                api_key,
+                region,
+                provider_id,
+            } => {
                 self.login_amazon_bedrock_v2(
                     request_id,
                     BedrockLoginCredentials::ApiKey(api_key),
                     region,
+                    provider_id.unwrap_or(BedrockProviderId::AmazonBedrock),
                 )
                 .await;
             }
@@ -341,6 +345,7 @@ impl AccountRequestProcessor {
                 secret_access_key,
                 session_token,
                 region,
+                provider_id,
             } => {
                 self.login_amazon_bedrock_v2(
                     request_id,
@@ -350,6 +355,7 @@ impl AccountRequestProcessor {
                         session_token,
                     },
                     region,
+                    provider_id.unwrap_or(BedrockProviderId::AmazonBedrock),
                 )
                 .await;
             }
@@ -448,6 +454,7 @@ impl AccountRequestProcessor {
         request_id: ConnectionRequestId,
         credentials: BedrockLoginCredentials,
         region: String,
+        provider_id: BedrockProviderId,
     ) {
         let result = async {
             self.ensure_provider_login_allowed(CloudLoginProvider::AmazonBedrock)?;
@@ -481,6 +488,7 @@ impl AccountRequestProcessor {
             let write = prepare_bedrock_provider(
                 &self.config_manager,
                 BedrockProviderConfig {
+                    provider_id,
                     region: matches!(&credentials, BedrockLoginCredentials::AccessKeys { .. })
                         .then_some(region),
                     profile: None,
@@ -573,13 +581,15 @@ impl AccountRequestProcessor {
     ) {
         let auth_changes = self.auth_manager.auth_change_state_receiver();
         let owner_generation = auth_changes.borrow().owner_generation;
-        if payload.success
-            && let Err(error) = self.read_account(/*request*/ None).await
-        {
+        let logged_in = payload.success;
+        if logged_in && let Err(error) = self.read_account(/*request*/ None).await {
             payload.success = false;
             payload.error = Some(error.to_string());
         }
-        if payload.success && auth_changes.borrow().owner_generation == owner_generation {
+        if logged_in && auth_changes.borrow().owner_generation == owner_generation {
+            refresh_guardian_policy(&self.thread_manager).await;
+        }
+        if logged_in && auth_changes.borrow().owner_generation == owner_generation {
             Self::maybe_refresh_plugin_caches_for_current_config(
                 &self.config_manager,
                 &self.thread_manager,
@@ -588,7 +598,6 @@ impl AccountRequestProcessor {
             .await;
         }
 
-        let success = payload.success;
         self.outgoing
             .send_account_notification(
                 /*connection_id*/ None,
@@ -598,7 +607,7 @@ impl AccountRequestProcessor {
             )
             .await;
 
-        if success {
+        if logged_in {
             let notification = self.current_account_updated_notification();
             self.outgoing
                 .send_account_notification(
@@ -627,6 +636,7 @@ impl AccountRequestProcessor {
         self.model_catalog.invalidate().await;
         *self.workspace_routing.lock().await = None;
 
+        refresh_guardian_policy(&self.thread_manager).await;
         Self::maybe_refresh_plugin_caches_for_current_config(
             &self.config_manager,
             &self.thread_manager,
@@ -651,6 +661,7 @@ impl AccountRequestProcessor {
                 .ok()
                 .cloned()
                 .map(|auth_mode| AccountUpdatedNotification {
+                    reason: None,
                     auth_mode,
                     plan_type: None,
                 });
@@ -859,271 +870,6 @@ impl AccountRequestProcessor {
             rate_limit_upsell,
         })
     }
-
-    async fn get_account_token_usage_response(
-        &self,
-        params: Option<GetAccountTokenUsageParams>,
-    ) -> Result<GetAccountTokenUsageResponse, JSONRPCErrorError> {
-        let thread_id = params
-            .and_then(|params| params.thread_id)
-            .map(|thread_id| {
-                ThreadId::from_string(&thread_id)
-                    .map_err(|err| invalid_request(format!("invalid thread id: {err}")))
-            })
-            .transpose()?;
-
-        let Some((auth, http_client_factory)) =
-            self.auth_manager.auth_with_http_client_factory().await
-        else {
-            return Err(invalid_request(
-                "codex account authentication required to read token usage",
-            ));
-        };
-
-        if !auth.uses_codex_backend() {
-            return Err(invalid_request(
-                "chatgpt authentication required to read token usage",
-            ));
-        }
-
-        let client = self.backend_client(&auth, http_client_factory).await?;
-        if let Some(thread_id) = thread_id {
-            let thread_id = thread_id.to_string();
-            let usage = tokio::time::timeout(
-                THREAD_USAGE_FETCH_TIMEOUT,
-                client.get_thread_usage(&thread_id),
-            )
-            .await
-            .map_err(|_| internal_error("thread usage fetch timed out"))?;
-            let thread_usage = match usage {
-                Ok(usage) => Some(codex_app_server_protocol::ThreadUsage {
-                    thread_id: usage.thread_id,
-                    estimated_usage_credits_micros: usage.estimated_usage_credits_micros,
-                    estimated_usage_usd_micros: usage.estimated_usage_usd_micros,
-                    native_usage_usd_micros: usage.native_usage_usd_micros,
-                    groups: usage
-                        .groups
-                        .into_iter()
-                        .map(
-                            |group| codex_app_server_protocol::ThreadUsageBreakdownGroup {
-                                model: group.model,
-                                reasoning_effort: group.reasoning_effort,
-                                speed: group.speed,
-                                estimated_usage_credits_micros: group
-                                    .estimated_usage_credits_micros,
-                                net_new_input_tokens: group.net_new_input_tokens,
-                                cached_input_tokens: group.cached_input_tokens,
-                                input_tokens: group.input_tokens,
-                                output_tokens: group.output_tokens,
-                                total_tokens: group.total_tokens,
-                            },
-                        )
-                        .collect(),
-                }),
-                Err(err)
-                    if matches!(err.status().map(|status| status.as_u16()), Some(403 | 404)) =>
-                {
-                    None
-                }
-                Err(err) => {
-                    return Err(internal_error(format!(
-                        "failed to fetch thread usage: {err}"
-                    )));
-                }
-            };
-            return Ok(GetAccountTokenUsageResponse {
-                summary: AccountTokenUsageSummary {
-                    lifetime_tokens: None,
-                    peak_daily_tokens: None,
-                    longest_running_turn_sec: None,
-                    current_streak_days: None,
-                    longest_streak_days: None,
-                },
-                daily_usage_buckets: None,
-                thread_usage,
-            });
-        }
-        let profile = tokio::time::timeout(
-            ACCOUNT_TOKEN_USAGE_FETCH_TIMEOUT,
-            client.get_token_usage_profile(),
-        )
-        .await
-        .map_err(|_| internal_error("token usage profile fetch timed out"))?
-        .map_err(|err| internal_error(format!("failed to fetch token usage profile: {err}")))?;
-        Ok(Self::account_token_usage_response(profile))
-    }
-
-    async fn get_workspace_messages_response(
-        &self,
-    ) -> Result<GetWorkspaceMessagesResponse, JSONRPCErrorError> {
-        let Some((auth, http_client_factory)) =
-            self.auth_manager.auth_with_http_client_factory().await
-        else {
-            return Err(invalid_request(
-                "codex account authentication required to read workspace messages",
-            ));
-        };
-
-        if !auth.uses_codex_backend() {
-            return Err(invalid_request(
-                "chatgpt authentication required to read workspace messages",
-            ));
-        }
-
-        let client = self.backend_client(&auth, http_client_factory).await?;
-        let messages = tokio::time::timeout(
-            ACCOUNT_WORKSPACE_MESSAGES_FETCH_TIMEOUT,
-            client.list_workspace_messages(),
-        )
-        .await
-        .map_err(|_| internal_error("workspace messages fetch timed out"))?;
-
-        match messages {
-            Ok(messages) => {
-                Self::workspace_messages_response(messages, /*feature_enabled*/ true)
-            }
-            Err(err) if workspace_messages_feature_disabled(&err) => {
-                Self::workspace_messages_response(
-                    BackendWorkspaceMessagesResponse {
-                        messages: Vec::new(),
-                    },
-                    /*feature_enabled*/ false,
-                )
-            }
-            Err(err) => Err(internal_error(format!(
-                "failed to fetch workspace messages: {err}"
-            ))),
-        }
-    }
-
-    fn account_token_usage_response(profile: TokenUsageProfile) -> GetAccountTokenUsageResponse {
-        let stats = profile.stats;
-        GetAccountTokenUsageResponse {
-            summary: AccountTokenUsageSummary {
-                lifetime_tokens: stats.lifetime_tokens,
-                peak_daily_tokens: stats.peak_daily_tokens,
-                longest_running_turn_sec: stats.longest_running_turn_sec,
-                current_streak_days: stats.current_streak_days,
-                longest_streak_days: stats.longest_streak_days,
-            },
-            daily_usage_buckets: stats.daily_usage_buckets.map(|buckets| {
-                buckets
-                    .into_iter()
-                    .map(|bucket| AccountTokenUsageDailyBucket {
-                        start_date: bucket.start_date,
-                        tokens: bucket.tokens,
-                    })
-                    .collect()
-            }),
-            thread_usage: None,
-        }
-    }
-
-    fn workspace_messages_response(
-        messages: BackendWorkspaceMessagesResponse,
-        feature_enabled: bool,
-    ) -> Result<GetWorkspaceMessagesResponse, JSONRPCErrorError> {
-        Ok(GetWorkspaceMessagesResponse {
-            feature_enabled,
-            messages: messages
-                .messages
-                .into_iter()
-                .map(workspace_message_from_backend)
-                .collect::<Result<Vec<_>, _>>()?,
-        })
-    }
-
-    async fn send_add_credits_nudge_email_response(
-        &self,
-        params: SendAddCreditsNudgeEmailParams,
-    ) -> Result<SendAddCreditsNudgeEmailResponse, JSONRPCErrorError> {
-        self.send_add_credits_nudge_email_inner(params)
-            .await
-            .map(|status| SendAddCreditsNudgeEmailResponse { status })
-    }
-
-    async fn send_add_credits_nudge_email_inner(
-        &self,
-        params: SendAddCreditsNudgeEmailParams,
-    ) -> Result<AddCreditsNudgeEmailStatus, JSONRPCErrorError> {
-        let Some((auth, http_client_factory)) =
-            self.auth_manager.auth_with_http_client_factory().await
-        else {
-            return Err(invalid_request(
-                "codex account authentication required to notify workspace owner",
-            ));
-        };
-
-        if !auth.uses_codex_backend() {
-            return Err(invalid_request(
-                "chatgpt authentication required to notify workspace owner",
-            ));
-        }
-
-        let client = self.backend_client(&auth, http_client_factory).await?;
-
-        match client
-            .send_add_credits_nudge_email(Self::backend_credit_type(params.credit_type))
-            .await
-        {
-            Ok(()) => Ok(AddCreditsNudgeEmailStatus::Sent),
-            Err(err) if err.status().is_some_and(|status| status.as_u16() == 429) => {
-                Ok(AddCreditsNudgeEmailStatus::CooldownActive)
-            }
-            Err(err) => Err(internal_error(format!(
-                "failed to notify workspace owner: {err}"
-            ))),
-        }
-    }
-
-    fn backend_credit_type(value: AddCreditsNudgeCreditType) -> BackendAddCreditsNudgeCreditType {
-        match value {
-            AddCreditsNudgeCreditType::Credits => BackendAddCreditsNudgeCreditType::Credits,
-            AddCreditsNudgeCreditType::UsageLimit => BackendAddCreditsNudgeCreditType::UsageLimit,
-        }
-    }
-}
-
-fn workspace_message_from_backend(
-    message: BackendWorkspaceMessage,
-) -> Result<WorkspaceMessage, JSONRPCErrorError> {
-    Ok(WorkspaceMessage {
-        message_id: message.message_id,
-        message_type: workspace_message_type_from_backend(message.message_type),
-        message_body: message.message_body,
-        created_at: workspace_message_timestamp_from_backend(message.created_at)?,
-        archived_at: workspace_message_timestamp_from_backend(message.archived_at)?,
-    })
-}
-
-fn workspace_message_timestamp_from_backend(
-    timestamp: Option<String>,
-) -> Result<Option<i64>, JSONRPCErrorError> {
-    timestamp
-        .map(|timestamp| {
-            DateTime::parse_from_rfc3339(&timestamp)
-                .map(|timestamp| timestamp.timestamp())
-                .map_err(|err| {
-                    internal_error(format!(
-                        "failed to parse workspace message timestamp `{timestamp}`: {err}"
-                    ))
-                })
-        })
-        .transpose()
-}
-
-fn workspace_message_type_from_backend(
-    message_type: BackendWorkspaceMessageType,
-) -> WorkspaceMessageType {
-    match message_type {
-        BackendWorkspaceMessageType::Headline => WorkspaceMessageType::Headline,
-        BackendWorkspaceMessageType::Announcement => WorkspaceMessageType::Announcement,
-        BackendWorkspaceMessageType::Unknown => WorkspaceMessageType::Unknown,
-    }
-}
-
-fn workspace_messages_feature_disabled(err: &BackendRequestError) -> bool {
-    err.status().is_some_and(|status| status.as_u16() == 404)
 }
 
 /// Remove account credentials using the current account's policy, even during startup recovery.
@@ -1138,7 +884,9 @@ pub(crate) async fn logout_configured_account(
         .reload_with_cached_auth()
         .await
         .map_err(|err| internal_error(format!("logout failed: {err}")))?;
-    config_manager.update_managed_config_loader(Arc::clone(auth_manager), fallback_config);
+    config_manager
+        .update_managed_config_loader(Arc::clone(auth_manager), fallback_config)
+        .await;
     let config = config_manager
         .load_latest_config(/*fallback_cwd*/ None)
         .await;
@@ -1199,100 +947,4 @@ pub(crate) async fn clear_account_configuration(
         clear_user_model_provider_if_bedrock(config_manager, config).await?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use codex_backend_client::TokenUsageProfileDailyBucket;
-    use codex_backend_client::TokenUsageProfileStats;
-    use http::StatusCode;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn account_token_usage_response_maps_profile_stats_and_daily_buckets() {
-        let response = AccountRequestProcessor::account_token_usage_response(TokenUsageProfile {
-            stats: TokenUsageProfileStats {
-                lifetime_tokens: Some(123),
-                peak_daily_tokens: Some(45),
-                longest_running_turn_sec: Some(67),
-                current_streak_days: Some(8),
-                longest_streak_days: Some(9),
-                daily_usage_buckets: Some(vec![TokenUsageProfileDailyBucket {
-                    start_date: "2026-05-29".to_string(),
-                    tokens: 10,
-                }]),
-            },
-        });
-
-        assert_eq!(
-            response,
-            GetAccountTokenUsageResponse {
-                summary: AccountTokenUsageSummary {
-                    lifetime_tokens: Some(123),
-                    peak_daily_tokens: Some(45),
-                    longest_running_turn_sec: Some(67),
-                    current_streak_days: Some(8),
-                    longest_streak_days: Some(9),
-                },
-                daily_usage_buckets: Some(vec![AccountTokenUsageDailyBucket {
-                    start_date: "2026-05-29".to_string(),
-                    tokens: 10,
-                }]),
-                thread_usage: None,
-            }
-        );
-    }
-
-    #[test]
-    fn workspace_messages_response_maps_backend_messages() {
-        let response = AccountRequestProcessor::workspace_messages_response(
-            BackendWorkspaceMessagesResponse {
-                messages: vec![BackendWorkspaceMessage {
-                    message_id: "headline-id".to_string(),
-                    message_type: BackendWorkspaceMessageType::Headline,
-                    message_body: "Headline body".to_string(),
-                    created_at: Some("2026-06-14T00:00:00Z".to_string()),
-                    archived_at: Some("2026-06-15T00:00:00Z".to_string()),
-                }],
-            },
-            /*feature_enabled*/ true,
-        )
-        .expect("workspace message timestamps should parse");
-
-        assert_eq!(
-            response,
-            GetWorkspaceMessagesResponse {
-                feature_enabled: true,
-                messages: vec![WorkspaceMessage {
-                    message_id: "headline-id".to_string(),
-                    message_type: WorkspaceMessageType::Headline,
-                    message_body: "Headline body".to_string(),
-                    created_at: Some(1_781_395_200),
-                    archived_at: Some(1_781_481_600),
-                }],
-            }
-        );
-    }
-
-    #[test]
-    fn workspace_messages_feature_disabled_only_for_not_found() {
-        let cases = [
-            (StatusCode::NOT_FOUND, true),
-            (StatusCode::UNAUTHORIZED, false),
-            (StatusCode::FORBIDDEN, false),
-        ];
-
-        for (status, expected) in cases {
-            let err = BackendRequestError::UnexpectedStatus {
-                method: "GET".to_string(),
-                url: "https://example.test/api/codex/workspace-messages".to_string(),
-                status,
-                content_type: "application/json".to_string(),
-                body: "{}".to_string(),
-                identity_error_code: None,
-            };
-            assert_eq!(workspace_messages_feature_disabled(&err), expected);
-        }
-    }
 }

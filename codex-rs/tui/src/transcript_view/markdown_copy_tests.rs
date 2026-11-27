@@ -78,8 +78,8 @@ fn markdown_layout(markdown: &str, width: u16) -> TextLayout {
 
 fn payload(layout: &TextLayout, range: std::ops::Range<usize>) -> (String, CopyFormat) {
     let mut lines = Vec::new();
-    layout.copy_lines(range.clone(), "", &mut lines);
-    crate::markdown_copy::selection(&lines, &layout.text()[range])
+    layout.copy_lines(range.clone(), "", &[], &mut lines);
+    crate::markdown_copy::selection(&lines, &layout.text()[range], /*rectangle_rows*/ None)
 }
 
 #[test]
@@ -102,6 +102,16 @@ fn partial_markup_is_balanced_and_preserves_selected_characters() {
             "[documentation](https://example.com)",
             "ment",                          // codespell:ignore ment
             "[ment](<https://example.com>)", // codespell:ignore ment
+        ),
+        (
+            "before [`guide`.md:2-4](guide.md:2-4) after",
+            "guide.md:2-4",
+            "`guide`.md:2-4",
+        ),
+        (
+            "before [**guide**.md:2-4](guide.md:2-4) after",
+            "guide",
+            "**guide**",
         ),
         ("[**label**](/repo/file.rs)", "label", "**label**"),
         (
@@ -166,8 +176,8 @@ fn inline_code_selection_copies_only_selected_content() {
 #[test]
 fn mixed_file_targets_preserve_markdown_escaping() {
     for (source, expected) in [
-        ("before [+](/+) after", "before + (+) after"),
-        ("before [1.)](</1.)>) after", "before 1.) (1.)) after"),
+        ("before [+](/+) after", "before + after"),
+        ("before [number](</1.)>) after", "before number (1.)) after"),
         (
             "| File |\n|---|\n| [`foo_bar!`](/repo/foo_bar!) |",
             "| File |\n|---|\n| `foo_bar!` (repo/foo\\_bar\\!) |",
@@ -291,9 +301,10 @@ fn mixed_plain_output_remains_literal_in_html() {
         /*width*/ 40,
     );
     let mut lines = Vec::new();
-    layout.copy_lines(0..layout.text().len(), "", &mut lines);
-    output.copy_lines(0..output.text().len(), "\n", &mut lines);
-    let (copy, format) = crate::markdown_copy::selection(&lines, "unused");
+    layout.copy_lines(0..layout.text().len(), "", &[], &mut lines);
+    output.copy_lines(0..output.text().len(), "\n", &[], &mut lines);
+    let (copy, format) =
+        crate::markdown_copy::selection(&lines, "unused", /*rectangle_rows*/ None);
     assert_eq!(format, CopyFormat::Markdown);
     assert_eq!(
         crate::clipboard_html::render_markdown(&copy),
@@ -429,9 +440,10 @@ fn mixed_user_prose_preserves_literal_text_without_code_fences() {
     for layouts in [[&user, &answer, &tool], [&answer, &tool, &user]] {
         let mut lines = Vec::new();
         for layout in layouts {
-            layout.copy_lines(0..layout.text().len(), "\n\n", &mut lines);
+            layout.copy_lines(0..layout.text().len(), "\n\n", &[], &mut lines);
         }
-        let (text, format) = crate::markdown_copy::selection(&lines, "unused");
+        let (text, format) =
+            crate::markdown_copy::selection(&lines, "unused", /*rectangle_rows*/ None);
         assert_eq!(format, CopyFormat::Markdown);
         copies.push(crate::clipboard_html::render_markdown(&text));
     }
@@ -518,10 +530,10 @@ fn task_lists_and_transformed_tables_keep_their_meaning() {
     for source in ["- [x] done\n- [ ] next", "1. [x] done\n2. [ ] next"] {
         let layout = markdown_layout(source, /*width*/ 80);
         let mut lines = Vec::new();
-        layout.copy_lines(0..layout.text().len(), "", &mut lines);
+        layout.copy_lines(0..layout.text().len(), "", &[], &mut lines);
         assert_eq!(payload(&layout, 0..layout.text().len()).0, source);
         assert_eq!(
-            crate::markdown_copy::literal_selection(&lines, "unused"),
+            crate::markdown_copy::literal_selection(&lines, "unused", /*rectangle_rows*/ None),
             source
         );
     }
@@ -719,18 +731,18 @@ fn cross_cell_selection_keeps_boundary_breaks() {
     let second = markdown_layout("**second**", /*width*/ 40);
     for (left, right, expected) in [(5..5, 0..6, "\n**second**"), (0..5, 0..0, "first\n")] {
         let mut lines = Vec::new();
-        first.copy_lines(left, "", &mut lines);
-        second.copy_lines(right, "\n", &mut lines);
+        first.copy_lines(left, "", &[], &mut lines);
+        second.copy_lines(right, "\n", &[], &mut lines);
         assert_eq!(
-            crate::markdown_copy::selection(&lines, "unused").0,
+            crate::markdown_copy::selection(&lines, "unused", /*rectangle_rows*/ None).0,
             expected
         );
     }
     let rule = markdown_layout("---", /*width*/ 40);
     let mut lines = Vec::new();
-    first.copy_lines(0..first.text().len(), "", &mut lines);
-    rule.copy_lines(0..rule.text().len(), "\n", &mut lines);
-    let copied = crate::markdown_copy::selection(&lines, "unused").0;
+    first.copy_lines(0..first.text().len(), "", &[], &mut lines);
+    rule.copy_lines(0..rule.text().len(), "\n", &[], &mut lines);
+    let copied = crate::markdown_copy::selection(&lines, "unused", /*rectangle_rows*/ None).0;
     assert_eq!(
         crate::clipboard_html::render_markdown(&copied),
         "<p>first</p>\n<hr />\n"
@@ -874,5 +886,21 @@ fn selected_list_and_code_containers_keep_their_structure() {
             crate::clipboard_html::render_markdown(expected),
             "{copied:?} from {source:?}"
         );
+    }
+}
+
+#[test]
+fn file_ranges_keep_hidden_destinations_when_copying_markdown() {
+    crate::markdown_render::preferences::set_document_links(/*enabled*/ true);
+    for dest in ["./src/search.ts#L42-L44", "./src/search.ts:42:5-44:10"] {
+        let link = format!("[src/search.ts:42-44](<{dest}>)");
+        for source in [&link, &format!("| Location |\n|---|\n| {link} |")] {
+            for width in [12, 80] {
+                let layout = markdown_layout(source, width);
+                let (copied, _) = payload(&layout, 0..layout.text().len());
+                assert_eq!(copied.matches(&link).count(), 1, "{copied}");
+                assert!(!layout.text().contains(dest));
+            }
+        }
     }
 }

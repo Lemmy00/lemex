@@ -75,10 +75,7 @@ impl ToolExecutor<ToolInvocation> for SleepHandler {
         ToolExposure::DirectModelOnly
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(async move {
             let ToolInvocation {
                 session,
@@ -101,7 +98,7 @@ impl ToolExecutor<ToolInvocation> for SleepHandler {
 
             let started = Instant::now();
             let item = TurnItem::Extension(ExtensionItem::Sleep(SleepItem {
-                id: call_id,
+                id: call_id.into(),
                 duration_ms: args.duration_ms,
             }));
             session.emit_turn_item_started(turn.as_ref(), &item).await;

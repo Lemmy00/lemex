@@ -3,6 +3,10 @@
 use super::ChatWidget;
 
 impl ChatWidget {
+    pub(crate) fn has_pending_stream_consolidation(&self) -> bool {
+        self.pending_stream_consolidations > 0
+    }
+
     /// Records a stream consolidation barrier that delays reset hint insertion.
     ///
     /// Each queued consolidation should eventually call

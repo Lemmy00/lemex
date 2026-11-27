@@ -194,6 +194,7 @@ async fn state_recovery_restores_saved_threads() -> Result<()> {
     let request = server
         .send_thread_delete_request(codex_app_server_protocol::ThreadDeleteParams {
             thread_id: thread_id.clone(),
+            saved_side_chat_ids: None,
         })
         .await?;
     let error = timeout(
@@ -237,6 +238,7 @@ async fn state_recovery_restores_saved_threads() -> Result<()> {
         .send_thread_list_request(ThreadListParams {
             include_attached_threads: false,
             current_account_only: false,
+            included_thread_ids: None,
             excluded_thread_ids: None,
             attached_to_thread_id: None,
             originators: None,

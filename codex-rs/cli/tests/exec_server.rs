@@ -368,13 +368,13 @@ async fn assert_pat_registry_reload(change: PatCredentialChange) -> Result<()> {
         .mount(&registry)
         .await;
 
-    let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+    let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?);
     command
         .current_dir(home.path())
-        .env("CODEX_HOME", home.path())
-        .env_remove("CODEX_ACCESS_TOKEN")
+        .env("LEMEX_HOME", home.path())
+        .env_remove("LEMEX_ACCESS_TOKEN")
         .env("CODEX_AUTHAPI_BASE_URL", auth_server.uri())
-        .env_remove("CODEX_API_KEY")
+        .env_remove("LEMEX_API_KEY")
         .env_remove("OPENAI_API_KEY")
         .env("NO_PROXY", "127.0.0.1,localhost")
         .env("no_proxy", "127.0.0.1,localhost")
@@ -522,7 +522,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{collector_url}/v1/metrics", pr
         .current_dir(codex_home.path())
         .env("LEMEX_HOME", codex_home.path())
         .env("LEMEX_API_KEY", "test-api-key")
-        .env_remove("CODEX_ACCESS_TOKEN")
+        .env_remove("LEMEX_ACCESS_TOKEN")
         .env(
             codex_exec_server::CODEX_EXEC_SERVER_EXIT_ON_STDIN_CLOSE_ENV_VAR,
             "true",
@@ -580,6 +580,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{collector_url}/v1/metrics", pr
     let executor_public_key = registered_parent_lifetime_executor_public_key(&registry).await?;
     let harness_args = NoiseRendezvousConnectArgs {
         bundle: NoiseRendezvousConnectBundle {
+            http_headers: Default::default(),
             websocket_url: format!("{rendezvous_url}/relay?role=harness"),
             environment_id: ENVIRONMENT_ID.to_string(),
             executor_registration_id: EXECUTOR_REGISTRATION_ID.to_string(),
@@ -713,7 +714,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{collector_url}/v1/metrics", pr
 
 #[tokio::test]
 async fn forward_rejects_stdin_credentials_on_opposite_sides_of_subcommand() -> Result<()> {
-    let codex = codex_utils_cargo_bin::cargo_bin("codex")?;
+    let codex = codex_utils_cargo_bin::cargo_bin("lemex")?;
     let home = TempDir::new()?;
     let remote = [
         "--remote",
@@ -725,7 +726,7 @@ async fn forward_rejects_stdin_credentials_on_opposite_sides_of_subcommand() -> 
     let rotating = "--executor-credential-stdin";
     for (before, after) in [(bearer, rotating), (rotating, bearer)] {
         let mut child = tokio::process::Command::new(&codex)
-            .env("CODEX_HOME", home.path())
+            .env("LEMEX_HOME", home.path())
             .arg("exec-server")
             .args(remote)
             .args([before, "forward", "--connect", "ws://127.0.0.1:8765"])
@@ -816,7 +817,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{}/v1/metrics", protocol = "jso
         home.path().join("auth.json"),
         r#"{"OPENAI_API_KEY":"general-file-token"}"#,
     )?;
-    let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+    let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?);
     command
         .env("LEMEX_HOME", home.path())
         .env_remove(codex_exec_server::CODEX_EXEC_SERVER_EXIT_ON_STDIN_CLOSE_ENV_VAR)
@@ -870,6 +871,7 @@ metrics_exporter = {{ otlp-http = {{ endpoint = "{}/v1/metrics", protocol = "jso
     let executor_public_key = registered_parent_lifetime_executor_public_key(&registry).await?;
     let args = NoiseRendezvousConnectArgs {
         bundle: NoiseRendezvousConnectBundle {
+            http_headers: Default::default(),
             websocket_url: format!("{rendezvous}/relay?role=harness"),
             environment_id: ENVIRONMENT.to_string(),
             executor_registration_id: "registration-scoped".to_string(),
@@ -991,7 +993,7 @@ async fn remote_exec_server_scoped_credentials_never_fall_back_for_another_envir
         home.path().join("auth.json"),
         r#"{"OPENAI_API_KEY":"general-file-token"}"#,
     )?;
-    let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
+    let mut command = tokio::process::Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?);
     let mut child = command
         .env("LEMEX_HOME", home.path())
         .env("LEMEX_API_KEY", "general-api-key")

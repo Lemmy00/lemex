@@ -30,6 +30,7 @@ pub(crate) struct ImagePlacement {
     pub(crate) area: Rect,
     pub(crate) first_row: usize,
     pub(crate) file: Option<tempfile::NamedTempFile>,
+    pub(crate) terminal_id: Option<u32>,
 }
 
 impl ImagePlacement {
@@ -40,6 +41,7 @@ impl ImagePlacement {
             area: self.area,
             first_row: self.first_row,
             file: None,
+            terminal_id: None,
         }
     }
 }
@@ -73,10 +75,35 @@ pub(crate) fn terminal_cell_size() -> Option<(u32, u32)> {
         })
 }
 
+/// Generated output is larger than an image shown as a tool detail.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreviewKind {
+    Inspected,
+    Generated,
+}
+
 impl TranscriptImage {
+    pub(crate) fn fits(&self, available_columns: u16, cell_size: Option<(u32, u32)>) -> bool {
+        self.columns <= available_columns
+            && (self.protocol != ImageProtocol::Sixel
+                || cell_size == Some((self.cell_width, self.cell_height)))
+    }
+
     fn load_pixels(path: &Path, max_width: u32, max_height: u32) -> Option<RgbaImage> {
+        if max_width == 0 || max_height == 0 {
+            return None;
+        }
+        let image = Self::decode(path)?;
+        Some(
+            image
+                .thumbnail(max_width.min(image.width()), max_height.min(image.height()))
+                .to_rgba8(),
+        )
+    }
+
+    fn decode(path: &Path) -> Option<DynamicImage> {
         let metadata = path.metadata().ok()?;
-        if max_width == 0 || !metadata.is_file() || metadata.len() > 32 * 1024 * 1024 {
+        if !metadata.is_file() || metadata.len() > 32 * 1024 * 1024 {
             return None;
         }
         let reader = image::ImageReader::open(path)
@@ -87,32 +114,83 @@ impl TranscriptImage {
         // screenshots usable, but never allocate hundreds of MB for an optional thumbnail.
         let mut limits = image::Limits::default();
         limits.max_alloc = Some(32 * 1024 * 1024);
-        let image = crate::image_decode::decode_oriented(reader, limits).ok()?;
-        Some(
-            image
-                .thumbnail(max_width.min(image.width()), max_height.min(image.height()))
-                .to_rgba8(),
-        )
+        crate::image_decode::decode_oriented(reader, limits).ok()
     }
 
-    pub(crate) fn load(path: &Path, width: u16, protocol: ImageProtocol) -> Option<Self> {
-        let columns = width.saturating_sub(2).min(48);
+    pub(crate) fn load(
+        path: &Path,
+        width: u16,
+        protocol: ImageProtocol,
+        kind: PreviewKind,
+    ) -> Option<Self> {
+        let columns = width.saturating_sub(2);
+        Self::load_for_cells(path, columns, protocol, kind, terminal_cell_size())
+    }
+
+    pub(crate) fn load_for_cells(
+        path: &Path,
+        columns: u16,
+        protocol: ImageProtocol,
+        kind: PreviewKind,
+        cell_size: Option<(u32, u32)>,
+    ) -> Option<Self> {
+        if columns == 0 {
+            return None;
+        }
         // Sixel paints physical pixels. Guessing could paint outside the reserved rows.
         let (cell_width, cell_height) = match protocol {
-            ImageProtocol::Sixel => terminal_cell_size()?,
-            ImageProtocol::Kitty | ImageProtocol::KittyLocalFile => (8, 16),
+            ImageProtocol::Sixel => cell_size?,
+            ImageProtocol::Kitty | ImageProtocol::KittyLocalFile => match kind {
+                PreviewKind::Inspected => (8, 16),
+                PreviewKind::Generated => cell_size.unwrap_or((8, 16)),
+            },
         };
-        // The sprite encoder scans each active color per Sixel band. Bound both its CPU
-        // work and worst-case output even with large terminal cells or high-entropy images.
-        let (max_width, max_height) = match protocol {
-            ImageProtocol::Sixel => (160, 80),
-            ImageProtocol::Kitty | ImageProtocol::KittyLocalFile => (384, 160),
+        let image = Self::decode(path)?;
+        let (columns, max_width, max_height) = match (protocol, kind) {
+            (ImageProtocol::Sixel, PreviewKind::Generated) => {
+                // Fit the original 160 x 80 pixel budget to the source aspect ratio.
+                // The encoder scans each six-row band once per active color, so
+                // also bound width times band count (including a partial last band).
+                const PIXELS: u32 = 160 * 80;
+                const BAND_COLUMNS: u32 = 160 * 80_u32.div_ceil(6);
+                let height_at_budget = (u64::from(PIXELS) * u64::from(image.height())
+                    / u64::from(image.width()))
+                .isqrt() as u32;
+                let height = height_at_budget
+                    .clamp(1, 80)
+                    .min(image.height())
+                    .min(6 * cell_height);
+                let width = (PIXELS / height).min(BAND_COLUMNS / height.div_ceil(6));
+                (columns.min(48), width, height)
+            }
+            (ImageProtocol::Sixel, PreviewKind::Inspected) => {
+                (columns.min(48), 160, 80.min(6 * cell_height))
+            }
+            (_, PreviewKind::Inspected) => (columns.min(48), 384, 6 * cell_height),
+            (_, PreviewKind::Generated) => {
+                let ratio = f64::from(image.width()) / f64::from(image.height());
+                let max_width = if ratio >= 2.0 {
+                    768
+                } else if ratio >= 1.01 {
+                    480
+                } else {
+                    400
+                };
+                let max_height = if crate::tui::fullscreen_virtual_image_base().is_some() {
+                    6 * cell_height
+                } else {
+                    400
+                };
+                (columns, max_width, max_height)
+            }
         };
-        let pixels = Self::load_pixels(
-            path,
-            (u32::from(columns) * cell_width).min(max_width),
-            (6 * cell_height).min(max_height),
-        )?;
+        let max_width = (u32::from(columns) * cell_width).min(max_width);
+        let mut pixels = image
+            .thumbnail(max_width.min(image.width()), max_height.min(image.height()))
+            .to_rgba8();
+        if kind == PreviewKind::Generated && protocol != ImageProtocol::Sixel {
+            pixels = pad_to_cells(pixels, cell_width, cell_height);
+        }
         Some(Self {
             protocol,
             columns: pixels.width().div_ceil(cell_width) as u16,
@@ -184,3 +262,22 @@ impl TranscriptImage {
         Ok(file)
     }
 }
+
+/// Kitty stretches a placement to whole cells. Fill the last partial cells
+/// with transparency so the fitted pixels keep their scale even when clipped.
+fn pad_to_cells(pixels: RgbaImage, cell_width: u32, cell_height: u32) -> RgbaImage {
+    let width = pixels.width().next_multiple_of(cell_width);
+    let height = pixels.height().next_multiple_of(cell_height);
+    // Bound the allocation even for implausible terminal-reported cell sizes.
+    if pixels.dimensions() == (width, height) || u64::from(width) * u64::from(height) > 1024 * 1024
+    {
+        return pixels;
+    }
+    let mut canvas = RgbaImage::new(width, height);
+    image::imageops::replace(&mut canvas, &pixels, /*x*/ 0, /*y*/ 0);
+    canvas
+}
+
+#[cfg(test)]
+#[path = "transcript_image_tests.rs"]
+mod tests;

@@ -51,6 +51,13 @@ impl ChatWidget {
         }
     }
 
+    pub(crate) fn reject_user_shell_command(&mut self, message: String) {
+        // No turn event will arrive to clear the pending shell submission.
+        self.input_queue.user_turn_pending_start = false;
+        self.add_error_message(message);
+        self.maybe_send_next_queued_input();
+    }
+
     fn submit_shell_command_with_history(
         &mut self,
         command: &str,
@@ -505,12 +512,12 @@ impl ChatWidget {
             cloud_submission,
             client_user_message_id.clone(),
             items,
-            self.config.cwd.to_path_buf(),
+            self.session_cwd().to_path_buf(),
             AskForApproval::from(self.config.permissions.approval_policy.value()),
             active_permission_profile,
             effective_mode.model().to_string(),
             effective_mode.reasoning_effort(),
-            /*summary*/ None,
+            crate::app_server_session::reasoning_summary_from_config(&self.config),
             service_tier,
             /*final_output_json_schema*/ None,
             collaboration_mode,

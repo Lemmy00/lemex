@@ -137,6 +137,8 @@ pub struct TuiGlobalKeymap {
     pub leader: Option<KeybindingsSpec>,
     /// Change where a new conversation runs.
     pub change_host: Option<KeybindingsSpec>,
+    /// Choose a saved environment for a new Cloud conversation.
+    pub choose_cloud_environment: Option<KeybindingsSpec>,
     /// Focus the main conversation composer.
     pub focus_main_composer: Option<KeybindingsSpec>,
     /// Focus the side conversation, or hide it when already focused.
@@ -243,6 +245,10 @@ pub struct TuiComposerKeymap {
     pub history_search_previous: Option<KeybindingsSpec>,
     /// Move to the next match in reverse history search.
     pub history_search_next: Option<KeybindingsSpec>,
+    /// Undo the last edit to the composer draft.
+    pub undo: Option<KeybindingsSpec>,
+    /// Redo an undone composer edit.
+    pub redo: Option<KeybindingsSpec>,
 }
 
 /// Editor context keybindings for text editing inside text areas.
@@ -482,6 +488,8 @@ pub struct TuiPagerKeymap {
     pub close_transcript: Option<KeybindingsSpec>,
     /// Find text in a transcript pager.
     pub find: Option<KeybindingsSpec>,
+    /// Mark Markdown structure under the caret in transcript selection mode.
+    pub mark_markdown: Option<KeybindingsSpec>,
 }
 
 /// List selection context keybindings for popup-style selectable lists.
@@ -514,6 +522,10 @@ pub struct TuiListKeymap {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiAgentsKeymap {
+    /// Select the first task in the next group.
+    pub next_group: Option<KeybindingsSpec>,
+    /// Select the first task in the previous group.
+    pub previous_group: Option<KeybindingsSpec>,
     /// Open the session resume picker.
     pub resume: Option<KeybindingsSpec>,
     /// Search the available agent tasks.
@@ -572,7 +584,7 @@ pub struct TuiApprovalKeymap {
 /// input handlers. Runtime consumers should resolve it into
 /// `RuntimeKeymap` first so precedence, empty-list unbinding, and duplicate-key
 /// validation are applied consistently.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct TuiKeymap {
     #[serde(default)]
@@ -599,6 +611,27 @@ pub struct TuiKeymap {
     pub agents: TuiAgentsKeymap,
     #[serde(default)]
     pub approval: TuiApprovalKeymap,
+}
+
+impl Clone for TuiKeymap {
+    // Keep the field-by-field clone out of line so callers share one copy of the code.
+    #[inline(never)]
+    fn clone(&self) -> Self {
+        Self {
+            global: self.global.clone(),
+            chat: self.chat.clone(),
+            composer: self.composer.clone(),
+            editor: self.editor.clone(),
+            vim_normal: self.vim_normal.clone(),
+            vim_operator: self.vim_operator.clone(),
+            vim_search: self.vim_search.clone(),
+            vim_text_object: self.vim_text_object.clone(),
+            pager: self.pager.clone(),
+            list: self.list.clone(),
+            agents: self.agents.clone(),
+            approval: self.approval.clone(),
+        }
+    }
 }
 
 /// Normalize one user-entered key spec into canonical storage format.

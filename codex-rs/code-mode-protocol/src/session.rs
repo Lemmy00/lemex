@@ -20,9 +20,30 @@ pub type CodeModeSessionResultFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
 pub type CodeModeSessionProviderFuture<'a> =
     CodeModeSessionResultFuture<'a, Arc<dyn CodeModeSession>>;
-pub type ToolInvocationFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<JsonValue, String>> + Send + 'a>>;
+pub type ToolInvocationFuture<'a> = CodeModeSessionResultFuture<'a, CodeModeToolResult>;
 pub type NotificationFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+/// A nested call's JSON value and how the runtime should treat it when printed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CodeModeToolResult {
+    Json(JsonValue),
+    McpCallToolResult(JsonValue),
+}
+
+impl CodeModeToolResult {
+    /// Returns the full script-visible value without its format tag.
+    pub fn into_json(self) -> JsonValue {
+        match self {
+            Self::Json(value) | Self::McpCallToolResult(value) => value,
+        }
+    }
+}
+
+impl From<JsonValue> for CodeModeToolResult {
+    fn from(value: JsonValue) -> Self {
+        Self::Json(value)
+    }
+}
 
 /// Optional resource limits shared by every cell in one code-mode session.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -57,6 +78,8 @@ pub enum CodeModeOutputTruncation {
 pub struct CodeModeSessionOptions {
     pub cell_execution_limits: CodeModeSessionCellExecutionLimits,
     pub output_truncation: CodeModeOutputTruncation,
+    /// Interval for idle gRPC heartbeats. Zero disables them.
+    pub heartbeat_interval_s: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -235,6 +258,11 @@ pub trait CodeModeSessionProvider: Send + Sync {
     }
 
     fn create_session(&self) -> CodeModeSessionProviderFuture<'_>;
+
+    /// Returns the default options for callers that need to override one setting.
+    fn default_session_options(&self) -> CodeModeSessionOptions {
+        CodeModeSessionOptions::default()
+    }
 
     /// Creates a session whose cells share the supplied execution limits.
     ///

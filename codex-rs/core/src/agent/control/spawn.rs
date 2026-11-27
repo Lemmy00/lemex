@@ -27,6 +27,8 @@ use codex_utils_path_uri::PathUri;
 use futures::StreamExt;
 use futures::stream;
 use std::time::Instant;
+use tracing::Instrument;
+use tracing::instrument::WithSubscriber;
 
 const AGENT_NAMES: &str = include_str!("../../../assets/agent/agent_names.txt");
 
@@ -38,7 +40,7 @@ const AGENT_NAMES: &str = include_str!("../../../assets/agent/agent_names.txt");
 /// unrepresentable.
 #[allow(clippy::large_enum_variant)]
 pub(super) enum SpawnInitialInput {
-    UserInput(Vec<UserInput>),
+    UserInput(Vec<ResolvedUserInput>),
     InterAgentCommunication(InterAgentCommunication, AgentCommunicationContext),
 }
 
@@ -139,23 +141,31 @@ impl LocalAgentControl {
             }
         };
 
+        self.restore_agent_identities(config, &state, descendant_ids)
+            .await;
+    }
+
+    pub(super) async fn restore_agent_identities(
+        &self,
+        config: &Config,
+        state: &ThreadManagerState,
+        descendant_ids: Vec<ThreadId>,
+    ) {
+        let registry = &self.runtime.registry;
         // Overlap storage reads, but reserve paths and nicknames in graph order.
         let mut stored_threads = stream::iter(
             descendant_ids
                 .into_iter()
                 .filter(|thread_id| registry.agent_metadata_for_thread(*thread_id).is_none())
-                .map(|thread_id| {
-                    let state = &state;
-                    async move {
-                        let stored_thread = state
-                            .read_stored_thread(ReadThreadParams {
-                                thread_id,
-                                include_archived: true,
-                                include_history: false,
-                            })
-                            .await;
-                        (thread_id, stored_thread)
-                    }
+                .map(|thread_id| async move {
+                    let stored_thread = state
+                        .read_stored_thread(ReadThreadParams {
+                            thread_id,
+                            include_archived: true,
+                            include_history: false,
+                        })
+                        .await;
+                    (thread_id, stored_thread)
                 }),
         )
         .buffered(/*n*/ 8);
@@ -200,7 +210,7 @@ impl LocalAgentControl {
     pub(crate) async fn spawn_agent(
         &self,
         config: Config,
-        initial_input: Vec<UserInput>,
+        initial_input: Vec<ResolvedUserInput>,
         session_source: Option<SessionSource>,
     ) -> CodexResult<ThreadId> {
         let (spawned_agent, _) = Box::pin(self.spawn_agent_internal(
@@ -306,9 +316,8 @@ impl LocalAgentControl {
         let stored_reasoning_effort = stored_thread.reasoning_effort.clone();
         let stored_source = stored_thread.source.clone();
         let stored_parent_thread_id = stored_thread.parent_thread_id;
-        let history = load_agent_model_context(&state, thread_id, stored_thread.history_mode)
-            .await?
-            .ok_or(CodexErr::ThreadNotFound(thread_id))?;
+        let history =
+            load_agent_model_context(&state, thread_id, stored_thread.history_mode).await?;
         let initial_history = InitialHistory::Resumed(ResumedHistory {
             history_revision: history.revision,
             conversation_id: thread_id,
@@ -539,6 +548,11 @@ impl LocalAgentControl {
         } else {
             None
         };
+        let request_country = if let Some(parent) = &inherited_parent {
+            parent.config_snapshot().await.request_country
+        } else {
+            codex_protocol::RequestCountry::UNKNOWN
+        };
         let prompt_cache_key = inherited_parent.as_ref().map(|parent| {
             parent
                 .session
@@ -559,13 +573,35 @@ impl LocalAgentControl {
         };
         // Reserving a slot can evict an idle nested parent. Capture its instructions and
         // authority before the live parent can disappear.
-        let residency_slot = self
-            .reserve_v2_residency_slot(&state, &config, &membership, Some(thread_id))
-            .await?;
+        let reserve =
+            || self.reserve_v2_residency_slot(&state, &config, &membership, Some(thread_id));
+        let residency_slot = match reserve().await {
+            Err(limit)
+                if matches!(limit.details(), CodexErrorDetails::AgentLimitReached { .. }) =>
+            {
+                // A cold parent can report PendingInit despite having spawned this stored child.
+                // Try that exact parent only after the ordinary eviction policy found no slot.
+                if let Some((parent, _)) = &parent
+                    && matches!(parent.agent_status().await, AgentStatus::PendingInit)
+                    && matches!(
+                        state
+                            .try_evict_v2_thread(Arc::clone(parent), &membership)
+                            .await,
+                        Ok(ThreadEvictionOutcome::Evicted | ThreadEvictionOutcome::NotCurrent)
+                    )
+                {
+                    reserve().await?
+                } else {
+                    return Err(limit);
+                }
+            }
+            result => result?,
+        };
 
         match state
             .resume_thread_with_history_with_source(ResumeThreadWithHistoryOptions {
                 config,
+                request_country,
                 prompt_cache_key,
                 initial_history,
                 agent_control: self.clone(),
@@ -719,6 +755,7 @@ impl LocalAgentControl {
         // Capture child defaults once. Copying conversation history must not change
         // the capabilities of the turn which requested the spawn.
         let mut start_options = StartThreadOptions {
+            request_country: options.request_country.clone(),
             session_source: session_source.clone(),
             thread_source: session_source.as_ref().map(|_| ThreadSource::Subagent),
             environments: options
@@ -860,11 +897,19 @@ impl LocalAgentControl {
         let control = self.clone();
         let source = notification_source.clone();
         let ephemeral = config.ephemeral;
-        pending_spawn.set_edge_write(tokio::spawn(async move {
-            control
-                .persist_thread_spawn_edge_for_source(ephemeral, child_thread_id, source.as_ref())
-                .await
-        }));
+        pending_spawn.set_edge_write(tokio::spawn(
+            async move {
+                control
+                    .persist_thread_spawn_edge_for_source(
+                        ephemeral,
+                        child_thread_id,
+                        source.as_ref(),
+                    )
+                    .await
+            }
+            .in_current_span()
+            .with_current_subscriber(),
+        ));
         pending_spawn.wait_for_edge().await?;
         let edge_write = edge_write_started_at.elapsed();
         let child_create_started_at = Instant::now();
@@ -874,6 +919,7 @@ impl LocalAgentControl {
                 self.clone(),
                 parent_thread_id,
                 inherited_exec_policy,
+                options.service_tier,
             )
             .await
             .map_err(|err| err.with_agent_context(AgentErrorContext::ChildStartup))?;
@@ -908,6 +954,7 @@ impl LocalAgentControl {
             cyber_access_program = helper_daybreak::turn::select_program(
                 &model,
                 codex_protocol::openai_models::SavedDaybreakChoice::On,
+                helper_daybreak::turn::SavedProgramContext::Helper,
             )
             .map_err(CodexErr::InvalidRequest)?
             .or(Some(inherited));
@@ -917,6 +964,7 @@ impl LocalAgentControl {
             turn_trigger: options.turn_trigger,
             root_turn_id: options.root_turn_id,
             cyber_access_program,
+            inherited_client_metadata: options.inherited_client_metadata,
             ..Default::default()
         };
         let input_admission_started_at = Instant::now();
@@ -1095,9 +1143,8 @@ impl LocalAgentControl {
             .map_err(|err| CodexErr::InvalidRequest(format!("invalid stored agent path: {err}")))?;
         let resumed_agent_nickname = stored_thread.agent_nickname.clone();
         let resumed_agent_role = stored_thread.agent_role.clone();
-        let history = load_agent_model_context(&state, thread_id, stored_thread.history_mode)
-            .await?
-            .ok_or(CodexErr::ThreadNotFound(thread_id))?;
+        let history =
+            load_agent_model_context(&state, thread_id, stored_thread.history_mode).await?;
         let initial_history = InitialHistory::Resumed(ResumedHistory {
             history_revision: history.revision,
             conversation_id: thread_id,
@@ -1144,9 +1191,17 @@ impl LocalAgentControl {
         let inherited_exec_policy =
             inherited_exec_policy_for_source(&state, Some(&session_source), &config).await;
 
+        let request_country = match session_source.parent_thread_id() {
+            Some(parent_thread_id) => match state.get_thread(parent_thread_id).await {
+                Ok(parent) => parent.config_snapshot().await.request_country,
+                Err(_) => codex_protocol::RequestCountry::UNKNOWN,
+            },
+            None => Default::default(),
+        };
         let resumed_thread = state
             .resume_thread_with_history_with_source(ResumeThreadWithHistoryOptions {
                 config: config.clone(),
+                request_country,
                 prompt_cache_key: None,
                 initial_history,
                 agent_control: self.clone(),

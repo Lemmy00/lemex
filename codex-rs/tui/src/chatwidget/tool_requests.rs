@@ -307,7 +307,6 @@ impl ChatWidget {
         });
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
-
         self.request_redraw();
     }
 
@@ -325,7 +324,6 @@ impl ChatWidget {
         });
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
-
         self.request_redraw();
         self.notify(Notification::EditApprovalRequested {
             cwd: self.config.cwd.to_path_buf(),
@@ -349,6 +347,7 @@ impl ChatWidget {
         if let Some(params) = crate::bottom_pane::AppLinkViewParams::from_url_app_server_request(
             thread_id,
             &params.server_name,
+            params.environment_id.as_deref(),
             request_id.clone(),
             &params.request,
         ) {
@@ -362,11 +361,20 @@ impl ChatWidget {
                 .push_mcp_server_elicitation_request(request);
         } else {
             match params.request {
-                McpServerElicitationRequest::Form { message, .. } => {
+                McpServerElicitationRequest::Form {
+                    message,
+                    requested_schema,
+                    ..
+                } => {
                     let request = ApprovalRequest::McpElicitation(McpElicitationApprovalRequest {
+                        has_required_fields: requested_schema
+                            .required
+                            .as_ref()
+                            .is_some_and(|fields| !fields.is_empty()),
                         thread_id,
                         thread_label: None,
                         server_name: params.server_name,
+                        environment_id: params.environment_id,
                         request_id,
                         message,
                     });
@@ -381,6 +389,7 @@ impl ChatWidget {
                         crate::bottom_pane::user_verification::UserVerificationRequest {
                             thread_label: None,
                             server_name: params.server_name,
+                            environment_id: params.environment_id,
                             request_id,
                             title,
                             description,
@@ -401,14 +410,12 @@ impl ChatWidget {
                 }
             }
         }
-
         self.request_redraw();
     }
 
     pub(crate) fn push_approval_request(&mut self, request: ApprovalRequest) {
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
-
         self.request_redraw();
     }
 
@@ -420,7 +427,6 @@ impl ChatWidget {
         // Inactive-thread prompts must leave the foreground stream and command activity intact.
         self.bottom_pane
             .push_user_verification_request(thread_id, request);
-
         self.request_redraw();
     }
 
@@ -430,7 +436,6 @@ impl ChatWidget {
     ) {
         self.bottom_pane
             .push_mcp_server_elicitation_request(request);
-
         self.request_redraw();
     }
 
@@ -445,7 +450,6 @@ impl ChatWidget {
         };
         self.notify(Notification::PlanModePrompt { title });
         self.bottom_pane.push_user_input_request(ev);
-
         self.request_redraw();
     }
 
@@ -461,7 +465,6 @@ impl ChatWidget {
         });
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
-
         self.request_redraw();
     }
 }

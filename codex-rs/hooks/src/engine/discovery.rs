@@ -17,8 +17,11 @@ use codex_config::RequirementSource;
 use codex_config::TomlValue;
 use codex_config::version_for_toml;
 use codex_plugin::PluginHookSource;
+use codex_plugin::bundled_hook_app_connector_id;
 use codex_plugin::is_allowlisted_bundled_cleanup_hook;
+use codex_protocol::hooks::MAX_MCP_HOOK_CONTEXT_TOKENS;
 use codex_protocol::protocol::HookEventName;
+use codex_protocol::protocol::HookHandlerType;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathConvention;
 use codex_utils_path_uri::PathUri;
@@ -648,6 +651,36 @@ fn append_matcher_groups(
             }
         };
         for (handler_index, handler) in group.hooks.iter().cloned().enumerate() {
+            let on_failure = match &handler {
+                HookHandlerConfig::Command { on_failure, .. }
+                | HookHandlerConfig::McpTool { on_failure, .. } => *on_failure,
+                HookHandlerConfig::Prompt {} | HookHandlerConfig::Agent {} => None,
+            };
+            if on_failure == Some(codex_config::HookFailurePolicy::Block)
+                && (matches!(
+                    event_name,
+                    HookEventName::SessionEnd
+                        | HookEventName::PreModelRequest
+                        | HookEventName::PostModelRequest
+                ) || matches!(handler, HookHandlerConfig::Command { r#async: true, .. }))
+            {
+                source.record_load_failure(
+                    format!(
+                        "onFailure:block requires a synchronous hook that supports blocking in {}",
+                        source.path.display()
+                    ),
+                    warnings,
+                );
+                continue;
+            }
+            let expected_app_connector_id = source.plugin_id.as_deref().and_then(|plugin_id| {
+                bundled_hook_app_connector_id(
+                    plugin_id,
+                    event_name,
+                    group.matcher.as_deref(),
+                    &handler,
+                )
+            });
             let normalized = match handler {
                 HookHandlerConfig::Command {
                     command,
@@ -655,6 +688,7 @@ fn append_matcher_groups(
                     timeout_sec,
                     r#async,
                     status_message,
+                    on_failure,
                     additional_context_limit,
                 } => {
                     let command = if cfg!(windows) {
@@ -683,33 +717,22 @@ fn append_matcher_groups(
                             source.path.display()
                         ));
                     }
-                    let additional_context_limit = if matches!(
+                    let additional_context_limit = normalize_additional_context_limit(
                         event_name,
-                        codex_protocol::protocol::HookEventName::PreToolUse
-                            | codex_protocol::protocol::HookEventName::PostToolUse
-                            | codex_protocol::protocol::HookEventName::SessionStart
-                            | codex_protocol::protocol::HookEventName::UserPromptSubmit
-                            | codex_protocol::protocol::HookEventName::SubagentStart
-                    ) {
-                        additional_context_limit
-                    } else {
-                        if additional_context_limit.is_some() {
-                            warnings.push(format!(
-                                "ignoring additionalContextLimit for {event_name:?} hook in {}: this event cannot emit additionalContext",
-                                source.path.display()
-                            ));
-                        }
-                        None
-                    };
-                    let normalized_additional_context_limit = additional_context_limit
-                        .filter(|limit| *limit != DEFAULT_HOOK_OUTPUT_TOKEN_LIMIT);
+                        HookHandlerType::Command,
+                        additional_context_limit,
+                        source.path.as_path(),
+                        warnings,
+                    );
                     let config = HookHandlerConfig::Command {
                         command: command.clone(),
                         command_windows: None,
                         timeout_sec: Some(timeout_sec),
                         r#async,
                         status_message: status_message.clone(),
-                        additional_context_limit: normalized_additional_context_limit,
+                        on_failure,
+                        additional_context_limit: additional_context_limit
+                            .filter(|limit| *limit != DEFAULT_HOOK_OUTPUT_TOKEN_LIMIT),
                     };
                     let command = source.env.iter().fold(command, |command, (key, value)| {
                         command.replace(&format!("${{{key}}}"), value)
@@ -732,6 +755,8 @@ fn append_matcher_groups(
                     input,
                     timeout_sec,
                     status_message,
+                    on_failure,
+                    additional_context_limit,
                 } => {
                     if event_name == HookEventName::SessionEnd {
                         source.record_load_failure(
@@ -760,23 +785,34 @@ fn append_matcher_groups(
                         source.path.as_path(),
                         warnings,
                     );
+                    let additional_context_limit = normalize_additional_context_limit(
+                        event_name,
+                        HookHandlerType::McpTool,
+                        additional_context_limit,
+                        source.path.as_path(),
+                        warnings,
+                    );
                     let config = HookHandlerConfig::McpTool {
                         server: server.clone(),
                         tool: tool.clone(),
                         input: input.clone(),
                         timeout_sec: Some(timeout_sec),
                         status_message: status_message.clone(),
+                        on_failure,
+                        additional_context_limit: additional_context_limit
+                            .filter(|limit| *limit != DEFAULT_HOOK_OUTPUT_TOKEN_LIMIT),
                     };
                     NormalizedHandler {
                         config,
                         kind: ConfiguredHandlerKind::McpTool {
+                            expected_app_connector_id,
                             server,
                             tool,
                             input,
                         },
                         timeout_sec,
                         status_message,
-                        additional_context_limit: None,
+                        additional_context_limit,
                     }
                 }
                 HookHandlerConfig::Prompt {} => {
@@ -819,6 +855,7 @@ fn append_matcher_groups(
                     /*app_connector_id*/ None,
                 )
             });
+            let builtin = builtin || expected_app_connector_id.is_some();
             let plugin_content_hash = match source.plugin_content_hash {
                 Some(Ok(hash)) => Some(hash.as_str()),
                 Some(Err(err)) if !builtin && !source.bypass_hook_trust => {
@@ -929,6 +966,7 @@ fn append_matcher_groups(
                     matcher: compiled_matcher.clone(),
                     timeout_sec,
                     status_message,
+                    on_failure: on_failure.unwrap_or_default(),
                     additional_context_limit: AdditionalContextLimit::from_config(
                         additional_context_limit,
                     ),
@@ -941,6 +979,40 @@ fn append_matcher_groups(
             *display_order += 1;
         }
     }
+}
+
+fn normalize_additional_context_limit(
+    event_name: HookEventName,
+    handler_type: HookHandlerType,
+    limit: Option<usize>,
+    path: &Path,
+    warnings: &mut Vec<String>,
+) -> Option<usize> {
+    let limit = limit?;
+    if !matches!(
+        event_name,
+        HookEventName::PreToolUse
+            | HookEventName::PostToolUse
+            | HookEventName::SessionStart
+            | HookEventName::UserPromptSubmit
+            | HookEventName::SubagentStart
+    ) {
+        warnings.push(format!(
+            "ignoring additionalContextLimit for {event_name:?} hook in {}: this event cannot emit additionalContext",
+            path.display()
+        ));
+        return None;
+    }
+    if handler_type == HookHandlerType::McpTool
+        && !(1..=MAX_MCP_HOOK_CONTEXT_TOKENS).contains(&limit)
+    {
+        warnings.push(format!(
+            "clamping additionalContextLimit from {limit} to {MAX_MCP_HOOK_CONTEXT_TOKENS} for MCP hook in {}",
+            path.display()
+        ));
+        return Some(MAX_MCP_HOOK_CONTEXT_TOKENS);
+    }
+    Some(limit)
 }
 
 /// Normalizes hook timeouts. SessionEnd and Interrupt default to one second and are capped at three
@@ -1188,6 +1260,7 @@ mod tests {
                 timeout_sec: None,
                 r#async: false,
                 status_message: None,
+                on_failure: None,
                 additional_context_limit: None,
             }],
         }
@@ -1204,6 +1277,7 @@ mod tests {
                 timeout_sec: None,
                 r#async: false,
                 status_message: None,
+                on_failure: None,
                 additional_context_limit: Some(additional_context_limit),
             }],
         }
@@ -1238,6 +1312,8 @@ mod tests {
                     input,
                     timeout_sec: Some(30),
                     status_message: Some("Scanning file".to_string()),
+                    on_failure: None,
+                    additional_context_limit: None,
                 }],
             }],
         );
@@ -1279,6 +1355,8 @@ mod tests {
                     input: serde_json::Map::new(),
                     timeout_sec: None,
                     status_message: None,
+                    on_failure: None,
+                    additional_context_limit: None,
                 }],
             }],
         );
@@ -1319,6 +1397,8 @@ mod tests {
                         input: serde_json::Map::new(),
                         timeout_sec: None,
                         status_message: None,
+                        on_failure: None,
+                        additional_context_limit: None,
                     },
                     HookHandlerConfig::McpTool {
                         server: "security".to_string(),
@@ -1326,6 +1406,8 @@ mod tests {
                         input: serde_json::Map::new(),
                         timeout_sec: Some(600),
                         status_message: None,
+                        on_failure: None,
+                        additional_context_limit: None,
                     },
                 ],
             }],
@@ -1385,6 +1467,52 @@ mod tests {
     }
 
     #[test]
+    fn failure_policy_is_preserved_in_discovery_and_trust_hashes() {
+        for mut hook in [
+            serde_json::json!({"type": "command", "command": "echo hello"}),
+            serde_json::json!({"type": "mcp_tool", "server": "scanner", "tool": "check"}),
+        ] {
+            let source_path = source_path();
+            let hook_states = std::collections::HashMap::new();
+            let mut handlers = Vec::new();
+            let mut entries = Vec::new();
+            let mut warnings = Vec::new();
+            let mut display_order = 0;
+            for policy in [None, Some("continue"), Some("block")] {
+                if let Some(policy) = policy {
+                    hook["onFailure"] = serde_json::json!(policy);
+                }
+                append_matcher_groups(
+                    &mut handlers,
+                    &mut entries,
+                    &mut warnings,
+                    &mut display_order,
+                    &mut hook_handler_source(&source_path, &hook_states),
+                    HookEventName::PreToolUse,
+                    vec![MatcherGroup {
+                        matcher: None,
+                        hooks: vec![serde_json::from_value(hook.clone()).expect("hook")],
+                    }],
+                );
+            }
+            assert!(warnings.is_empty());
+            assert_eq!(
+                handlers
+                    .iter()
+                    .map(|handler| handler.on_failure)
+                    .collect::<Vec<_>>(),
+                vec![
+                    codex_config::HookFailurePolicy::Continue,
+                    codex_config::HookFailurePolicy::Continue,
+                    codex_config::HookFailurePolicy::Block,
+                ]
+            );
+            assert_ne!(entries[0].current_hash, entries[2].current_hash);
+            assert_ne!(entries[1].current_hash, entries[2].current_hash);
+        }
+    }
+
+    #[test]
     fn supported_events_retain_per_handler_additional_context_limit_and_hash_it() {
         for event_name in [
             HookEventName::PreToolUse,
@@ -1432,6 +1560,53 @@ mod tests {
     }
 
     #[test]
+    fn mcp_context_limits_are_bounded_and_hashed_by_effective_value() {
+        let source_path = source_path();
+        let hook_states = std::collections::HashMap::new();
+        let mut handlers = Vec::new();
+        let mut entries = Vec::new();
+        let mut warnings = Vec::new();
+        let mut display_order = 0;
+        for limit in [None, Some(2_500), Some(0), Some(10_000), Some(10_001)] {
+            let hook = serde_json::from_value(serde_json::json!({
+                "type": "mcp_tool", "server": "scanner", "tool": "check",
+                "additionalContextLimit": limit,
+            }))
+            .expect("MCP hook");
+            append_matcher_groups(
+                &mut handlers,
+                &mut entries,
+                &mut warnings,
+                &mut display_order,
+                &mut hook_handler_source(&source_path, &hook_states),
+                HookEventName::SessionStart,
+                vec![MatcherGroup {
+                    matcher: None,
+                    hooks: vec![hook],
+                }],
+            );
+        }
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.additional_context_limit)
+                .collect::<Vec<_>>(),
+            [None, Some(2_500), Some(10_000), Some(10_000), Some(10_000)]
+        );
+        assert_eq!(
+            handlers[2].additional_context_limit,
+            AdditionalContextLimit::from_config(Some(10_000))
+        );
+        assert_eq!(entries[0].current_hash, entries[1].current_hash);
+        assert_ne!(entries[0].current_hash, entries[2].current_hash);
+        assert_eq!(entries[2].current_hash, entries[3].current_hash);
+        assert_eq!(entries[3].current_hash, entries[4].current_hash);
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings[0].contains("clamping additionalContextLimit from 0 to 10000"));
+        assert!(warnings[1].contains("clamping additionalContextLimit from 10001 to 10000"));
+    }
+
+    #[test]
     fn unsupported_event_warns_and_ignores_additional_context_limit() {
         let source_path = source_path();
         let (handler, _, warnings) = discover_command(
@@ -1473,6 +1648,7 @@ mod tests {
                 matcher: None,
                 timeout_sec: 600,
                 status_message: None,
+                on_failure: Default::default(),
                 additional_context_limit: Default::default(),
                 source_path: source_path.clone().into(),
                 source: hook_source(),
@@ -1514,6 +1690,7 @@ mod tests {
                 matcher: Some(HookMatcher::new("^Bash$").expect("valid matcher")),
                 timeout_sec: 600,
                 status_message: None,
+                on_failure: Default::default(),
                 additional_context_limit: Default::default(),
                 source_path: source_path.clone().into(),
                 source: hook_source(),
@@ -1552,6 +1729,7 @@ mod tests {
                         timeout_sec: None,
                         r#async: false,
                         status_message: None,
+                        on_failure: None,
                         additional_context_limit: None,
                     },
                     HookHandlerConfig::Command {
@@ -1560,6 +1738,7 @@ mod tests {
                         timeout_sec: Some(600),
                         r#async: true,
                         status_message: None,
+                        on_failure: None,
                         additional_context_limit: None,
                     },
                 ],
@@ -1642,6 +1821,7 @@ mod tests {
                     timeout_sec: Some(600),
                     r#async: true,
                     status_message: None,
+                    on_failure: None,
                     additional_context_limit: None,
                 }],
             }],
@@ -1833,6 +2013,7 @@ mod tests {
                         timeout_sec: None,
                         r#async: false,
                         status_message: None,
+                        on_failure: None,
                         additional_context_limit: None,
                     }],
                 }],
@@ -1864,6 +2045,7 @@ mod tests {
                     timeout_sec: None,
                     r#async: false,
                     status_message: None,
+                    on_failure: None,
                     additional_context_limit: None,
                 }],
             }],

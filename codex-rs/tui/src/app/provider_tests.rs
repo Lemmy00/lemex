@@ -160,7 +160,8 @@ async fn space_saves_once_retries_and_preserves_the_current_chat() -> Result<()>
         r#"model_providers.gateway = { name = "Example Gateway", base_url = "http://127.0.0.1:9/v1" }"#,
     )?;
     let server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
-    let session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    let mut session = test_thread_session(ThreadId::new(), app.config.cwd.to_path_buf());
+    session.model_provider_id = "test-provider".into();
     let original = session.model_provider_id.clone();
     app.chat_widget.handle_thread_session_quiet(session);
     let (view, load) = loading();
@@ -205,7 +206,11 @@ async fn space_saves_once_retries_and_preserves_the_current_chat() -> Result<()>
         next_provider_event(&mut events).await,
     );
     // The spawned RPC cannot run until this current-thread test yields.
-    write::Write::Default("openai".into()).start(&mut app, &server);
+    write::Write::Default {
+        id: "openai".into(),
+        name: "OpenAI".into(),
+    }
+    .start(&mut app, &server);
     assert!(std::iter::from_fn(|| events.try_recv().ok()).any(|event| {
         matches!(event, AppEvent::InsertHistoryCell(cell) if cell.display_lines(/*width*/ 100)[0]
             .to_string().contains("A provider change is already saving."))
@@ -214,10 +219,11 @@ async fn space_saves_once_retries_and_preserves_the_current_chat() -> Result<()>
     // Wait for the RPC without dispatching its completion on the original event channel.
     let backend = server.backend_id();
     assert!(*app.provider_writes[&backend].lock().await);
-    let other =
-        ModelCatalog::new(Vec::new()).for_backend(BackendId::new(), &mut app.provider_writes);
+    let other = ModelCatalog::new(Vec::new(), /*provider*/ None)
+        .for_backend(BackendId::new(), &mut app.provider_writes);
     assert!(!other.provider_may_have_changed());
-    let reconnected = ModelCatalog::new(Vec::new()).for_backend(backend, &mut app.provider_writes);
+    let reconnected = ModelCatalog::new(Vec::new(), /*provider*/ None)
+        .for_backend(backend, &mut app.provider_writes);
     assert!(reconnected.provider_may_have_changed());
     app.chat_widget.show_selection_view(SelectionViewParams {
         view_id: Some("test_overlay"),
@@ -275,8 +281,8 @@ async fn space_saves_once_retries_and_preserves_the_current_chat() -> Result<()>
             _ => None,
         })
         .last()
-        .expect("restart hint in history");
-    insta::assert_snapshot!(cell.display_lines(/*width*/ 160)[0].to_string(), @"• /new now uses openai. Restart the app server and TUI to refresh /model.");
+        .expect("provider selection in history");
+    insta::assert_snapshot!(cell.display_lines(/*width*/ 160)[0].to_string(), @"• New chats now use OpenAI.");
     server.shutdown().await?;
     Ok(())
 }
@@ -297,11 +303,17 @@ async fn only_ambiguous_write_failures_invalidate_the_model_catalog() {
     })));
     let disconnected = Err(std::io::Error::other("connection lost"));
     let unreadable = Ok(Ok(serde_json::Value::Null));
-    for (reply, stale) in [
-        (rejected, false),
-        (overridden, false),
-        (disconnected, true),
-        (unreadable, true),
+    let unknown_method = Ok(Err(JSONRPCErrorError {
+        code: -32600,
+        message: "Invalid request: unknown variant `modelProvider/default/set`".into(),
+        data: None,
+    }));
+    for (reply, stale, upgrade) in [
+        (rejected, false, false),
+        (overridden, false, false),
+        (disconnected, true, false),
+        (unreadable, true, false),
+        (unknown_method, false, true),
     ] {
         let (mut app, mut events, _ops) = make_test_app_with_channels().await;
         let (client, mut commands, _server_events) = ChannelClient::channel(/*capacity*/ 1);
@@ -316,18 +328,33 @@ async fn only_ambiguous_write_failures_invalidate_the_model_catalog() {
             items: vec![back()],
             ..Default::default()
         });
-        write::Write::Default("gateway".into()).start(&mut app, &server);
+        write::Write::Default {
+            id: "gateway".into(),
+            name: "Example Gateway".into(),
+        }
+        .start(&mut app, &server);
         let command = commands.recv().await.expect("config write");
+        let codex_app_server_client::ChannelOperation::Request(request) = command.operation else {
+            panic!("expected a provider selection request");
+        };
+        assert!(
+            matches!(*request, codex_app_server_protocol::ClientRequest::ModelProviderDefaultSet { params, .. }
+            if params.provider_id == "gateway")
+        );
         command
             .response
             .send(reply)
             .expect("write is awaiting a response");
-        assert!(matches!(
-            next_provider_event(&mut events).await,
-            Event::Written(_)
-        ));
-        let reconnected =
-            ModelCatalog::new(Vec::new()).for_backend(backend, &mut app.provider_writes);
+        let written = next_provider_event(&mut events).await;
+        assert!(matches!(written, Event::Written(_)));
+        if upgrade {
+            handle(&mut app, &mut make_test_tui().unwrap(), &server, written);
+            assert!(std::iter::from_fn(|| events.try_recv().ok()).any(|event| {
+                matches!(event, AppEvent::InsertHistoryCell(cell) if cell.display_lines(/*width*/ 120)[0].to_string().contains("Update the connected app server to change the default model provider."))
+            }));
+        }
+        let reconnected = ModelCatalog::new(Vec::new(), /*provider*/ None)
+            .for_backend(backend, &mut app.provider_writes);
         assert_eq!(reconnected.provider_may_have_changed(), stale);
     }
 }

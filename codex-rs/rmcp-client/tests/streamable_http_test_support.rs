@@ -324,7 +324,7 @@ pub(crate) async fn spawn_streamable_http_server() -> anyhow::Result<(Child, Str
     let address = wait_for_streamable_http_server(
         &mut child,
         &bound_addr_path,
-        Duration::from_secs(/*secs*/ 5),
+        Duration::from_secs(/*secs*/ 20),
     )
     .await?;
     Ok((child, format!("http://{address}")))
@@ -347,7 +347,7 @@ impl Drop for ExecServerProcess {
 /// Starts a local exec-server and connects an initialized `ExecServerClient`.
 pub(crate) async fn spawn_exec_server() -> anyhow::Result<ExecServerProcess> {
     let codex_home = TempDir::new()?;
-    let mut child = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
+    let mut child = Command::new(codex_utils_cargo_bin::cargo_bin("lemex")?)
         .args(["exec-server", "--listen", "ws://127.0.0.1:0"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

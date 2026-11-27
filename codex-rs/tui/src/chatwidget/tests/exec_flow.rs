@@ -13,6 +13,7 @@ async fn external_writer_snapshot_freezes_active_command_and_mcp_rows() {
             chat.transcript.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
                 "mcp-running".to_string(),
                 McpInvocation {
+                    environment_id: None,
                     server: "server".to_string(),
                     tool: "tool".to_string(),
                     arguments: None,
@@ -77,6 +78,14 @@ async fn replayed_background_terminals_belong_to_the_displayed_thread() {
     };
     fork.track_unified_exec_process_end(&exited.item_id, Some(&exited.process_id));
     fork.restore_background_terminals(request_id, vec![live, exited]);
+    for chunk in [
+        "starting\n\x1b]0;Building\x07Warning\n10%\r50%\r\x1b[",
+        "K\x1b]0;Done\x1b",
+        "\\100%\r",
+        "\nDone\ncleared\r\x1b[K",
+    ] {
+        fork.on_exec_command_output_delta("child-call", chunk);
+    }
     fork.add_ps_output();
     let history = drain_insert_history(&mut events)
         .iter()
@@ -88,6 +97,9 @@ async fn replayed_background_terminals_belong_to_the_displayed_thread() {
     Background terminals
 
       • sleep 200
+        ↳ Warning
+          100%
+          Done
     ");
 }
 
@@ -134,6 +146,7 @@ async fn replayed_completion_preserves_unrelated_running_command() {
             chat.transcript.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
                 "mcp-running".to_string(),
                 McpInvocation {
+                    environment_id: None,
                     server: "server".to_string(),
                     tool: "tool".to_string(),
                     arguments: None,
@@ -616,15 +629,13 @@ async fn exec_end_without_begin_uses_event_command() {
 #[tokio::test]
 async fn exec_end_without_begin_does_not_flush_unrelated_running_exploring_cell() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let orphan =
+        begin_unified_exec_startup(&mut chat, "call-orphan", "proc-1", "echo repro-marker");
     chat.on_task_started();
 
     begin_exec(&mut chat, "call-exploring", "cat /dev/null");
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(active_blob(&chat).contains("Read null"));
-
-    let orphan =
-        begin_unified_exec_startup(&mut chat, "call-orphan", "proc-1", "echo repro-marker");
-    assert!(drain_insert_history(&mut rx).is_empty());
 
     end_exec(
         &mut chat,
@@ -659,6 +670,7 @@ async fn exec_end_without_begin_does_not_flush_unrelated_running_exploring_cell(
 #[tokio::test]
 async fn exec_end_without_begin_flushes_completed_unrelated_exploring_cell() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let orphan = begin_unified_exec_startup(&mut chat, "call-after", "proc-1", "echo after");
     chat.on_task_started();
 
     let begin_ls = begin_exec(&mut chat, "call-ls", "ls -la");
@@ -666,7 +678,6 @@ async fn exec_end_without_begin_flushes_completed_unrelated_exploring_cell() {
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(active_blob(&chat).contains("ls -la"));
 
-    let orphan = begin_unified_exec_startup(&mut chat, "call-after", "proc-1", "echo after");
     end_exec(&mut chat, orphan, "after\n", "", /*exit_code*/ 0);
 
     let cells = drain_insert_history(&mut rx);
@@ -765,26 +776,37 @@ async fn exec_history_shows_unified_exec_tool_calls() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
 
-    let begin = begin_exec_with_source(
-        &mut chat,
-        "call-startup",
-        "ls",
-        ExecCommandSource::UnifiedExecStartup,
-    );
-    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+    for (id, command) in [
+        ("call-startup", "ls"),
+        (
+            "call-search",
+            "fd --max-depth 1 --type f -e py . repro/scripts",
+        ),
+    ] {
+        let begin = begin_exec_with_source(
+            &mut chat,
+            id,
+            command,
+            ExecCommandSource::UnifiedExecStartup,
+        );
+        end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+    }
 
-    let blob = active_blob(&chat);
-    assert_eq!(blob, "• Explored\n  └ List ls\n");
+    insta::assert_snapshot!(active_blob(&chat), @r"
+• Explored
+  └ List ls
+    Search . in scripts
+");
 }
 
 #[tokio::test]
 async fn unified_exec_unknown_end_with_active_exploring_cell_snapshot() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let orphan =
+        begin_unified_exec_startup(&mut chat, "call-orphan", "proc-1", "echo repro-marker");
     chat.on_task_started();
 
     begin_exec(&mut chat, "call-exploring", "cat /dev/null");
-    let orphan =
-        begin_unified_exec_startup(&mut chat, "call-orphan", "proc-1", "echo repro-marker");
     end_exec(
         &mut chat,
         orphan,
@@ -807,28 +829,50 @@ async fn unified_exec_unknown_end_with_active_exploring_cell_snapshot() {
 }
 
 #[tokio::test]
-async fn unified_exec_end_after_task_complete_is_suppressed() {
+async fn unified_exec_late_exit_updates_the_original_row() -> color_eyre::Result<()> {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.local_settings.tui.animations = false;
     chat.on_task_started();
-
-    let begin = begin_exec_with_source(
-        &mut chat,
-        "call-startup",
-        "echo unified exec startup",
-        ExecCommandSource::UnifiedExecStartup,
-    );
-    drain_insert_history(&mut rx);
-
+    let slow = begin_unified_exec_startup(&mut chat, "slow", "1", "sleep 20; echo marker; exit 1");
+    let started = active_blob(&chat);
+    let quick = begin_unified_exec_startup(&mut chat, "quick", "2", "echo quick");
+    end_exec(&mut chat, quick, "quick\n", "", /*exit_code*/ 0);
+    complete_assistant_message(&mut chat, "msg-1", "Finished.", /*phase*/ None);
     chat.on_task_complete(
         /*last_agent_message*/ None, /*completion*/ None, /*from_replay*/ false,
     );
-    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+    end_exec(&mut chat, slow, "marker\n", "", /*exit_code*/ 1);
+    assert!(chat.unified_exec_processes.is_empty());
+    assert!(!chat.is_task_running_for_test());
 
-    let cells = drain_insert_history(&mut rx);
-    assert!(
-        cells.is_empty(),
-        "expected unified exec end after task complete to be suppressed"
+    let mut app = crate::app::test_support::make_test_app().await;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    // Opening the transcript buffers the actual native scrollback lines for inspection.
+    app.open_transcript_overlay(&mut tui);
+    while let Ok(event) = rx.try_recv() {
+        match event {
+            AppEvent::InsertHistoryCell(cell) => app.insert_history_cell(&mut tui, cell),
+            AppEvent::CompleteBackgroundCommand(cell) => {
+                app.complete_background_command(&mut tui, cell)
+            }
+            _ => {}
+        }
+    }
+    let native = lines_to_single_string(&crate::terminal_hyperlinks::visible_lines(
+        app.deferred_history_lines.clone(),
+    ));
+    let finished = app
+        .transcript_cells
+        .iter()
+        .map(|cell| lines_to_single_string(&cell.transcript_lines(/*width*/ 80)))
+        .collect::<String>();
+    assert_chatwidget_snapshot!(
+        "unified_exec_late_exit",
+        format!(
+            "Active\n{started}\nNative scrollback\n{native}\nTranscript after exit\n{finished}"
+        )
     );
+    Ok(())
 }
 
 #[tokio::test]
@@ -946,6 +990,7 @@ async fn unified_exec_wait_status_header_updates_on_late_command_display() {
         call_id: "call-1".to_string(),
         command_display: "sleep 5".to_string(),
         recent_chunks: Vec::new(),
+        pending: Default::default(),
     });
 
     terminal_interaction(&mut chat, "call-1", "proc-1", "");
@@ -1057,6 +1102,7 @@ async fn unified_exec_empty_then_non_empty_snapshot() {
     terminal_interaction(&mut chat, "call-wait-2a", "proc-2", "");
     terminal_interaction(&mut chat, "call-wait-2b", "proc-2", "ls\n");
 
+    chat.flush_active_cell();
     let cells = drain_insert_history_transcript(&mut rx);
     let combined = cells
         .iter()
@@ -1083,28 +1129,14 @@ async fn unified_exec_non_empty_then_empty_snapshots() {
         .expect("status indicator should be visible");
     assert_eq!(status.header(), "Waiting for background terminal");
     assert_eq!(status.details(), Some("just fix"));
-    let pre_cells = drain_insert_history_transcript(&mut rx);
-    let active_combined = pre_cells
-        .iter()
-        .map(|lines| lines_to_single_string(lines))
-        .collect::<String>();
+    let active_combined =
+        lines_to_single_string(&chat.active_cell_transcript_lines(/*width*/ 80).unwrap());
     assert_chatwidget_snapshot!("unified_exec_non_empty_then_empty_active", active_combined);
 
     handle_turn_completed(&mut chat, "turn-1", /*duration_ms*/ None);
 
-    let post_cells = drain_insert_history_transcript_normalized(&mut rx);
-    let mut combined = pre_cells
-        .iter()
-        .map(|lines| lines_to_single_string(lines))
-        .collect::<String>();
-    let post = post_cells
-        .iter()
-        .map(|lines| lines_to_single_string(lines))
-        .collect::<String>();
-    if !combined.is_empty() && !post.is_empty() {
-        combined.push('\n');
-    }
-    combined.push_str(&post);
+    let combined =
+        lines_to_single_string(&drain_insert_history_transcript_normalized(&mut rx).concat());
     assert_chatwidget_snapshot!("unified_exec_non_empty_then_empty_after", combined);
 }
 
@@ -1151,6 +1183,8 @@ async fn image_generation_begin_restores_working_status_after_single_line_preamb
 #[tokio::test]
 async fn image_generation_call_adds_history_cell() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.local_settings.transcript_mode = crate::transcript_mode::TranscriptMode::Owned;
+    handle_turn_started(&mut chat, "turn-1");
 
     handle_image_generation_end(
         &mut chat,
@@ -1160,13 +1194,28 @@ async fn image_generation_call_adds_history_cell() {
         Some(test_path_buf("/tmp/ig-1.png").abs()),
     );
 
-    let cells = drain_insert_history(&mut rx);
-    assert_eq!(cells.len(), 1, "expected a single history cell");
+    assert!(drain_insert_history(&mut rx).is_empty());
+    complete_assistant_message(
+        &mut chat,
+        "image-answer",
+        "Here is the square.",
+        Some(MessagePhase::FinalAnswer),
+    );
+    handle_turn_completed(&mut chat, "turn-1", Some(2_000));
+    let cells = drain_insert_history_with(&mut rx, |cell| {
+        if cell.as_any().is::<history_cell::FinalMessageSeparator>() {
+            return vec!["Worked for 2s".into()];
+        }
+        cell.display_lines(/*width*/ 80)
+    });
     let platform_file_url = url::Url::from_file_path(test_path_buf("/tmp/ig-1.png"))
         .expect("test path should convert to file URL")
         .to_string();
-    let combined =
-        lines_to_single_string(&cells[0]).replace(&platform_file_url, "file:///tmp/ig-1.png");
+    let combined = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<String>()
+        .replace(&platform_file_url, "file:///tmp/ig-1.png");
     assert_chatwidget_snapshot!("image_generation_call_history_snapshot", combined);
 
     handle_image_generation_end(
@@ -1269,6 +1318,9 @@ async fn bang_shell_enter_while_task_running_submits_run_user_shell_command() {
     let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
     let configured = crate::session_state::ThreadSessionState {
+        read_only_history: false,
+        thread_settings_confirmed: true,
+        primary_environment_cwd: None,
         daybreak_enabled: false,
         windows_sandbox_host: crate::app::WindowsSandboxHost::Local,
         thread_id,
@@ -1282,7 +1334,7 @@ async fn bang_shell_enter_while_task_running_submits_run_user_shell_command() {
         approvals_reviewer: ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
-        cwd: test_path_buf("/home/user/project").abs(),
+        cwd: test_path_buf("/home/user/project").abs().into(),
         runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
@@ -1316,6 +1368,11 @@ async fn bang_shell_enter_while_task_running_submits_run_user_shell_command() {
 async fn user_message_during_user_shell_command_is_queued_not_steered() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
+    chat.on_task_started();
+    begin_unified_exec_startup(&mut chat, "background", "1", "sleep 20");
+    chat.on_task_complete(
+        /*last_agent_message*/ None, /*completion*/ None, /*from_replay*/ false,
+    );
     handle_turn_started(&mut chat, "turn-1");
     let begin = begin_exec_with_source(
         &mut chat,
@@ -1611,7 +1668,6 @@ async fn interrupt_preserves_unified_exec_wait_streak_snapshot() {
 
     handle_turn_interrupted(&mut chat, "turn-1");
 
-    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
     let cells = drain_insert_history(&mut rx);
     let combined = cells
         .iter()
@@ -1620,6 +1676,12 @@ async fn interrupt_preserves_unified_exec_wait_streak_snapshot() {
         .join("\n");
     let snapshot = format!("cells={}\n{combined}", cells.len());
     assert_chatwidget_snapshot!("interrupt_preserves_unified_exec_wait_streak", snapshot);
+
+    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+    assert!(
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .any(|event| matches!(event, AppEvent::CompleteBackgroundCommand(_)))
+    );
 }
 
 #[tokio::test]

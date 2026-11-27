@@ -47,12 +47,12 @@ use crate::app_event::HistoryLookupResponse;
 use crate::app_server_approval_conversions::file_update_changes_to_display;
 use crate::approval_events::ApplyPatchApprovalRequestEvent;
 use crate::approval_events::ExecApprovalRequestEvent;
+use crate::backend_id::BackendId;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::StatusLineSetupView;
 use crate::bottom_pane::StatusSurfacePreviewData;
 use crate::bottom_pane::StatusSurfacePreviewItem;
 use crate::bottom_pane::TerminalTitleItem;
-use crate::bottom_pane::TerminalTitleSetupView;
 use crate::diff_model::FileChange;
 use crate::git_action_directives::parse_assistant_markdown;
 use crate::legacy_core::config::Config;
@@ -101,11 +101,9 @@ use codex_app_server_protocol::ReviewTarget;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::SkillMetadata;
-use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::ThreadGoal as AppThreadGoal;
 use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
 use codex_app_server_protocol::ThreadItemPayload;
-use codex_app_server_protocol::ThreadSettings;
 use codex_app_server_protocol::ThreadSettingsUpdatedNotification;
 use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::ToolRequestUserInputParams;
@@ -137,6 +135,7 @@ use codex_protocol::approvals::GuardianAssessmentStatus;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::Settings;
 #[cfg(target_os = "windows")]
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -149,6 +148,7 @@ use codex_protocol::request_permissions::RequestPermissionsEvent;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_path_uri::PathConvention;
 use codex_utils_path_uri::PathUri;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -224,7 +224,6 @@ use crate::exec_cell::ExecCell;
 use crate::exec_cell::new_active_exec_command;
 use crate::exec_command::split_command_string;
 use crate::exec_command::strip_bash_lc_and_escape;
-use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::HistoryRenderMode;
@@ -248,6 +247,7 @@ use crate::status::RateLimitSnapshotDisplay;
 use crate::status::remote_connection::RemoteConnectionStatus;
 use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
 use crate::status_indicator_widget::StatusDetailsCapitalization;
+use crate::status_indicator_widget::StatusHeader;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 mod activity_groups;
@@ -370,9 +370,13 @@ pub(crate) use realtime::realtime_delegation_input;
 pub(crate) use realtime::tests::activate_voice_for_thread;
 #[cfg(test)]
 pub(crate) use realtime::tests::commit_realtime_history_events;
+#[cfg(test)]
+pub(crate) use realtime::tests::start_voice_attempt_for_test;
 mod reasoning_shortcuts;
 use self::realtime::RealtimeConversationUiState;
+mod read_only;
 mod rendering;
+pub(crate) use read_only::ReadOnlyThread;
 mod replay;
 mod review;
 mod review_popups;
@@ -392,6 +396,10 @@ use self::status_state::TerminalTitleStatusKind;
 mod status_controls;
 mod status_surface_commands;
 mod status_surfaces;
+mod statusline_reader;
+pub(crate) use statusline_reader::StatuslineReadEvent;
+
+pub(crate) mod statusline_state;
 use self::status_surface_commands::StatusSurfaceOverrides;
 mod streaming;
 use self::status_surfaces::CachedProjectRootName;
@@ -406,6 +414,7 @@ mod usage_history;
 use self::transcript::TranscriptState;
 mod turn_lifecycle;
 mod turn_runtime;
+use self::turn_lifecycle::SteerHint;
 use self::turn_lifecycle::TurnLifecycleState;
 mod user_messages;
 mod working_directory;
@@ -519,6 +528,7 @@ pub(crate) enum ExternalEditorState {
 /// (which view gets Ctrl+C), while `ChatWidget` owns process-level decisions such as interrupting
 /// active work, arming the double-press quit shortcut, and requesting shutdown-first exit.
 pub(crate) struct ChatWidget {
+    pub(crate) bidi_layout: bool,
     pub(crate) empty_state_animation:
         std::cell::RefCell<crate::empty_state_animation::EmptyStateAnimation>,
     pub(crate) daybreak_enabled: bool,
@@ -529,6 +539,7 @@ pub(crate) struct ChatWidget {
     config: Config,
     pub(crate) local_settings: crate::local_settings::LocalSettings,
     pub(crate) config_panel_tui: codex_config::types::Tui,
+    pub(crate) config_panel_reasoning_summary: Option<(BackendId, Option<ReasoningSummary>)>,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
     effective_service_tier: Option<String>,
@@ -543,8 +554,11 @@ pub(crate) struct ChatWidget {
     has_codex_backend_auth: bool,
     model_catalog: Arc<ModelCatalog>,
     model_popup_request_id: Option<uuid::Uuid>,
+    /// Cloud settings accepted for future turns. Serving model metadata comes from the session.
     pub(crate) cloud_picker_selection:
         Option<crate::app_server_session::user_message_submission::CloudModelSelection>,
+    pub(crate) pending_cloud_turn_settings:
+        Option<crate::app_server_session::user_message_submission::PendingCloudTurnSettings>,
     /// An app event has been queued to open the permissions picker, but no view exists yet.
     pub(crate) permission_popup_pending: bool,
     permission_popup_request_id: Option<uuid::Uuid>,
@@ -559,8 +573,13 @@ pub(crate) struct ChatWidget {
     pub(crate) initial_user_message: Option<UserMessage>,
     status_account_display: Option<StatusAccountDisplay>,
     pub(crate) remote_connection: Option<RemoteConnectionStatus>,
+    pub(crate) app_server_path_convention: Option<PathConvention>,
+    pub(crate) statusline_feature_enabled: bool,
+    statusline_read: Option<statusline_reader::ActiveStatuslineRead>,
+    pub(crate) statusline_disconnected: bool,
     /// Remote app servers cannot read image paths on the TUI host.
     pub(crate) snapshot_local_images: bool,
+    pub(crate) thread_params_mode: crate::app_server_session::ThreadParamsMode,
     pending_image_submission: Option<image_submission::PendingImageSubmission>,
     pub(crate) local_worktree_operations: bool,
     pub(crate) windows_sandbox_local_server: bool,
@@ -572,8 +591,11 @@ pub(crate) struct ChatWidget {
     token_usage_pending: bool,
     // Status and polling use account usage reads; response streams may identify meters differently.
     rate_limit_snapshots_by_limit_id: BTreeMap<String, RateLimitSnapshotDisplay>,
+    inherited_quota_provider: Option<String>,
     refreshing_status_outputs: Vec<(u64, StatusHistoryHandle)>,
     next_status_refresh_request_id: u64,
+    pub(crate) account_plan: Option<PlanType>,
+    quota_plan: Option<PlanType>,
     plan_type: Option<PlanType>,
     codex_rate_limit_reached_type: Option<RateLimitReachedType>,
     codex_spend_control_reached: Option<bool>,
@@ -622,11 +644,11 @@ pub(crate) struct ChatWidget {
     unified_exec_processes: Vec<UnifiedExecProcessSummary>,
     /// Exits observed during the pending list request take precedence over its response.
     pending_terminal_restore: Option<(uuid::Uuid, HashSet<String>)>,
-    /// Latest status per server in the active startup round. Its presence keeps
+    /// Latest status per (server name, environment ID) in the active startup round. Its presence keeps
     /// the composer busy, and its terminal outcomes determine the round's summary.
-    mcp_startup_status: Option<HashMap<String, McpStartupStatus>>,
+    mcp_startup_status: Option<HashMap<(String, Option<String>), McpStartupStatus>>,
     /// Last diagnostic per server, so replayed terminal updates are only reported once.
-    mcp_startup_last_diagnostics: HashMap<String, McpStartupStatus>,
+    mcp_startup_last_diagnostics: HashMap<(String, Option<String>), McpStartupStatus>,
     connectors: ConnectorsState,
     ide_context: IdeContextState,
     plugins_cache: PluginsCacheState,
@@ -642,8 +664,8 @@ pub(crate) struct ChatWidget {
     interrupts: InterruptManager,
     // Accumulates the current reasoning block text to extract a header
     reasoning_buffer: String,
-    // Caches the first completed bold header so later deltas do not rescan the whole block.
-    reasoning_header: Option<String>,
+    // Keep the last usable heading through tools and empty reasoning items.
+    reasoning_header: Option<StatusHeader>,
     // Preserves reasoning-summary part boundaries for transcript-only recording.
     reasoning_summary_parts: Vec<String>,
     status_state: StatusState,
@@ -655,7 +677,9 @@ pub(crate) struct ChatWidget {
     thread_rename_block_message: Option<String>,
     active_side_conversation: bool,
     blocks_direct_input: bool,
-    external_writer_view: bool,
+    read_only_thread: Option<ReadOnlyThread>,
+    read_only_history: bool,
+    thread_settings_confirmed: bool,
     provider_error: Option<codex_app_server_protocol::ModelProviderError>,
     /// Covers both queued and executing forks so repeated shortcuts cannot queue another one.
     pub(crate) fork_in_progress: bool,
@@ -677,11 +701,14 @@ pub(crate) struct ChatWidget {
     // order.
     suppress_initial_user_message_submit: bool,
     input_queue: InputQueueState,
+    /// Hold this conversation's queued input until its reply stream is usable.
+    pub(crate) thread_stream_disconnected: bool,
     safety_buffering_prompt: Option<UserMessage>,
     safety_buffering_source: UserMessageSource,
     /// Main chat-surface bindings resolved from `tui.keymap.chat`.
     chat_keymap: ChatKeymap,
     new_backend_label: Option<String>,
+    cloud_environment_name: Option<String>,
     /// Whether the preset submenu owns the next key.
     quick_dial_menu: bool,
     /// Ignore a held key after it dismisses the preset submenu.
@@ -704,8 +731,10 @@ pub(crate) struct ChatWidget {
     feedback: codex_feedback::CodexFeedback,
     // Current session rollout path (if known)
     current_rollout_path: Option<PathBuf>,
-    // Current working directory (if known)
-    current_cwd: Option<PathBuf>,
+    // Working directory of the displayed session.
+    current_cwd: PathUri,
+    current_workspace_roots: Vec<PathUri>,
+    primary_environment_cwd: Option<crate::session_state::EnvironmentCwd>,
     // App-server-backed command runner for status-line workspace metadata lookups.
     workspace_command_runner: Option<WorkspaceCommandRunner>,
     // Instruction source files loaded for the current session, supplied by app-server.
@@ -755,9 +784,7 @@ pub(crate) struct ChatWidget {
     // Cached workspace notification headline for the status line.
     status_line_workspace_headline: Option<String>,
     // Request ID for the async workspace headline fetch currently in flight.
-    status_line_workspace_headline_pending_request_id: Option<u64>,
-    // Request ID to assign to the next workspace headline fetch.
-    next_status_line_workspace_headline_request_id: u64,
+    status_line_workspace_headline_pending_request_id: Option<uuid::Uuid>,
     // Last time a workspace headline fetch was requested.
     status_line_workspace_headline_last_requested_at: Option<Instant>,
     // Set after the backend reports the workspace-message feature gate is disabled.
@@ -914,20 +941,8 @@ fn request_permissions_from_params(
 
 fn token_usage_info_from_app_server(token_usage: ThreadTokenUsage) -> TokenUsageInfo {
     TokenUsageInfo {
-        total_token_usage: TokenUsage {
-            total_tokens: token_usage.total.total_tokens,
-            input_tokens: token_usage.total.input_tokens,
-            cached_input_tokens: token_usage.total.cached_input_tokens,
-            output_tokens: token_usage.total.output_tokens,
-            reasoning_output_tokens: token_usage.total.reasoning_output_tokens,
-        },
-        last_token_usage: TokenUsage {
-            total_tokens: token_usage.last.total_tokens,
-            input_tokens: token_usage.last.input_tokens,
-            cached_input_tokens: token_usage.last.cached_input_tokens,
-            output_tokens: token_usage.last.output_tokens,
-            reasoning_output_tokens: token_usage.last.reasoning_output_tokens,
-        },
+        total_token_usage: token_usage.total.into(),
+        last_token_usage: token_usage.last.into(),
         model_context_window: token_usage.model_context_window,
     }
 }
@@ -955,7 +970,7 @@ impl ChatWidget {
     }
 
     /// Returns the cached metadata for a thread, defaulting to empty if none has been registered.
-    fn collab_agent_metadata(&self, thread_id: ThreadId) -> AgentMetadata {
+    pub(crate) fn collab_agent_metadata(&self, thread_id: ThreadId) -> AgentMetadata {
         self.collab_agent_metadata
             .get(&thread_id)
             .cloned()
@@ -1127,13 +1142,17 @@ impl ChatWidget {
         self.config.memories.generate_memories = generate_memories;
     }
 
+    fn sync_context_window_visibility(&mut self) {
+        let hidden = self.read_only_history || self.token_usage_pending;
+        self.bottom_pane.set_context_window_hidden(hidden);
+    }
+
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
         match info {
             Some(info) => self.apply_token_info(info),
             None => {
                 self.token_usage_pending = true;
-                self.bottom_pane
-                    .set_context_window_pending(/*pending*/ true);
+                self.sync_context_window_visibility();
                 self.bottom_pane
                     .set_context_window(/*percent*/ None, /*used_tokens*/ None);
                 self.token_info = None;
@@ -1143,8 +1162,7 @@ impl ChatWidget {
 
     fn apply_token_info(&mut self, info: TokenUsageInfo) {
         self.token_usage_pending = false;
-        self.bottom_pane
-            .set_context_window_pending(/*pending*/ false);
+        self.sync_context_window_visibility();
         let percent = self.context_remaining_percent(&info);
         let used_tokens = self.context_used_tokens(&info, percent.is_some());
         self.bottom_pane.set_context_window(percent, used_tokens);
@@ -1166,7 +1184,8 @@ impl ChatWidget {
         Some(info.total_token_usage.tokens_in_context_window())
     }
 
-    fn restore_pre_review_token_info(&mut self) {
+    fn reset_review_mode(&mut self) {
+        self.review.is_review_mode = false;
         if let Some(saved) = self.review.pre_review_token_info.take() {
             match saved {
                 Some(info) => self.apply_token_info(info),
@@ -1208,7 +1227,7 @@ impl ChatWidget {
         let status = self.desired_program_status();
         if let Err(err) = crate::terminal_program_status::set_terminal_program_status(
             status,
-            self.iterm_session_detail(status),
+            self.session_status_detail(status),
         ) {
             tracing::debug!(error = %err, "failed to set terminal program status");
         }
@@ -1308,8 +1327,7 @@ impl ChatWidget {
         self.flush_answer_stream_with_separator();
         self.flush_interrupt_queue();
         self.flush_active_cell();
-        self.review.is_review_mode = false;
-        self.restore_pre_review_token_info();
+        self.reset_review_mode();
         self.add_to_history(history_cell::new_review_status_line(
             "<< Code review finished >>".to_string(),
         ));
@@ -1369,6 +1387,14 @@ impl ChatWidget {
             }),
         };
         if let Some(pending) = matching.and_then(|index| steers.remove(index)) {
+            if steers.is_empty()
+                && self.turn_lifecycle.steer_hint == SteerHint::Pending
+                && self.turn_lifecycle.agent_turn_running
+                && self.last_turn_id() == Some(turn_id)
+                && !self.review.is_review_mode
+            {
+                self.turn_lifecycle.steer_hint = SteerHint::Acknowledged;
+            }
             self.refresh_pending_input_preview();
             if !already_rendered {
                 if !pending.optimistically_rendered {
@@ -1484,14 +1510,6 @@ impl ChatWidget {
         self.interrupted_turn_notice_mode = mode;
     }
 
-    pub(crate) fn add_diff_in_progress(&mut self) {
-        self.request_redraw();
-    }
-
-    pub(crate) fn on_diff_complete(&mut self) {
-        self.request_redraw();
-    }
-
     pub(crate) fn add_debug_config_output(&mut self) {
         self.add_to_history(crate::debug_config::new_debug_config_output(
             &self.config,
@@ -1505,7 +1523,7 @@ impl ChatWidget {
             .iter()
             .map(|process| history_cell::UnifiedExecProcessDetails {
                 command_display: process.command_display.clone(),
-                recent_chunks: process.recent_chunks.clone(),
+                recent_chunks: process.recent_lines(),
             })
             .collect();
         self.add_to_history(history_cell::new_unified_exec_processes_output(processes));
@@ -1834,29 +1852,9 @@ impl ChatWidget {
         self.bottom_pane.clear_esc_backtrack_hint();
     }
 
-    pub(crate) fn show_external_writer_thread(&mut self) {
-        self.cancel_image_submission();
-        self.blocks_direct_input = true;
-        self.external_writer_view = true;
-        self.pause_unavailable_thread();
-        if let Some(cell) = self.transcript.active_cell.as_mut() {
-            if let Some(exec) = cell.as_any_mut().downcast_mut::<ExecCell>() {
-                exec.freeze_snapshot();
-            } else if let Some(tool) = cell.as_any_mut().downcast_mut::<McpToolCallCell>() {
-                tool.freeze_snapshot();
-            }
-        }
-        self.bottom_pane
-            .set_composer_input_enabled(/*enabled*/ false, /*placeholder*/ None);
-    }
-
-    pub(crate) fn is_external_writer_view(&self) -> bool {
-        self.external_writer_view
-    }
-
     fn refresh_skills_for_current_cwd(&mut self, force_reload: bool) {
         self.submit_op(AppCommand::list_skills(
-            vec![self.config.cwd.to_path_buf()],
+            self.session_cwd().clone(),
             force_reload,
         ));
     }
@@ -1876,9 +1874,8 @@ impl ChatWidget {
                 AppCommand::UserTurn { .. } | AppCommand::Review { .. } | AppCommand::Compact
             )
         {
-            self.add_error_message(if self.external_writer_view {
-                "This thread is open elsewhere. Close it there and retry resume to continue."
-                    .to_string()
+            self.add_error_message(if let Some(reason) = self.read_only_thread {
+                reason.message().to_string()
             } else {
                 PARENT_OWNED_INPUT_MESSAGE.to_string()
             });
@@ -1936,11 +1933,6 @@ impl ChatWidget {
             self.clear_active_stream_tail();
             self.request_redraw();
         }
-    }
-
-    fn on_list_skills(&mut self, ev: SkillsListResponse) {
-        self.set_skills_from_response(&ev);
-        self.refresh_plugin_mentions();
     }
 
     pub(crate) fn refresh_plugin_mentions(&mut self) {
@@ -2087,15 +2079,18 @@ impl ChatWidget {
         self.bottom_pane.new_status_indicator()
     }
 
+    #[cfg(test)]
     pub(crate) fn status_line_text(&self) -> Option<String> {
-        self.status_line_content()
-            .cloned()
-            .map(|content| content.into_hyperlink_line().line.to_string())
+        self.status_line_content().map(|status| {
+            status
+                .as_native()
+                .expect("native status line")
+                .line
+                .to_string()
+        })
     }
 
-    pub(crate) fn status_line_content(
-        &self,
-    ) -> Option<&crate::bottom_pane::footer_content::FooterContent> {
+    pub(crate) fn status_line_content(&self) -> Option<&crate::bottom_pane::StatusLine> {
         self.bottom_pane.status_line_content()
     }
 
@@ -2115,14 +2110,13 @@ fn has_websocket_timing_metrics(summary: RuntimeMetricsSummary) -> bool {
 
 impl Drop for ChatWidget {
     fn drop(&mut self) {
-        if self.realtime_conversation.handle.is_some()
-            && let Some(thread_id) = self.thread_id
+        let had_live_peer = self.realtime_conversation.handle.is_some();
+        if let Some(thread_id) = self.reset_realtime_conversation()
+            && had_live_peer
         {
             self.app_event_tx
                 .send(AppEvent::StopRealtimeConversation { thread_id });
         }
-        self.reset_realtime_conversation();
-        self.stop_rate_limit_poller();
     }
 }
 

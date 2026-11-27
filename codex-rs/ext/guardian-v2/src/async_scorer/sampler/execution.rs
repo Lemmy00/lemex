@@ -114,6 +114,7 @@ impl SamplingExecution {
                 ApiError::Retryable { .. }
                 | ApiError::RateLimitExceeded { .. }
                 | ApiError::Stream(_)
+                | ApiError::WebsocketMessageTooLarge
                 | ApiError::ContentFilter
                 | ApiError::ServerOverloaded { .. }
                 | ApiError::PolicyCapacityUnavailable { .. }
@@ -144,6 +145,7 @@ impl SamplingExecution {
             LunaSamplerError::Provider(_)
             | LunaSamplerError::MissingOutput
             | LunaSamplerError::OutputTooLarge
+            | LunaSamplerError::RootEvidenceUnavailable
             | LunaSamplerError::Superseded
             | LunaSamplerError::InputTooLarge
             | LunaSamplerError::QueueFull
@@ -155,6 +157,7 @@ impl SamplingExecution {
                 )
                 | ApiError::ContextWindowExceeded
                 | ApiError::ResponseIncomplete(_)
+                | ApiError::SpendLimitExceeded(_)
                 | ApiError::QuotaExceeded
                 | ApiError::UsageNotIncluded
                 | ApiError::SessionBudgetExceeded

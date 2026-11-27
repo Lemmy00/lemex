@@ -65,7 +65,6 @@ fn websocket_start_params() -> ConversationStartParams {
         voice_session_id: None,
         transport: None,
         version: Some(RealtimeConversationVersion::V1),
-        voice: None,
     }
 }
 
@@ -286,6 +285,7 @@ async fn natural_close_finishes_before_successor_and_ignores_old_identity() {
         &old_identity,
         "A".to_owned(),
         RealtimeConversationEnd::TransportClosed,
+        /*reconnectable_session*/ false,
     );
     tokio::pin!(close);
     assert!(futures::poll!(&mut close).is_pending());
@@ -319,6 +319,7 @@ async fn natural_close_finishes_before_successor_and_ignores_old_identity() {
             &old_identity,
             "A".to_owned(),
             RealtimeConversationEnd::TransportClosed,
+            /*reconnectable_session*/ false,
         )
         .await;
     let observed = std::iter::from_fn(|| events.try_recv().ok())

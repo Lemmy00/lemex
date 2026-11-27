@@ -13,8 +13,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
-def verify(binary: Path) -> None:
+def verify(binary: Path, seed_binary: Path | None = None) -> None:
     binary = str(binary.resolve())
+    seed_binary = str(seed_binary.resolve()) if seed_binary else binary
     with tempfile.TemporaryDirectory(prefix="lemex-history-smoke-") as directory:
         home = Path(directory)
         requests = []
@@ -79,10 +80,16 @@ def verify(binary: Path) -> None:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         (home / "config.toml").write_text(f"""model_provider = "history-test"
         model = "history-test-model"
+        cli_auth_credentials_store = "file"
         approval_policy = "never"
         sandbox_mode = "read-only"
         [model_providers.history-test]
         name = "History test fixture"
+        base_url = "http://127.0.0.1:{server.server_port}/v1"
+        env_key = "LEMEX_HISTORY_FIXTURE_KEY"
+        wire_api = "responses"
+        [model_providers.history-exec-test]
+        name = "Other history provider fixture"
         base_url = "http://127.0.0.1:{server.server_port}/v1"
         env_key = "LEMEX_HISTORY_FIXTURE_KEY"
         wire_api = "responses"
@@ -103,7 +110,7 @@ def verify(binary: Path) -> None:
             def __init__(self, index):
                 self.errors = open(home / f"server-{index}.stderr", "wb")
                 self.p = subprocess.Popen(
-                    [binary, "app-server"],
+                    [seed_binary if index == 1 else binary, "app-server"],
                     cwd=home,
                     env=env,
                     stdin=subprocess.PIPE,
@@ -141,13 +148,16 @@ def verify(binary: Path) -> None:
                 line, self.buffer = self.buffer.split(b"\n", 1)
                 return json.loads(line)
 
-            def call(self, method, params):
+            def call(self, method, params, *, expect_error=False):
                 self.counter += 1
                 id = self.counter
                 self.send({"id": id, "method": method, "params": params})
                 while True:
                     m = self.next()
                     if m.get("id") == id:
+                        if expect_error:
+                            assert "error" in m, (method, m)
+                            return m["error"]
                         assert "result" in m, (method, m.get("error"))
                         return m["result"]
                     self.messages.append(m)
@@ -193,6 +203,18 @@ def verify(binary: Path) -> None:
             c.complete()
             c.close()
             c = Client(2)
+            for method, params in [
+                ("account/usage/read", None),
+                ("account/workspaceMessages/read", None),
+                ("account/sendAddCreditsNudgeEmail", {"creditType": "credits"}),
+                (
+                    "account/rateLimitResetCredit/consume",
+                    {"idempotencyKey": "lemex-boundary-fixture"},
+                ),
+            ]:
+                error = c.call(method, params, expect_error=True)
+                assert "unavailable in Lemex" in error["message"], (method, error)
+            assert len(requests) == 1, "account operations reached the coding provider"
             listed = c.call(
                 "thread/list",
                 {
@@ -244,8 +266,52 @@ def verify(binary: Path) -> None:
                 totals["output_tokens"] == 14 and totals["reasoning_output_tokens"] == 4
             )
             assert totals["total_tokens"] == 36
+            other_project = home / "other-project"
+            other_project.mkdir()
+            executed = subprocess.run(
+                [
+                    binary,
+                    "-c",
+                    'model_provider="history-exec-test"',
+                    "exec",
+                    "--skip-git-repo-check",
+                    "--json",
+                    "HISTORY_EXEC_FIXTURE",
+                ],
+                cwd=other_project,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert executed.returncode == 0, executed.stderr
+            c = Client(4)
+            listed = c.call(
+                "thread/list",
+                {
+                    "limit": 100,
+                    "modelProviders": [],
+                    "sourceKinds": ["cli", "vscode", "exec", "appServer"],
+                    "currentAccountOnly": True,
+                },
+            )
+            assert any(t["id"] == id for t in listed["data"])
+            assert any(
+                t["modelProvider"] == "history-exec-test"
+                and Path(t["cwd"]).resolve() == other_project.resolve()
+                and t["source"] == "exec"
+                for t in listed["data"]
+            ), (
+                "global history omitted an exec chat from another project and provider",
+                [
+                    {key: t.get(key) for key in ["source", "modelProvider", "cwd"]}
+                    for t in listed["data"]
+                ],
+            )
+            c.close()
+            assert len(requests) == 3, len(requests)
             print(
-                "PASS: saved chat listed after restart; transcript reopened; continuation retained prior context; both turns survived a second restart; coding token totals persisted."
+                "PASS: account reporting and credit operations rejected; saved chat listed after restart; transcript reopened; continuation retained prior context; both turns survived a second restart; coding token totals persisted; exec history included across projects and providers."
             )
         finally:
             if "c" in locals() and c.p.poll() is None:
@@ -257,4 +323,6 @@ def verify(binary: Path) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
-    verify(parser.parse_args().binary)
+    parser.add_argument("--seed-binary", type=Path)
+    args = parser.parse_args()
+    verify(args.binary, args.seed_binary)

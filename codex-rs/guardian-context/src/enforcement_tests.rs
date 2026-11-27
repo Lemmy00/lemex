@@ -53,7 +53,7 @@ fn native_agent_admission_uses_current_history_and_preserves_identity() {
             ))),
         })
         .collect(),
-        truncations: Vec::new(),
+        ..Default::default()
     };
     let mut delivered = original.clone();
     delivered.set_turn_id_if_missing("reviewer-turn");
@@ -111,7 +111,7 @@ fn native_agent_admission_uses_current_history_and_preserves_identity() {
                     delivery: SectionDelivery::Message(action),
                 },
             ],
-            truncations: Vec::new(),
+            ..Default::default()
         };
         let exact_budget = section_tokens(&pending.sections[1]);
         let mut expected = pending.clone();
@@ -134,7 +134,7 @@ fn native_agent_admission_uses_current_history_and_preserves_identity() {
         let admitted = pending
             .prepare_elastic_entries(&config)
             .unwrap()
-            .prepare_sync_delivery(&[])
+            .prepare_delivery(&[])
             .unwrap()
             .enforce_budget(
                 RequestBudget {
@@ -221,7 +221,7 @@ fn recovery_shortens_older_history_only_after_optional_evidence() {
                     Budgeted::required(action.clone().into()),
                 ]),
             }],
-            truncations: Vec::new(),
+            ..Default::default()
         };
         let mut reductions = vec![0, 4_000];
         if format == crate::TranscriptFormat::Line {
@@ -400,7 +400,7 @@ fn planned_action_budget_omits_descriptions_without_changing_arguments() {
 #[test]
 fn budget_reserves_existing_context_and_preserves_required_messages() {
     let trusted = crate::PreviousReviews::try_from_fragments(vec![crate::PreviousReview {
-        id: codex_protocol_test_support::uuid_v7_item_id_generator_for_test()("review"),
+        id: codex_thread_context_ids_test_support::thread_context_ids().next_item("review"),
         fragment: "verified review".to_owned(),
     }])
     .unwrap()
@@ -442,7 +442,7 @@ fn budget_reserves_existing_context_and_preserves_required_messages() {
                 ))]),
             },
         ],
-        truncations: Vec::new(),
+        ..Default::default()
     };
     let notice = SectionOutput {
         id: "budget_omission",
@@ -523,7 +523,7 @@ fn image_accounting_preserves_later_eviction_policy() {
                 Budgeted::required(text("user restriction")),
             ]),
         }],
-        truncations: Vec::new(),
+        ..Default::default()
     };
     let without_oversized_image = context
         .clone()
@@ -557,6 +557,9 @@ fn image_accounting_preserves_later_eviction_policy() {
         })),
         ImageReference::File { .. } => Some(Cow::Borrowed(image)),
     });
+    let mut rejected = context.clone();
+    rejected.retain_new_images(&[], |_, _| None);
+    assert_eq!(rejected.truncations.len(), 1);
     let mut continued = context.clone();
     let completed = context.clone().into_messages();
     continued.retain_new_images(&completed, |image, _| Some(Cow::Borrowed(image)));
@@ -650,7 +653,7 @@ fn image_accounting_preserves_later_eviction_policy() {
     ] {
         let context = ComposedContext {
             sections,
-            truncations: Vec::new(),
+            ..Default::default()
         }
         .enforce_budget(
             RequestBudget {

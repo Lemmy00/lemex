@@ -1,12 +1,10 @@
 use crate::types::AccountsCheckResponse;
 use crate::types::CodeTaskDetailsResponse;
 use crate::types::CodexUserSettingsResponse;
-use crate::types::CodexWorkspaceMessagesResponse;
 use crate::types::ConfigBundleResponse;
 use crate::types::PaginatedListTaskListItem;
 use crate::types::RateLimitReachedKind as BackendRateLimitReachedKind;
 use crate::types::RateLimitStatusPayload;
-use crate::types::TokenUsageProfile;
 use crate::types::TurnAttemptsSiblingTurnsResponse;
 use anyhow::Result;
 use codex_api::AuthError;
@@ -15,6 +13,8 @@ use codex_features::RuntimeAuthMode;
 use codex_http_client::CHATGPT_ACCOUNT_ID_HEADER;
 use codex_http_client::ClientRouteClass;
 use codex_http_client::HttpClientFactory;
+use codex_http_client::HttpError;
+use codex_http_client::HttpResponse;
 use codex_http_client::OutboundProxyPolicy;
 use codex_http_client::RequestBuilder;
 use codex_http_client::RouteAwareClientPool;
@@ -143,18 +143,6 @@ impl From<codex_http_client::HttpError> for RequestError {
             | codex_http_client::HttpError::Timeout) => Self::Other(error.into()),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AddCreditsNudgeCreditType {
-    Credits,
-    UsageLimit,
-}
-
-#[derive(Serialize)]
-struct SendAddCreditsNudgeEmailRequest {
-    credit_type: AddCreditsNudgeCreditType,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -505,6 +493,42 @@ impl Client {
         }
     }
 
+    /// Submits a single clip as the dictation endpoint's multipart file field.
+    pub async fn transcribe_audio(&self, mime: &str, bytes: &[u8]) -> Result<String> {
+        let extension = match mime {
+            "audio/wav" => "wav",
+            "audio/mpeg" => "mp3",
+            "audio/mp4" => "m4a",
+            "audio/webm" => "webm",
+            "audio/ogg" => "ogg",
+            _ => anyhow::bail!("unsupported audio format"),
+        };
+        let url = format!("{}/transcribe", self.base_url);
+        self.auth.validate_destination(&self.base_url, &url)?;
+        let boundary = uuid::Uuid::new_v4();
+        let mut body = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.{extension}\"\r\nContent-Type: {mime}\r\n\r\n").into_bytes();
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let response = self
+            .request(Method::POST, &url)
+            .headers(self.headers().await?)
+            .header(
+                CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await?;
+        anyhow::ensure!(response.status().is_success(), "transcription failed");
+        #[derive(serde::Deserialize)]
+        struct Transcript {
+            text: String,
+        }
+        const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+        let body = codex_http_client::bounded_response_bytes(response, MAX_RESPONSE_BYTES).await?;
+        Ok(serde_json::from_slice::<Transcript>(&body)?.text)
+    }
+
     pub async fn get_rate_limits(&self) -> Result<RateLimitSnapshot> {
         let snapshots = self.get_rate_limits_many().await?;
         let preferred = snapshots
@@ -518,6 +542,41 @@ impl Client {
         Ok(self.get_rate_limits_with_reset_credits().await?.rate_limits)
     }
 
+    pub async fn get_voice_settings(&self) -> Result<crate::VoiceSettings> {
+        let response = self
+            .voice_settings_request(Method::GET, "settings/voices", &[("voice_mode", "wingman")])
+            .await?;
+        Ok(response.json().await.map_err(HttpError::without_url)?)
+    }
+
+    pub async fn set_voice(&self, voice: &str) -> Result<()> {
+        self.voice_settings_request(
+            Method::PATCH,
+            "settings/account_user_setting",
+            &[("feature", "voice_name"), ("value", voice)],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn voice_settings_request(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<HttpResponse> {
+        let url = format!("{}/{path}", self.base_url);
+        let request = self
+            .request(method, &url)
+            .headers(self.headers().await?)
+            .query(query);
+        self.auth.validate_destination(&self.base_url, &url)?;
+        let response = request.send().await.map_err(HttpError::without_url)?;
+        let status = response.status();
+        anyhow::ensure!(status.is_success(), "HTTP {status}");
+        Ok(response)
+    }
+
     pub async fn get_accounts_check(
         &self,
     ) -> std::result::Result<AccountsCheckResponse, RequestError> {
@@ -528,36 +587,6 @@ impl Client {
         let (body, _) = self.exec_bootstrap_get(&url).await?;
         serde_json::from_str(&body)
             .map_err(|_| RequestError::Other(anyhow::anyhow!("Invalid accounts response.")))
-    }
-
-    pub async fn get_token_usage_profile(&self) -> Result<TokenUsageProfile> {
-        let url = self.token_usage_profile_url();
-        let req = self
-            .request(Method::GET, &url)
-            .headers(self.headers().await?);
-        let (body, ct) = self.exec_request(req, "GET", &url).await?;
-        self.decode_json(&url, &ct, &body)
-    }
-
-    fn token_usage_profile_url(&self) -> String {
-        match self.path_style {
-            PathStyle::CodexApi => format!("{}/api/codex/profiles/me", self.base_url),
-            PathStyle::ChatGptApi => format!("{}/wham/profiles/me", self.base_url),
-        }
-    }
-
-    pub async fn send_add_credits_nudge_email(
-        &self,
-        credit_type: AddCreditsNudgeCreditType,
-    ) -> std::result::Result<(), RequestError> {
-        let url = self.send_add_credits_nudge_email_url();
-        let req = self
-            .request(Method::POST, &url)
-            .headers(self.headers().await?)
-            .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-            .json(&SendAddCreditsNudgeEmailRequest { credit_type });
-        self.exec_request_detailed(req, "POST", &url).await?;
-        Ok(())
     }
 
     pub async fn list_tasks(
@@ -696,19 +725,6 @@ impl Client {
             .map_err(RequestError::from)
     }
 
-    pub async fn list_workspace_messages(
-        &self,
-    ) -> std::result::Result<CodexWorkspaceMessagesResponse, RequestError> {
-        let url = self.workspace_messages_url();
-        let req = self
-            .request(Method::GET, &url)
-            .headers(self.headers().await?)
-            .header(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-        let (body, ct) = self.exec_request_detailed(req, "GET", &url).await?;
-        self.decode_json::<CodexWorkspaceMessagesResponse>(&url, &ct, &body)
-            .map_err(RequestError::from)
-    }
-
     /// Create a new task (user turn) by POSTing to the appropriate backend path
     /// based on `path_style`. Returns the created task id.
     pub async fn create_task(&self, request_body: serde_json::Value) -> Result<String> {
@@ -840,28 +856,6 @@ impl Client {
                 Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached)
             }
             BackendRateLimitReachedKind::Unknown => None,
-        }
-    }
-
-    fn send_add_credits_nudge_email_url(&self) -> String {
-        match self.path_style {
-            PathStyle::CodexApi => format!(
-                "{}/api/codex/accounts/send_add_credits_nudge_email",
-                self.base_url
-            ),
-            PathStyle::ChatGptApi => {
-                format!(
-                    "{}/wham/accounts/send_add_credits_nudge_email",
-                    self.base_url
-                )
-            }
-        }
-    }
-
-    fn workspace_messages_url(&self) -> String {
-        match self.path_style {
-            PathStyle::CodexApi => format!("{}/api/codex/workspace-messages", self.base_url),
-            PathStyle::ChatGptApi => format!("{}/wham/workspace-messages", self.base_url),
         }
     }
 
@@ -1256,66 +1250,6 @@ mod tests {
 
         let snapshots = Client::rate_limit_snapshots_from_payload(payload);
         assert_eq!(snapshots[0].rate_limit_reached_type, None);
-    }
-
-    #[test]
-    fn add_credits_nudge_email_uses_expected_paths_and_bodies() {
-        let codex_client = test_client("https://example.test", PathStyle::CodexApi);
-        assert_eq!(
-            codex_client.send_add_credits_nudge_email_url(),
-            "https://example.test/api/codex/accounts/send_add_credits_nudge_email"
-        );
-
-        let chatgpt_client = test_client("https://chatgpt.com/backend-api", PathStyle::ChatGptApi);
-        assert_eq!(
-            chatgpt_client.send_add_credits_nudge_email_url(),
-            "https://chatgpt.com/backend-api/wham/accounts/send_add_credits_nudge_email"
-        );
-
-        assert_eq!(
-            serde_json::to_value(SendAddCreditsNudgeEmailRequest {
-                credit_type: AddCreditsNudgeCreditType::Credits,
-            })
-            .unwrap(),
-            serde_json::json!({ "credit_type": "credits" })
-        );
-        assert_eq!(
-            serde_json::to_value(SendAddCreditsNudgeEmailRequest {
-                credit_type: AddCreditsNudgeCreditType::UsageLimit,
-            })
-            .unwrap(),
-            serde_json::json!({ "credit_type": "usage_limit" })
-        );
-    }
-
-    #[test]
-    fn token_usage_profile_uses_expected_paths() {
-        let codex_client = test_client("https://example.test", PathStyle::CodexApi);
-        assert_eq!(
-            codex_client.token_usage_profile_url(),
-            "https://example.test/api/codex/profiles/me"
-        );
-
-        let chatgpt_client = test_client("https://chatgpt.com/backend-api", PathStyle::ChatGptApi);
-        assert_eq!(
-            chatgpt_client.token_usage_profile_url(),
-            "https://chatgpt.com/backend-api/wham/profiles/me"
-        );
-    }
-
-    #[test]
-    fn workspace_messages_uses_expected_paths() {
-        let codex_client = test_client("https://example.test", PathStyle::CodexApi);
-        assert_eq!(
-            codex_client.workspace_messages_url(),
-            "https://example.test/api/codex/workspace-messages"
-        );
-
-        let chatgpt_client = test_client("https://chatgpt.com/backend-api", PathStyle::ChatGptApi);
-        assert_eq!(
-            chatgpt_client.workspace_messages_url(),
-            "https://chatgpt.com/backend-api/wham/workspace-messages"
-        );
     }
 
     #[tokio::test]

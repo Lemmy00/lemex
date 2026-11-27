@@ -5,6 +5,7 @@ use crate::agent::control::render_input_preview;
 use crate::tools::handlers::multi_agents_spec::create_send_input_tool_v1;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_tools::ToolSpec;
+use codex_user_input::ResolvedUserInput;
 
 pub(crate) struct Handler;
 
@@ -24,10 +25,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
         )
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(self.handle_call(invocation))
     }
 }
@@ -49,6 +47,10 @@ impl Handler {
         let receiver_thread_id = parse_agent_id_target(&args.target)?;
         let input_items = parse_collab_input(args.message, args.items)?;
         let prompt = render_input_preview(&input_items);
+        let input_items = input_items
+            .into_iter()
+            .map(ResolvedUserInput::from_client)
+            .collect();
         let local_agent_control = session
             .services
             .local_agent_runtime
@@ -81,7 +83,7 @@ impl Handler {
             .emit_turn_item_started(
                 &turn,
                 &TurnItem::CollabAgentToolCall(CollabAgentToolCallItem {
-                    id: call_id.clone(),
+                    id: call_id.to_string(),
                     tool: CollabAgentTool::SendInput,
                     status: CollabAgentToolCallStatus::InProgress,
                     sender_thread_id: session.thread_id,
@@ -114,7 +116,7 @@ impl Handler {
             .emit_turn_item_completed(
                 &turn,
                 TurnItem::CollabAgentToolCall(CollabAgentToolCallItem {
-                    id: call_id,
+                    id: call_id.into(),
                     tool: CollabAgentTool::SendInput,
                     status: collab_tool_call_status(&status, Some(receiver_thread_id)),
                     sender_thread_id: session.thread_id,
@@ -170,7 +172,7 @@ impl ToolOutput for SendInputResult {
         tool_output_response_item(call_id, payload, self, Some(true), "send_input")
     }
 
-    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+    fn code_mode_result(&self, _payload: &ToolPayload) -> CodeModeToolResult {
         tool_output_code_mode_result(self, "send_input")
     }
 }

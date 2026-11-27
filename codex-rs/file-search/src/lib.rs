@@ -14,6 +14,7 @@ use nucleo::Utf32String;
 use nucleo::pattern::CaseMatching;
 use nucleo::pattern::Normalization;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::num::NonZero;
 use std::path::Path;
 use std::path::PathBuf;
@@ -45,12 +46,7 @@ pub use cli::Cli;
 /// * `path`  – Path to the matched entry (file or directory), relative to the
 ///   search directory.
 /// * `match_type` – Whether this match is a file or directory.
-/// * `indices` – Optional list of character indices that matched the query.
-///   These are only filled when the caller of [`run`] sets
-///   `options.compute_indices` to `true`. The indices vector follows the
-///   guidance from `nucleo::pattern::Pattern::indices`: they are
-///   unique and sorted in ascending order so that callers can use
-///   them directly for highlighting.
+/// * `indices` – Sorted, unique offsets into `path` in the requested [`IndexUnit`].
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct FileMatch {
     pub score: u32,
@@ -113,12 +109,21 @@ pub struct FileSearchSnapshot {
     pub walk_complete: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexUnit {
+    /// One position per matched grapheme, as used by the app-server protocol.
+    Grapheme,
+    /// Every Unicode scalar in each matched grapheme, for terminal highlighting.
+    Scalar,
+}
+
 #[derive(Debug, Clone)]
 pub struct FileSearchOptions {
     pub limit: NonZero<usize>,
     pub exclude: Vec<String>,
     pub threads: NonZero<usize>,
-    pub compute_indices: bool,
+    /// Omit highlight indices when unset.
+    pub index_unit: Option<IndexUnit>,
     /// Toggle ignore-file processing in the walker.
     ///
     /// When enabled, `.gitignore` files are scoped by
@@ -137,7 +142,7 @@ impl Default for FileSearchOptions {
             exclude: Vec::new(),
             #[expect(clippy::unwrap_used)]
             threads: NonZero::new(2).unwrap(),
-            compute_indices: false,
+            index_unit: None,
             respect_gitignore: true,
         }
     }
@@ -182,7 +187,7 @@ pub fn create_session(
         limit,
         exclude,
         threads,
-        compute_indices,
+        index_unit,
         respect_gitignore,
     } = options;
 
@@ -210,7 +215,7 @@ pub fn create_session(
         search_directories,
         limit: limit.get(),
         threads: threads.get(),
-        compute_indices,
+        index_unit,
         respect_gitignore,
         cancelled,
         shutdown: Arc::new(AtomicBool::new(false)),
@@ -285,7 +290,7 @@ pub async fn run_main<T: Reporter>(
             limit,
             exclude,
             threads,
-            compute_indices,
+            index_unit: compute_indices.then_some(IndexUnit::Scalar),
             respect_gitignore: true,
         },
         /*cancel_flag*/ None,
@@ -363,7 +368,7 @@ struct SessionInner {
     search_directories: Vec<PathBuf>,
     limit: usize,
     threads: usize,
-    compute_indices: bool,
+    index_unit: Option<IndexUnit>,
     respect_gitignore: bool,
     cancelled: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
@@ -430,15 +435,30 @@ fn walker_worker(
     override_matcher: Option<ignore::overrides::Override>,
     injector: Injector<IndexedEntry>,
 ) {
-    let Some(first_root) = inner.search_directories.first() else {
+    let roots = &inner.search_directories;
+    let Some((first_root, other_roots)) = roots.split_first() else {
         let _ = inner.work_tx.send(WorkSignal::WalkComplete);
         return;
     };
 
     let mut walk_builder = WalkBuilder::new(first_root);
-    for root in inner.search_directories.iter().skip(1) {
-        walk_builder.add(root);
+    let mut walk_roots = HashSet::from([first_root.as_path()]);
+    for root in other_roots {
+        if walk_roots.insert(root.as_path()) {
+            walk_builder.add(root);
+        }
     }
+    // Keep both walks for nested roots: ignore rules can expose different entries.
+    // Only those subtrees need to remember paths already sent to the matcher.
+    let seen_paths: Vec<_> = roots
+        .iter()
+        .map(|root| {
+            root.ancestors()
+                .skip(1)
+                .any(|parent| walk_roots.contains(parent))
+                .then(|| Mutex::new(HashSet::new()))
+        })
+        .collect();
     walk_builder
         .threads(inner.threads)
         // Allow hidden entries.
@@ -465,7 +485,7 @@ fn walker_worker(
     walker.run(|| {
         const CHECK_INTERVAL: usize = 1024;
         let mut n = 0;
-        let search_directories = inner.search_directories.clone();
+        let seen_paths = &seen_paths;
         let injector = injector.clone();
         let cancelled = inner.cancelled.clone();
         let shutdown = inner.shutdown.clone();
@@ -479,7 +499,13 @@ fn walker_worker(
             if path.to_str().is_none() {
                 return ignore::WalkState::Continue;
             }
-            if let Some((root_idx, relative_path)) = get_file_path(path, &search_directories) {
+            if let Some((root_idx, relative_path)) = get_file_path(path, roots)
+                && seen_paths[root_idx].as_ref().is_none_or(|seen| {
+                    seen.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(PathBuf::from(relative_path))
+                })
+            {
                 let match_type = match entry.file_type() {
                     Some(file_type) if file_type.is_dir() => MatchType::Directory,
                     _ => MatchType::File,

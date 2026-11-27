@@ -12,6 +12,7 @@ use codex_client::OPENAI_ORGANIZATION_HEADER;
 use codex_client::OPENAI_PROJECT_HEADER;
 use codex_client::Provider as ApiProvider;
 use codex_client::RetryConfig as ApiRetryConfig;
+pub use codex_client::is_azure_provider_name;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::config_types::ModelProviderAuthInfo;
 use codex_protocol::error::CodexErr;
@@ -104,6 +105,8 @@ pub const AMAZON_BEDROCK_GPT_5_5_MODEL_ID: &str = "openai.gpt-5.5";
 pub const AMAZON_BEDROCK_GPT_5_6_SOL_MODEL_ID: &str = "openai.gpt-5.6-sol";
 pub const AMAZON_BEDROCK_GPT_6_1_SOL_MODEL_ID: &str = "openai.gpt-6.1-sol";
 pub const AMAZON_BEDROCK_GPT_6_1_TERRA_MODEL_ID: &str = "openai.gpt-6.1-terra";
+pub const AMAZON_BEDROCK_GPT_6_2_ASTRA_MODEL_ID: &str = "openai.gpt-6.2-astra";
+pub const AMAZON_BEDROCK_GPT_6_2_SOL_MODEL_ID: &str = "openai.gpt-6.2-sol";
 pub const AMAZON_BEDROCK_GPT_6_SOL_MODEL_ID: &str = "openai.gpt-6-sol";
 pub const AMAZON_BEDROCK_GPT_6_LUNA_MODEL_ID: &str = "openai.gpt-6-luna";
 pub const AMAZON_BEDROCK_GPT_6_ASTRA_MODEL_ID: &str = "openai.gpt-6-astra";
@@ -846,6 +849,17 @@ pub fn resolve_rcp_base_url(configured: Option<String>) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
         .or_else(|| configured.filter(|value| !value.trim().is_empty()))
         .or(Some(DEFAULT_LEMEX_BASE_URL.to_string()))
+}
+
+/// Whether the provider name selects built-in authentication, even with a custom ID.
+pub fn uses_builtin_auth(name: &str) -> bool {
+    matches!(
+        name,
+        OPENAI_PROVIDER_NAME
+            | AMAZON_BEDROCK_PROVIDER_NAME
+            | AMAZON_BEDROCK_RUNTIME_PROVIDER_NAME
+            | GCP_PROVIDER_NAME
+    )
 }
 
 /// Built-in default provider list.

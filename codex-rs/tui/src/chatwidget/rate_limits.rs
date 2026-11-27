@@ -3,6 +3,7 @@
 use super::*;
 use crate::model_catalog::LUNA_RESERVE_MODEL;
 use codex_app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
+use codex_model_provider_info::OPENAI_PROVIDER_ID;
 
 pub(super) const NUDGE_MODEL_SLUG: &str = crate::model_catalog::LUNA_MODEL;
 pub(super) const RATE_LIMIT_SWITCH_PROMPT_THRESHOLD: i32 = 90;
@@ -57,7 +58,7 @@ impl RateLimitWarningState {
                     limit_label_for_window(secondary_window_minutes, /*is_secondary*/ true);
                 let remaining_percent = 100.0 - threshold;
                 warnings.push(format!(
-                    "Heads up, you have less than {remaining_percent:.0}% of your {limit_label} limit left. Run /status for a breakdown."
+                    "Heads up, you have less than {remaining_percent:.0}% of your {limit_label} limit left."
                 ));
             }
         }
@@ -83,7 +84,7 @@ impl RateLimitWarningState {
                     limit_label_for_window(primary_window_minutes, /*is_secondary*/ false);
                 let remaining_percent = 100.0 - threshold;
                 warnings.push(format!(
-                    "Heads up, you have less than {remaining_percent:.0}% of your {limit_label} limit left. Run /status for a breakdown."
+                    "Heads up, you have less than {remaining_percent:.0}% of your {limit_label} limit left."
                 ));
             }
         }
@@ -164,7 +165,12 @@ pub(super) fn app_server_rate_limit_error_kind(
         | AppServerCodexErrorInfo::PolicyCapacityUnavailable => {
             Some(RateLimitErrorKind::ServerOverloaded)
         }
-        AppServerCodexErrorInfo::UsageLimitExceeded => Some(RateLimitErrorKind::UsageLimit),
+        AppServerCodexErrorInfo::UsageLimitExceeded
+        | AppServerCodexErrorInfo::ApiKeySpendLimitExceeded
+        | AppServerCodexErrorInfo::ProjectSpendLimitExceeded
+        | AppServerCodexErrorInfo::OrganizationSpendLimitExceeded => {
+            Some(RateLimitErrorKind::UsageLimit)
+        }
         AppServerCodexErrorInfo::ResponseTooManyFailedAttempts {
             http_status_code: Some(429),
         } => Some(RateLimitErrorKind::Generic),
@@ -180,6 +186,7 @@ pub(super) fn is_app_server_cyber_policy_error(info: &AppServerCodexErrorInfo) -
 pub(super) enum RateLimitSnapshotSource {
     AccountUsage,
     RollingUpdate,
+    ProviderTurn,
 }
 
 fn has_usable_workspace_credits(credits: &CreditsSnapshot) -> bool {
@@ -187,6 +194,19 @@ fn has_usable_workspace_credits(credits: &CreditsSnapshot) -> bool {
 }
 
 impl ChatWidget {
+    pub(crate) fn quota_provider_id(&self) -> &str {
+        if self.thread_id().is_none()
+            && let Some(provider) = &self.inherited_quota_provider
+        {
+            return provider;
+        }
+        &self.config.model_provider_id
+    }
+
+    pub(crate) fn forget_inherited_quota_provider(&mut self) {
+        self.inherited_quota_provider = None;
+    }
+
     /// Poll more often near exhaustion for every ChatGPT account, independently of experiments.
     pub(crate) fn rate_limit_refresh_interval(&self) -> Option<std::time::Duration> {
         if !self.should_prefetch_rate_limits() {
@@ -231,7 +251,25 @@ impl ChatWidget {
     }
 
     pub(crate) fn on_rate_limit_snapshot(&mut self, snapshot: Option<RateLimitSnapshot>) {
+        if let Some(snapshot) = &snapshot {
+            self.observe_quota_plan(snapshot);
+        }
         self.on_rate_limit_snapshot_from(snapshot, RateLimitSnapshotSource::AccountUsage);
+    }
+
+    pub(crate) fn observe_quota_plan(&mut self, snapshot: &RateLimitSnapshot) {
+        if snapshot
+            .limit_id
+            .as_deref()
+            .is_none_or(|id| id.eq_ignore_ascii_case("codex"))
+            && let Some(plan) = snapshot.plan_type.filter(|plan| *plan != PlanType::Unknown)
+        {
+            self.quota_plan = Some(plan);
+            if self.plan_type != Some(plan) {
+                self.refresh_billing_plan();
+                self.refresh_status_surfaces();
+            }
+        }
     }
 
     pub(crate) fn on_rolling_rate_limit_snapshot(&mut self, snapshot: RateLimitSnapshot) {
@@ -245,7 +283,12 @@ impl ChatWidget {
             self.clear_backend_banner();
         }
         // Rolling app-server notifications are sparse. Preserve metadata learned from the full read.
-        self.on_rate_limit_snapshot_from(Some(snapshot), RateLimitSnapshotSource::RollingUpdate);
+        let source = if self.uses_account_quota() {
+            RateLimitSnapshotSource::RollingUpdate
+        } else {
+            RateLimitSnapshotSource::ProviderTurn
+        };
+        self.on_rate_limit_snapshot_from(Some(snapshot), source);
     }
 
     fn on_rate_limit_snapshot_from(
@@ -281,8 +324,6 @@ impl ChatWidget {
                         balance: credits.balance.clone(),
                     });
             }
-            self.plan_type = snapshot.plan_type.or(self.plan_type);
-
             if is_codex_limit
                 && (matches!(source, RateLimitSnapshotSource::AccountUsage)
                     || snapshot.spend_control_reached.is_some())
@@ -366,6 +407,7 @@ impl ChatWidget {
 
             if used_percent.is_some_and(|used| used >= RATE_LIMIT_SWITCH_PROMPT_THRESHOLD)
                 && should_warn_about_rate_limit_usage
+                && self.quota_provider_id() == OPENAI_PROVIDER_ID
                 && !self.rate_limit_switch_prompt_hidden()
                 && self.current_model() != NUDGE_MODEL_SLUG
                 && matches!(
@@ -394,13 +436,18 @@ impl ChatWidget {
             }
 
             if !warnings.is_empty() {
-                for warning in warnings {
+                for mut warning in warnings {
+                    if !matches!(source, RateLimitSnapshotSource::ProviderTurn) {
+                        warning.push_str(" Run /status for a breakdown.");
+                    }
                     self.add_to_history(history_cell::new_visible_warning_event(warning));
                 }
                 self.request_redraw();
             }
         } else {
             self.rate_limit_snapshots_by_limit_id.clear();
+            self.quota_plan = None;
+            self.refresh_billing_plan();
             self.codex_rate_limit_reached_type = None;
             self.codex_spend_control_reached = None;
         }
@@ -413,16 +460,20 @@ impl ChatWidget {
         self.refresh_status_line();
     }
 
-    pub(super) fn stop_rate_limit_poller(&mut self) {}
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn prefetch_rate_limits(&mut self) {
-        self.stop_rate_limit_poller();
+    pub(crate) fn uses_account_quota(&self) -> bool {
+        if self.thread_params_mode == crate::ThreadParamsMode::Cloud {
+            return self.requires_openai_auth;
+        }
+        // The server authenticated the quota read, but its default provider may differ
+        // from the one serving this thread.
+        self.config
+            .model_providers
+            .get(self.quota_provider_id())
+            .is_some_and(codex_model_provider::provider_uses_first_party_auth_path)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn should_prefetch_rate_limits(&self) -> bool {
-        self.requires_openai_auth && self.has_chatgpt_account
+    pub(crate) fn should_prefetch_rate_limits(&self) -> bool {
+        self.requires_openai_auth && self.has_chatgpt_account && self.uses_account_quota()
     }
 
     fn lower_cost_preset(&self) -> Option<ModelPreset> {

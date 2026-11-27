@@ -12,35 +12,100 @@
       "type": "string"
     },
     "AgentMessageDisplay": {
-      "description": "A presentation instruction for Chat to apply to this answer when recovering history.",
-      "properties": {
-        "action": {
-          "description": "Unknown actions must be left for the producing client to handle.",
-          "type": "string"
+      "description": "How Chat should present a recovered answer.",
+      "oneOf": [
+        {
+          "properties": {
+            "annotation": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AnswerAnnotation"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "mode": {
+              "enum": [
+                "show"
+              ],
+              "type": "string"
+            },
+            "trustedContacts": {
+              "$ref": "#/definitions/TrustedContacts"
+            },
+            "version": {
+              "enum": [
+                1
+              ],
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "mode",
+            "trustedContacts",
+            "version"
+          ],
+          "type": "object"
         },
-        "blockType": {
-          "type": [
-            "string",
-            "null"
-          ]
+        {
+          "properties": {
+            "mode": {
+              "enum": [
+                "hide"
+              ],
+              "type": "string"
+            },
+            "replacement": {
+              "$ref": "#/definitions/AnswerReplacement"
+            },
+            "version": {
+              "enum": [
+                1
+              ],
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "mode",
+            "replacement",
+            "version"
+          ],
+          "type": "object"
         },
-        "checkTrustedContacts": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "cyberTrustedAccess": {
-          "type": [
-            "boolean",
-            "null"
-          ]
+        {
+          "properties": {
+            "mode": {
+              "enum": [
+                "block"
+              ],
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/BlockReason"
+            },
+            "version": {
+              "enum": [
+                1
+              ],
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "mode",
+            "reason",
+            "version"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "action"
-      ],
-      "type": "object"
+      ]
     },
     "AgentMessageModeration": {
       "properties": {
@@ -56,6 +121,15 @@
         },
         "moderated": {
           "type": "boolean"
+        },
+        "promptWellbeingResults": {
+          "items": {
+            "$ref": "#/definitions/PromptWellbeingResult"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
       "required": [
@@ -65,6 +139,47 @@
     },
     "AgentPath": {
       "type": "string"
+    },
+    "AnswerAnnotation": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "enum": [
+                "wellbeingHelpline"
+              ],
+              "type": "string"
+            },
+            "subject": {
+              "$ref": "#/definitions/HelplineSubject"
+            }
+          },
+          "required": [
+            "kind",
+            "subject"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AnswerReplacement": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "enum": [
+                "wellbeingPromptHelpline"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "title": "WellbeingPromptHelplineAnswerReplacement",
+          "type": "object"
+        }
+      ]
     },
     "AsyncUserInputQuestion": {
       "additionalProperties": false,
@@ -86,6 +201,50 @@
         "title"
       ],
       "type": "object"
+    },
+    "BlockReason": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "enum": [
+                "protection"
+              ],
+              "type": "string"
+            },
+            "protectionType": {
+              "description": "Identifies the same moderation row that Chat writes on the live path.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "protectionType"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "enum": [
+                "cyber"
+              ],
+              "type": "string"
+            },
+            "trustedAccess": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "title": "KindBlockReason",
+          "type": "object"
+        }
+      ]
     },
     "ByteRange": {
       "properties": {
@@ -113,12 +272,16 @@
             "contextWindowExceeded",
             "sessionBudgetExceeded",
             "usageLimitExceeded",
+            "apiKeySpendLimitExceeded",
+            "projectSpendLimitExceeded",
+            "organizationSpendLimitExceeded",
             "rateLimitExceeded",
             "flexUnavailable",
             "serverOverloaded",
             "modelNotFound",
             "policyCapacityUnavailable",
             "cyberPolicy",
+            "bioPolicy",
             "misalignmentPolicyViolation",
             "tooManyDenials",
             "internalServerError",
@@ -710,6 +873,13 @@
       },
       "type": "object"
     },
+    "HelplineSubject": {
+      "enum": [
+        "answer",
+        "prompt"
+      ],
+      "type": "string"
+    },
     "HookPromptFragment": {
       "properties": {
         "hookRunId": {
@@ -1071,6 +1241,33 @@
           "type": "object"
         }
       ]
+    },
+    "PromptWellbeingResult": {
+      "description": "Wellbeing results for a single scored input item.",
+      "properties": {
+        "inputItemId": {
+          "type": "string"
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scores": {
+          "additionalProperties": {
+            "format": "double",
+            "type": "number"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "inputItemId",
+        "labels",
+        "scores"
+      ],
+      "type": "object"
     },
     "ReasoningEffort": {
       "description": "A non-empty reasoning effort value advertised by the model.",
@@ -1874,6 +2071,13 @@
                 "null"
               ]
             },
+            "environmentId": {
+              "description": "Registration scope, not necessarily the server's execution environment.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "error": {
               "anyOf": [
                 {
@@ -2294,6 +2498,11 @@
             "id": {
               "type": "string"
             },
+            "imageMetadata": {
+              "additionalProperties": true,
+              "description": "Per-image metadata selected by the backend for the receiving surface.",
+              "type": "object"
+            },
             "inputImages": {
               "description": "Observed local inputs for a completed generation, absent on older items.",
               "items": {
@@ -2623,6 +2832,13 @@
           "type": "object"
         }
       ]
+    },
+    "TrustedContacts": {
+      "enum": [
+        "check",
+        "skip"
+      ],
+      "type": "string"
     },
     "Turn": {
       "properties": {

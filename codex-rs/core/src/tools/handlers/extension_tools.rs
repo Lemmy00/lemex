@@ -27,14 +27,10 @@ use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
 use crate::turn_metadata::ExecutionMetadata;
 
-pub(crate) struct ExtensionToolAdapter(
-    Arc<dyn for<'call> codex_tools::ToolExecutor<ExtensionToolCall<'call>>>,
-);
+pub(crate) struct ExtensionToolAdapter(Arc<dyn ToolExecutor>);
 
 impl ExtensionToolAdapter {
-    pub(crate) fn new(
-        executor: Arc<dyn for<'call> codex_tools::ToolExecutor<ExtensionToolCall<'call>>>,
-    ) -> Self {
+    pub(crate) fn new(executor: Arc<dyn ToolExecutor>) -> Self {
         Self(executor)
     }
 }
@@ -60,23 +56,9 @@ impl ToolExecutor<ToolInvocation> for ExtensionToolAdapter {
         self.0.search_info()
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(async move {
             let step = &invocation.step_context;
-            let _native_search = if invocation.tool_name.namespace.as_deref() == Some("web")
-                && invocation.tool_name.name == "run"
-            {
-                crate::model_search::SearchOwner::reserve_native_fallback(
-                    &step.extension_data,
-                    &invocation.session.services.thread_extension_data,
-                )
-                .map_err(|err| codex_tools::FunctionCallError::RespondToModel(err.to_string()))?
-            } else {
-                None
-            };
             let selected: Vec<_> = match &invocation.environments {
                 ToolEnvironments::Arguments(environments) => {
                     environments.iter().map(|(_, env)| env.as_ref()).collect()
@@ -226,7 +208,7 @@ async fn to_extension_call<'a>(
         .and_then(|metadata| to_ascii_json_string(&metadata).ok());
     ExtensionToolCall {
         turn_id: invocation.turn.sub_id.clone(),
-        call_id: invocation.call_id.clone(),
+        call_id: invocation.call_id.to_string(),
         tool_name: invocation.tool_name.clone(),
         model: settings.model_info.slug.clone(),
         codex_turn_metadata,
@@ -283,9 +265,7 @@ mod tests {
 
     struct StubExtensionExecutor;
 
-    impl<'call> codex_extension_api::ToolExecutor<codex_tools::ToolCall<'call>>
-        for StubExtensionExecutor
-    {
+    impl codex_extension_api::ToolExecutor for StubExtensionExecutor {
         fn tool_name(&self) -> codex_tools::ToolName {
             codex_tools::ToolName::plain("extension_echo")
         }
@@ -311,11 +291,8 @@ mod tests {
 
         fn handle<'a>(
             &'a self,
-            _call: codex_tools::ToolCall<'call>,
-        ) -> codex_tools::ToolExecutorFuture<'a>
-        where
-            'call: 'a,
-        {
+            _call: codex_tools::ToolCall<'a>,
+        ) -> codex_tools::ToolExecutorFuture<'a> {
             Box::pin(async {
                 Ok(
                     Box::new(codex_tools::JsonToolOutput::new(json!({ "ok": true })))
@@ -330,9 +307,7 @@ mod tests {
         captured_sandbox_cwds: Arc<Mutex<Vec<PathUri>>>,
     }
 
-    impl<'call> codex_extension_api::ToolExecutor<codex_tools::ToolCall<'call>>
-        for CapturingExtensionExecutor
-    {
+    impl codex_extension_api::ToolExecutor for CapturingExtensionExecutor {
         fn tool_name(&self) -> codex_tools::ToolName {
             codex_tools::ToolName::plain("extension_echo")
         }
@@ -350,11 +325,8 @@ mod tests {
 
         fn handle<'a>(
             &'a self,
-            call: codex_tools::ToolCall<'call>,
-        ) -> codex_tools::ToolExecutorFuture<'a>
-        where
-            'call: 'a,
-        {
+            call: codex_tools::ToolCall<'a>,
+        ) -> codex_tools::ToolExecutorFuture<'a> {
             Box::pin(self.handle_call(call))
         }
     }
@@ -416,7 +388,7 @@ mod tests {
             turn,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            call_id: "call-extension".to_string(),
+            call_id: "call-extension".into(),
             tool_name: codex_tools::ToolName::plain("extension_echo"),
             source: ToolCallSource::Direct,
             native_call: None,
@@ -515,7 +487,7 @@ mod tests {
             turn,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
-            call_id: "call-extension".to_string(),
+            call_id: "call-extension".into(),
             tool_name: codex_tools::ToolName::plain("extension_echo"),
             source: ToolCallSource::CodeMode {
                 cell_id: "cell-1".to_string(),
@@ -609,6 +581,7 @@ mod tests {
             input_images: Vec::new(),
             imagegen_request_id: None,
             generation_id: None,
+            image_metadata: Default::default(),
         });
         let expected_completed_item = ExtensionItem::ImageGeneration(ImageGenerationItem {
             id: "call-image".to_string(),
@@ -623,6 +596,7 @@ mod tests {
             input_images: Vec::new(),
             imagegen_request_id: None,
             generation_id: None,
+            image_metadata: Default::default(),
         });
         codex_tools::TurnItemEmitter::emit_started(
             &emitter,
@@ -650,6 +624,7 @@ mod tests {
                     saved_path: Some(expected_path.clone()),
                     input_images: Vec::new(),
                     generation_id: None,
+                    image_metadata: Default::default(),
                 })],
             },
         )

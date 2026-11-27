@@ -22,10 +22,7 @@ impl ToolExecutor<ToolInvocation> for Handler {
         )
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(async move { handle_resume_agent(invocation).await.map(boxed_tool_output) })
     }
 }
@@ -64,7 +61,7 @@ async fn handle_resume_agent(
         .emit_turn_item_started(
             &turn,
             &TurnItem::CollabAgentToolCall(CollabAgentToolCallItem {
-                id: call_id.clone(),
+                id: call_id.to_string(),
                 tool: CollabAgentTool::ResumeAgent,
                 status: CollabAgentToolCallStatus::InProgress,
                 sender_thread_id: session.thread_id,
@@ -109,7 +106,7 @@ async fn handle_resume_agent(
         .emit_turn_item_completed(
             &turn,
             TurnItem::CollabAgentToolCall(CollabAgentToolCallItem {
-                id: call_id,
+                id: call_id.into(),
                 tool: CollabAgentTool::ResumeAgent,
                 status: collab_tool_call_status(&status, Some(receiver_thread_id)),
                 sender_thread_id: session.thread_id(),
@@ -165,7 +162,7 @@ impl ToolOutput for ResumeAgentResult {
         tool_output_response_item(call_id, payload, self, Some(true), "resume_agent")
     }
 
-    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+    fn code_mode_result(&self, _payload: &ToolPayload) -> CodeModeToolResult {
         tool_output_code_mode_result(self, "resume_agent")
     }
 }

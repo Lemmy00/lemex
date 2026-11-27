@@ -145,6 +145,8 @@ pub struct MatcherGroup {
     pub hooks: Vec<HookHandlerConfig>,
 }
 
+pub const MAX_MCP_HOOK_CONTEXT_TOKENS: usize = 10_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
 pub enum HookHandlerConfig {
@@ -159,6 +161,10 @@ pub enum HookHandlerConfig {
         r#async: bool,
         #[serde(default, rename = "statusMessage")]
         status_message: Option<String>,
+        /// Failure policy for synchronous hooks that support blocking.
+        /// Defaults to continue; block applies the event's blocking behavior on failure.
+        #[serde(default, rename = "onFailure", skip_serializing_if = "Option::is_none")]
+        on_failure: Option<HookFailurePolicy>,
         /// Approximate token threshold for spilling this hook's `additionalContext` to disk.
         /// Unset uses 2,500 tokens; `0` disables spilling for this hook. The threshold is
         /// evaluated against the original context; a spilled preview also includes recovery
@@ -180,11 +186,36 @@ pub enum HookHandlerConfig {
         timeout_sec: Option<u64>,
         #[serde(default, rename = "statusMessage")]
         status_message: Option<String>,
+        /// Failure policy for MCP hooks that support blocking.
+        /// Defaults to continue; block applies the event's blocking behavior on failure.
+        #[serde(default, rename = "onFailure", skip_serializing_if = "Option::is_none")]
+        on_failure: Option<HookFailurePolicy>,
+        /// Approximate token threshold for spilling plaintext `additionalContext` to disk.
+        /// Defaults to 2,500. For MCP hooks, `0` and values above 10,000
+        /// trigger a warning and use 10,000. Command hooks can disable spilling
+        /// with `0` or set a higher threshold. The MCP ceiling mirrors the
+        /// current default tool-output budget and may change in the future.
+        /// Encrypted hook output has a separate byte limit.
+        #[serde(
+            default,
+            rename = "additionalContextLimit",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(range(min = 1, max = "MAX_MCP_HOOK_CONTEXT_TOKENS"))]
+        additional_context_limit: Option<usize>,
     },
     #[serde(rename = "prompt")]
     Prompt {},
     #[serde(rename = "agent")]
     Agent {},
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum HookFailurePolicy {
+    #[default]
+    Continue,
+    Block,
 }
 
 // Reject values such as null that cannot be represented in TOML for trust hashing.

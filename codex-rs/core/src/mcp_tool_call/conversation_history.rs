@@ -9,6 +9,7 @@ use anyhow::Context;
 use codex_features::Feature;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::McpBinding;
+use codex_mcp::McpServerKey;
 use codex_tools::FunctionCallError;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
@@ -38,12 +39,15 @@ use super::with_mcp_tool_call_ids_meta;
 pub async fn conversation_history_tools(
     parent: &Arc<CodexThread>,
     max_output_tokens: usize,
-) -> anyhow::Result<Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>>> {
+) -> anyhow::Result<Vec<Arc<dyn ToolExecutor>>> {
     let binding = history_binding(&parent.session).await?;
     let mut tools = Vec::new();
     for name in ["search_messages", "read_messages"] {
         let raw_name = format!("user_message.{name}");
-        let Some(prepared) = binding.prepare_call(CODEX_APPS_MCP_SERVER_NAME, &raw_name) else {
+        let Some(prepared) = binding.prepare_call(
+            &McpServerKey::unscoped(CODEX_APPS_MCP_SERVER_NAME),
+            &raw_name,
+        ) else {
             continue;
         };
         if !prepared.is_host_owned_apps() {
@@ -59,8 +63,7 @@ pub async fn conversation_history_tools(
             parent: Arc::downgrade(&parent.session),
             function,
             max_output_tokens,
-        })
-            as Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>);
+        }) as Arc<dyn ToolExecutor>);
     }
     Ok(tools)
 }
@@ -78,7 +81,7 @@ async fn history_binding(parent: &Arc<Session>) -> anyhow::Result<Arc<McpBinding
     parent
         .services
         .mcp_runtime
-        .current_binding_for_call(CODEX_APPS_MCP_SERVER_NAME)
+        .current_binding_for_call(&McpServerKey::unscoped(CODEX_APPS_MCP_SERVER_NAME))
         .await
         .context("Parent conversation history is unavailable")
 }
@@ -89,7 +92,7 @@ struct HistoryTool {
     max_output_tokens: usize,
 }
 
-impl<'call> ToolExecutor<ToolCall<'call>> for HistoryTool {
+impl ToolExecutor for HistoryTool {
     fn tool_name(&self) -> ToolName {
         ToolName::namespaced("user_message", &self.function.name)
     }
@@ -110,17 +113,17 @@ impl<'call> ToolExecutor<ToolCall<'call>> for HistoryTool {
         ToolExposure::DirectModelOnly
     }
 
-    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
-    where
-        'call: 'a,
-    {
+    fn handle<'a>(&'a self, call: ToolCall<'a>) -> ToolExecutorFuture<'a> {
         Box::pin(async move {
             let result: anyhow::Result<Box<dyn ToolOutput>> = async {
                 let parent = self.parent.upgrade().context("Parent thread has stopped")?;
                 let binding = history_binding(&parent).await?;
                 let raw_name = format!("user_message.{}", self.function.name);
                 let prepared = binding
-                    .prepare_call(CODEX_APPS_MCP_SERVER_NAME, &raw_name)
+                    .prepare_call(
+                        &McpServerKey::unscoped(CODEX_APPS_MCP_SERVER_NAME),
+                        &raw_name,
+                    )
                     .context("History tool is disabled or unavailable on the parent")?;
                 anyhow::ensure!(
                     prepared.is_host_owned_apps(),
@@ -168,6 +171,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for HistoryTool {
                     result,
                     tool_input: arguments,
                     result_metadata_capture_allowed: false,
+                    result_capture: Default::default(),
                     wall_time: started.elapsed(),
                     original_image_detail_supported: false,
                     truncation_policy,

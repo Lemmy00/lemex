@@ -94,10 +94,7 @@ impl ToolExecutor<ToolInvocation> for RequestPermissionsHandler {
         create_request_permissions_tool(request_permissions_tool_description())
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(self.handle_call(invocation))
     }
 }
@@ -131,7 +128,7 @@ impl RequestPermissionsHandler {
         let response = session
             .request_permissions_for_environment(
                 &step_context,
-                call_id,
+                call_id.into(),
                 request,
                 cancellation_token,
             )

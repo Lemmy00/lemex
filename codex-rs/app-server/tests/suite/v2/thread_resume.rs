@@ -13,6 +13,7 @@ use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::create_mock_responses_server_sequence;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
+use app_test_support::create_request_user_input_sse_response;
 use app_test_support::rollout_path;
 use app_test_support::test_absolute_path;
 use app_test_support::to_response;
@@ -25,6 +26,7 @@ use codex_app_server_protocol::ClientInfo;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::CommandExecutionApprovalDecision;
 use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
+use codex_app_server_protocol::CyberAccessProgram;
 use codex_app_server_protocol::DeprecationNoticeNotification;
 use codex_app_server_protocol::FileChangeApprovalDecision;
 use codex_app_server_protocol::FileChangeRequestApprovalResponse;
@@ -52,6 +54,7 @@ use codex_app_server_protocol::ThreadGoalGetParams;
 use codex_app_server_protocol::ThreadGoalGetResponse;
 use codex_app_server_protocol::ThreadGoalSetResponse;
 use codex_app_server_protocol::ThreadGoalStatus;
+use codex_app_server_protocol::ThreadGoalUpdatedNotification;
 use codex_app_server_protocol::ThreadHistoryMode;
 use codex_app_server_protocol::ThreadItemPayload;
 use codex_app_server_protocol::ThreadListResponse;
@@ -59,6 +62,7 @@ use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadLoadedListResponse;
 use codex_app_server_protocol::ThreadMetadataGitInfoUpdateParams;
 use codex_app_server_protocol::ThreadMetadataUpdateParams;
+use codex_app_server_protocol::ThreadMetadataUpdateResponse;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadResumeInitialTurnsPageParams;
@@ -74,6 +78,7 @@ use codex_app_server_protocol::ThreadStatusChangedNotification;
 use codex_app_server_protocol::ThreadTurnsListParams;
 use codex_app_server_protocol::ThreadTurnsListResponse;
 use codex_app_server_protocol::ThreadUnsubscribeParams;
+use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnEnvironmentParams;
 use codex_app_server_protocol::TurnItemsView;
 use codex_app_server_protocol::TurnStartParams;
@@ -82,6 +87,7 @@ use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
+use codex_core::test_support::all_model_presets;
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_features::Feature;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
@@ -97,6 +103,7 @@ use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::openai_models::ModelAccessPrograms;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AgentMessageEvent;
 use codex_protocol::protocol::EventMsg;
@@ -115,6 +122,7 @@ use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnStartedEvent;
+use codex_protocol::turn_input::CyberAccessProgram as ProtocolCyberAccessProgram;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
 use codex_rollout::CompactedItem;
@@ -164,6 +172,212 @@ mod network_tests;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 #[cfg(not(windows))]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[test_case(true; "enrolled")]
+#[test_case(false; "opted out")]
+#[tokio::test]
+async fn external_goal_daybreak_respects_thread_enrollment(enrolled: bool) -> Result<()> {
+    let server = responses::start_sse_server().await;
+    let response = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("new-goal"),
+            responses::ev_completed_with_tokens("new-goal", /*total_tokens*/ 100),
+        ]),
+    )
+    .await;
+    let home = TempDir::new()?;
+    let catalog_path = home.path().join("models.json");
+    let mut catalog = codex_models_manager::bundled_models_response()?;
+    let model = catalog
+        .models
+        .iter_mut()
+        .find(|model| model.slug == "gpt-5.5")
+        .expect("bundled test model");
+    model.available_access_programs = Some(ModelAccessPrograms {
+        cyber: vec![ProtocolCyberAccessProgram::Standard],
+        daybreak_availability: Default::default(),
+    });
+    std::fs::write(&catalog_path, serde_json::to_vec(&catalog)?)?;
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+model = "gpt-5.5"
+approval_policy = "never"
+openai_base_url = "{}/v1"
+cli_auth_credentials_store = "file"
+model_catalog_json = {}
+
+[features]
+goals = true
+daybreak_program_propagation = true
+enable_request_compression = false
+"#,
+            server.uri(),
+            serde_json::to_string(&catalog_path)?,
+        ),
+    )?;
+    write_chatgpt_auth(
+        home.path(),
+        ChatGptAuthFixture::new("chatgpt-test-token").plan_type("pro"),
+        AuthCredentialsStoreMode::File,
+    )?;
+    let mut app = TestAppServer::builder()
+        .with_codex_home(home.path())
+        .without_managed_config()
+        .build_initialized()
+        .await?;
+    let thread = app
+        .start_thread(ThreadStartParams {
+            daybreak_enabled: Some(true),
+            daybreak_program_propagation_enrolled: Some(enrolled),
+            ..Default::default()
+        })
+        .await?
+        .thread;
+    assert_eq!(thread.daybreak_program_propagation_enrolled, Some(enrolled));
+
+    for resume in [false, true] {
+        let goal_params = if resume {
+            let request = app
+                .send_thread_metadata_update_request(ThreadMetadataUpdateParams {
+                    thread_id: thread.id.clone(),
+                    daybreak_enabled: Some(false),
+                    project_id: None,
+                    git_info: None,
+                })
+                .await?;
+            let update: ThreadMetadataUpdateResponse =
+                timeout(DEFAULT_READ_TIMEOUT, app.read_response(request)).await??;
+            assert_eq!(update.thread.daybreak_enabled, Some(false));
+            json!({"threadId": thread.id, "status": "active"})
+        } else {
+            json!({"threadId": thread.id, "objective": "Original goal", "tokenBudget": 100})
+        };
+        let request = app
+            .send_raw_request("thread/goal/set", Some(goal_params))
+            .await?;
+        let goal: ThreadGoalSetResponse =
+            timeout(DEFAULT_READ_TIMEOUT, app.read_response(request)).await??;
+        assert_eq!(goal.goal.objective, "Original goal");
+        let completed: TurnCompletedNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            app.read_notification("turn/completed"),
+        )
+        .await??;
+        if !enrolled {
+            assert_eq!(completed.turn.status, TurnStatus::Completed);
+            assert_eq!(
+                response.single_request().body_json().get("access_programs"),
+                None
+            );
+            app.shutdown_gracefully().await?;
+            return Ok(());
+        }
+        assert_eq!(completed.turn.status, TurnStatus::Failed);
+        assert_eq!(
+            completed
+                .turn
+                .error
+                .expect("unsupported Daybreak model")
+                .message,
+            "Model gpt-5.5 does not advertise Daybreak support. Turn Daybreak off and start a new Goal to apply the change, or choose a compatible model."
+        );
+        timeout(DEFAULT_READ_TIMEOUT, async {
+            loop {
+                let update: ThreadGoalUpdatedNotification =
+                    app.read_notification("thread/goal/updated").await?;
+                if update.goal.status == ThreadGoalStatus::Blocked {
+                    return Ok::<_, anyhow::Error>(());
+                }
+            }
+        })
+        .await??;
+        assert!(response.requests().is_empty());
+    }
+
+    let request = app
+        .send_raw_request("thread/goal/clear", Some(json!({"threadId": thread.id})))
+        .await?;
+    let clear: ThreadGoalClearResponse =
+        timeout(DEFAULT_READ_TIMEOUT, app.read_response(request)).await??;
+    assert!(clear.cleared);
+    let request = app
+        .send_raw_request(
+            "thread/goal/set",
+            Some(json!({"threadId": thread.id, "objective": "New goal", "tokenBudget": 100})),
+        )
+        .await?;
+    let _: ThreadGoalSetResponse =
+        timeout(DEFAULT_READ_TIMEOUT, app.read_response(request)).await??;
+    let completed: TurnCompletedNotification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        app.read_notification("turn/completed"),
+    )
+    .await??;
+    assert_eq!(completed.turn.status, TurnStatus::Completed);
+    assert_eq!(
+        response.single_request().body_json()["access_programs"],
+        json!({"cyber": "standard"})
+    );
+    app.shutdown_gracefully().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn independent_cold_resumes_overlap() -> Result<()> {
+    let responses = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    mock_responses_config(&responses.uri()).write(codex_home.path())?;
+    let make_rollout = |preview| {
+        create_fake_rollout(
+            codex_home.path(),
+            "2025-01-05T12-00-00",
+            "2025-01-05T12:00:00Z",
+            preview,
+            Some("mock_provider"),
+            /*git_info*/ None,
+        )
+    };
+    let slow = make_rollout("slow")?;
+    let quick = make_rollout("quick")?;
+    let mut client = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized()
+        .await?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}/mcp", listener.local_addr()?);
+    let slow_id = client
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: slow,
+            config: Some(std::collections::HashMap::from([(
+                "mcp_servers.blocked".to_string(),
+                json!({"url": url, "required": true, "startup_timeout_sec": 30}),
+            )])),
+            exclude_turns: true,
+            ..Default::default()
+        })
+        .await?;
+    let (blocked, _) = timeout(DEFAULT_READ_TIMEOUT, listener.accept()).await??;
+    let quick_id = client
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: quick.clone(),
+            exclude_turns: true,
+            ..Default::default()
+        })
+        .await?;
+    let response: ThreadResumeResponse =
+        timeout(DEFAULT_READ_TIMEOUT, client.read_response(quick_id)).await??;
+    assert_eq!(response.thread.id, quick);
+    drop((blocked, listener));
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        client.read_stream_until_error_message(RequestId::Integer(slow_id)),
+    )
+    .await??;
+    Ok(())
+}
 
 #[tokio::test]
 async fn thread_resume_paginated_model_context_preserves_original_metadata() -> Result<()> {
@@ -725,7 +939,7 @@ async fn thread_resume_restores_startup_and_updated_runtime_workspace_roots() ->
         .send_thread_start_request(ThreadStartParams {
             model: Some("gpt-5.4".to_string()),
             cwd: Some(initial_cwd.to_string_lossy().into_owned()),
-            runtime_workspace_roots: Some(initial_roots.clone()),
+            runtime_workspace_roots: Some(LegacyAppPathString::from_abs_paths(&initial_roots)),
             environments: Some(explicit_environments.clone()),
             ..Default::default()
         })
@@ -769,7 +983,7 @@ async fn thread_resume_restores_startup_and_updated_runtime_workspace_roots() ->
         runtime_workspace_roots,
         ..
     } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
-    assert_eq!(runtime_workspace_roots, vec![explicit_cwd.clone()]);
+    assert_eq!(runtime_workspace_roots, vec![explicit_cwd.clone().into()]);
 
     // A cwd-only update must retain the fallback's additional folder, not the live roots.
     mcp.clear_message_buffer();
@@ -808,9 +1022,10 @@ async fn thread_resume_restores_startup_and_updated_runtime_workspace_roots() ->
         .into_iter()
         .rev()
         .filter_map(|item| match item {
-            RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event)) => {
-                Some(event.thread_settings.runtime_workspace_roots)
-            }
+            RolloutItem::EventMsg {
+                event: EventMsg::ThreadSettingsApplied(event),
+                ..
+            } => Some(event.thread_settings.runtime_workspace_roots),
             _ => None,
         })
         .take(/*n*/ 3)
@@ -842,7 +1057,10 @@ async fn thread_resume_restores_startup_and_updated_runtime_workspace_roots() ->
     } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
     assert_eq!(
         (cwd, runtime_workspace_roots),
-        (initial_cwd.clone(), expected_roots)
+        (
+            initial_cwd.clone().into(),
+            LegacyAppPathString::from_abs_paths(&expected_roots)
+        )
     );
 
     Ok(())
@@ -944,7 +1162,9 @@ sandbox = "unelevated"
             .send_thread_resume_request(ThreadResumeParams {
                 thread_id: thread_id.clone(),
                 cwd: cwd_override.map(|cwd| cwd.to_string_lossy().into_owned()),
-                runtime_workspace_roots: roots_override,
+                runtime_workspace_roots: roots_override
+                    .as_deref()
+                    .map(LegacyAppPathString::from_abs_paths),
                 service_tier: (index == 2).then_some(Some("priority".to_string())),
                 personality: (index == 2).then_some(Personality::None),
                 config: (index == 1).then(|| {
@@ -960,7 +1180,10 @@ sandbox = "unelevated"
             timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
         assert_eq!(
             (resumed.cwd, resumed.runtime_workspace_roots),
-            (expected_cwd.clone(), expected_roots.clone())
+            (
+                expected_cwd.clone().into(),
+                LegacyAppPathString::from_abs_paths(&expected_roots)
+            )
         );
         if index < 3 {
             mcp.start_turn_and_wait_for_completion(TurnStartParams {
@@ -987,15 +1210,14 @@ sandbox = "unelevated"
         let expected_thread_id = ThreadId::from_string(&thread_id)?;
         let (items, _, _) = RolloutRecorder::load_rollout_items(&path).await?;
         let persisted = items.into_iter().rev().find_map(|item| match item {
-            RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event))
-                if event.thread_id == Some(expected_thread_id) =>
-            {
-                Some((
-                    event.thread_settings.cwd,
-                    event.thread_settings.runtime_workspace_roots,
-                    event.thread_settings.permission_profile,
-                ))
-            }
+            RolloutItem::EventMsg {
+                event: EventMsg::ThreadSettingsApplied(event),
+                ..
+            } if event.thread_id == Some(expected_thread_id) => Some((
+                event.thread_settings.cwd,
+                event.thread_settings.runtime_workspace_roots,
+                event.thread_settings.permission_profile,
+            )),
             _ => None,
         });
         let (persisted_cwd, persisted_roots, permission_profile) =
@@ -1177,7 +1399,11 @@ async fn cold_resume_workspace_roots_validate_foreign_startup_paths() -> Result<
             } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
             assert_eq!(
                 (thread.id, cwd, runtime_workspace_roots),
-                (thread_id, local_cwd.clone(), expected_roots)
+                (
+                    thread_id,
+                    local_cwd.clone().into(),
+                    LegacyAppPathString::from_abs_paths(&expected_roots)
+                )
             );
         } else {
             let error = timeout(
@@ -1496,8 +1722,10 @@ async fn thread_resume_preserves_goal_first_and_fork_approvals_reviewer() -> Res
             items
                 .into_iter()
                 .filter_map(|item| match item {
-                    RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event)) =>
-                        event.thread_id,
+                    RolloutItem::EventMsg {
+                        event: EventMsg::ThreadSettingsApplied(event),
+                        ..
+                    } => event.thread_id,
                     _ => None,
                 })
                 .collect::<Vec<_>>(),
@@ -1771,10 +1999,12 @@ async fn thread_resume_preserves_acknowledged_model_effort_and_approvals_reviewe
     );
     let (items, _, _) = RolloutRecorder::load_rollout_items(&rollout_path).await?;
     let mode = items.iter().rev().find_map(|item| match item {
-        RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event))
-            if event
-                .thread_id
-                .is_some_and(|id| id.to_string() == thread_id) =>
+        RolloutItem::EventMsg {
+            event: EventMsg::ThreadSettingsApplied(event),
+            ..
+        } if event
+            .thread_id
+            .is_some_and(|id| id.to_string() == thread_id) =>
         {
             Some(event.thread_settings.collaboration_mode.clone())
         }
@@ -1829,7 +2059,10 @@ async fn thread_resume_restores_collaboration_mode_from_legacy_turn_context() ->
     let (items, _, _) = RolloutRecorder::load_rollout_items(&fixture.rollout_file_path).await?;
     assert!(!items.iter().any(|item| matches!(
         item,
-        RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(_))
+        RolloutItem::EventMsg {
+            event: EventMsg::ThreadSettingsApplied(_),
+            ..
+        }
     )));
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -1924,14 +2157,14 @@ async fn cold_resume_reresolves_persisted_active_permission_profile() -> Result<
         );
         assert_eq!(
             runtime_workspace_roots,
-            vec![previous_workspace_root.path().abs()]
+            vec![previous_workspace_root.path().abs().into()]
         );
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn cold_resume_with_removed_permission_profile_uses_configured_default() -> Result<()> {
+async fn cold_resume_with_removed_permission_profile_requires_explicit_selection() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     for history_mode in [ThreadHistoryMode::Legacy, ThreadHistoryMode::Paginated] {
         let codex_home = TempDir::new()?;
@@ -1957,22 +2190,35 @@ async fn cold_resume_with_removed_permission_profile_uses_configured_default() -
             .await?;
         let resume_id = mcp
             .send_thread_resume_request(ThreadResumeParams {
-                thread_id,
+                thread_id: thread_id.clone(),
                 ..Default::default()
             })
             .await?;
-        let ThreadResumeResponse {
-            sandbox,
-            active_permission_profile,
-            ..
-        } = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
+        let error = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_error_message(RequestId::Integer(resume_id)),
+        )
+        .await??;
+        assert_eq!(error.error.code, -32600);
+        assert!(
+            error
+                .error
+                .message
+                .contains("saved permission profile `dev`")
+        );
 
-        assert!(matches!(sandbox, AppSandboxPolicy::DangerFullAccess));
+        let resume_id = mcp
+            .send_thread_resume_request(ThreadResumeParams {
+                thread_id,
+                permissions: Some(BUILT_IN_PERMISSION_PROFILE_READ_ONLY.to_string()),
+                ..Default::default()
+            })
+            .await?;
+        let response: ThreadResumeResponse =
+            timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
         assert_eq!(
-            active_permission_profile,
-            Some(ActivePermissionProfile::new(
-                BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS,
-            ))
+            response.active_permission_profile,
+            Some(ActivePermissionProfile::read_only())
         );
     }
     Ok(())
@@ -2829,7 +3075,7 @@ async fn thread_resume_returns_rollout_history() -> Result<()> {
     assert_eq!(thread.model_provider, "mock_provider");
     assert!(thread.path.as_ref().expect("thread path").is_absolute());
     assert_eq!(thread.cwd.as_path(), cwd.as_path());
-    assert_eq!(cwd, test_absolute_path("/"));
+    assert_eq!(cwd, test_absolute_path("/").into());
     assert_eq!(thread.cli_version, "0.0.0");
     assert_eq!(thread.source, SessionSource::Cli);
     assert_eq!(thread.git_info, None);
@@ -3061,6 +3307,7 @@ fn append_resume_redaction_history(
             call_id: "mcp-1".to_string(),
             invocation: McpInvocation {
                 server: "docs".to_string(),
+                environment_id: None,
                 tool: "lookup".to_string(),
                 arguments: Some(json!({"secret":"argument"})),
             },
@@ -3095,6 +3342,7 @@ fn append_resume_redaction_history(
             saved_path: Some(test_absolute_path("/tmp/ig-1.png")),
             input_images: Vec::new(),
             generation_id: None,
+            image_metadata: Default::default(),
         }),
     ]
     .into_iter()
@@ -3282,6 +3530,7 @@ async fn thread_resume_rejects_archived_session_by_id() -> Result<()> {
 #[tokio::test]
 async fn thread_resume_keeps_tool_paused_goal_paused() -> Result<()> {
     let server = create_mock_responses_server_sequence(vec![
+        create_request_user_input_sse_response("confirm-goal")?,
         responses::sse(vec![
             responses::ev_response_created("create-goal"),
             responses::ev_function_call(
@@ -3302,7 +3551,10 @@ async fn thread_resume_keeps_tool_paused_goal_paused() -> Result<()> {
     let codex_home = TempDir::new()?;
     mock_responses_config(&server.uri())
         .enable_feature(Feature::Goals)
+        .enable_feature(Feature::DefaultModeRequestUserInput)
+        .enable_feature(Feature::StepModelSwitching)
         .write(codex_home.path())?;
+    let collector = super::auth_storage_originator::configure_collector(codex_home.path()).await?;
 
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
@@ -3310,19 +3562,39 @@ async fn thread_resume_keeps_tool_paused_goal_paused() -> Result<()> {
         .build_initialized()
         .await?;
 
+    let model = all_model_presets()
+        .iter()
+        .find(|model| {
+            model.show_in_picker
+                && model.default_reasoning_effort == ReasoningEffort::Medium
+                && model
+                    .supported_reasoning_efforts
+                    .iter()
+                    .any(|level| level.effort == ReasoningEffort::High)
+        })
+        .expect("a bundled model defaults to medium and supports high effort");
     let start_id = mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
-            model: Some("gpt-5.2-codex".to_string()),
+            model: Some(model.id.clone()),
             ..Default::default()
         })
         .await?;
     let ThreadStartResponse { thread, .. } =
         timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(start_id)).await??;
 
-    let turn_id = mcp
+    // Before the first turn, /goal inherits the model default.
+    let set_id = mcp
+        .send_raw_request(
+            "thread/goal/set",
+            Some(json!({"threadId": thread.id, "objective": "initial goal", "status": "complete"})),
+        )
+        .await?;
+    let _: ThreadGoalSetResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(set_id)).await??;
+
+    let start_id = mcp
         .send_turn_start_request(TurnStartParams {
             thread_id: thread.id.clone(),
-            client_user_message_id: None,
             input: vec![UserInput::Text {
                 text: "Create a goal to keep polishing, then pause it.".to_string(),
                 text_elements: Vec::new(),
@@ -3330,11 +3602,32 @@ async fn thread_resume_keeps_tool_paused_goal_paused() -> Result<()> {
             ..Default::default()
         })
         .await?;
-    let _turn_resp: JSONRPCResponse = timeout(
+    let TurnStartResponse { turn } =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(start_id)).await??;
+    let request = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+        mcp.read_stream_until_request_message(),
     )
     .await??;
+    let ServerRequest::ToolRequestUserInput { request_id, .. } = request else {
+        anyhow::bail!("expected request_user_input, received {request:?}");
+    };
+    // Only the active turn changes. The next step calls create_goal at high
+    // while the thread still defaults to medium.
+    let update_id = mcp
+        .send_raw_request(
+            "turn/settings/update",
+            Some(json!({"threadId": thread.id, "turnId": turn.id, "effort": "high"})),
+        )
+        .await?;
+    let outcome: serde_json::Value =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(update_id)).await??;
+    assert_eq!(outcome, json!({"status": "applied"}));
+    mcp.send_response(
+        request_id,
+        json!({"answers": {"confirm_path": {"answers": ["Yes (Recommended)"]}}}),
+    )
+    .await?;
     timeout(
         DEFAULT_READ_TIMEOUT,
         mcp.read_stream_until_notification_message("turn/completed"),
@@ -3376,6 +3669,40 @@ async fn thread_resume_keeps_tool_paused_goal_paused() -> Result<()> {
             .any(|method| method == "turn/started"),
         "paused goal should not continue after thread resume"
     );
+
+    assert!(
+        timeout(DEFAULT_READ_TIMEOUT, mcp.shutdown_gracefully())
+            .await??
+            .success()
+    );
+    let mut efforts = Vec::new();
+    for request in collector.received_requests().await.expect("OTLP requests") {
+        let payload: serde_json::Value = request.body_json()?;
+        let points = payload["resourceMetrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|resource| resource["scopeMetrics"].as_array().into_iter().flatten())
+            .flat_map(|scope| scope["metrics"].as_array().into_iter().flatten())
+            .filter(|metric| metric["name"] == "codex.goal.created")
+            .flat_map(|metric| metric["sum"]["dataPoints"].as_array().into_iter().flatten());
+        for point in points {
+            let effort = point["attributes"]
+                .as_array()
+                .expect("attributes")
+                .iter()
+                .find(|tag| tag["key"] == "reasoning_effort")
+                .expect("goal creation should include reasoning effort");
+            efforts.push(
+                effort["value"]["stringValue"]
+                    .as_str()
+                    .expect("effort")
+                    .to_string(),
+            );
+        }
+    }
+    efforts.sort();
+    assert_eq!(efforts, ["high", "medium"]);
 
     Ok(())
 }
@@ -3742,6 +4069,15 @@ async fn thread_goal_set_edits_objective_without_resetting_usage() -> Result<()>
 
 #[tokio::test]
 async fn thread_goal_keeps_original_root_until_external_objective_edit() -> Result<()> {
+    check_thread_goal_continuation_program(/*enrolled*/ true).await
+}
+
+#[tokio::test]
+async fn thread_goal_continuation_respects_daybreak_opt_out() -> Result<()> {
+    check_thread_goal_continuation_program(/*enrolled*/ false).await
+}
+
+async fn check_thread_goal_continuation_program(enrolled: bool) -> Result<()> {
     let (release_original_turn, original_turn_gate) = oneshot::channel();
     let (release_edited_turn, edited_turn_gate) = oneshot::channel();
     let (server, _response_completions) = start_streaming_sse_server(vec![
@@ -3779,19 +4115,52 @@ async fn thread_goal_keeps_original_root_until_external_objective_edit() -> Resu
                 /*total_tokens*/ 100,
             ),
         ])),
+        ungated_goal_response(responses::sse(vec![
+            responses::ev_response_created("replacement-goal-continuation"),
+            responses::ev_completed_with_tokens(
+                "replacement-goal-continuation",
+                /*total_tokens*/ 100,
+            ),
+        ])),
     ])
     .await;
     let codex_home = TempDir::new()?;
-    mock_responses_config(server.uri())
-        .enable_feature(Feature::Goals)
-        .enable_feature(Feature::UntrustedAsToolOutput)
-        .write(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "gpt-5.4"
+approval_policy = "never"
+openai_base_url = "{}/v1"
+cli_auth_credentials_store = "file"
+
+[features]
+goals = true
+untrusted_as_tool_output = true
+daybreak_program_propagation = true
+enable_request_compression = false
+"#,
+            server.uri()
+        ),
+    )?;
+    write_chatgpt_auth(
+        codex_home.path(),
+        ChatGptAuthFixture::new("chatgpt-test-token").plan_type("pro"),
+        AuthCredentialsStoreMode::File,
+    )?;
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
         .without_managed_config()
         .build_initialized()
         .await?;
-    let thread = mcp.start_thread(ThreadStartParams::default()).await?.thread;
+    let thread = mcp
+        .start_thread(ThreadStartParams {
+            daybreak_program_propagation_enrolled: Some(enrolled),
+            ..Default::default()
+        })
+        .await?
+        .thread;
+    assert_eq!(thread.daybreak_program_propagation_enrolled, Some(enrolled));
 
     let start_id = mcp
         .send_turn_start_request(TurnStartParams {
@@ -3800,6 +4169,7 @@ async fn thread_goal_keeps_original_root_until_external_objective_edit() -> Resu
                 text: "create the original goal".to_string(),
                 text_elements: Vec::new(),
             }],
+            cyber_access_program: Some(CyberAccessProgram::DaybreakBlue),
             ..Default::default()
         })
         .await?;
@@ -3898,8 +4268,58 @@ async fn thread_goal_keeps_original_root_until_external_objective_edit() -> Resu
         .await??;
     }
 
+    let clear_id = mcp
+        .send_raw_request("thread/goal/clear", Some(json!({"threadId": thread.id})))
+        .await?;
+    let clear: ThreadGoalClearResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(clear_id)).await??;
+    assert!(clear.cleared);
+
+    let replacement_id = mcp
+        .send_raw_request(
+            "thread/goal/set",
+            Some(json!({
+                "threadId": thread.id,
+                "objective": "a different goal",
+                "tokenBudget": 100,
+            })),
+        )
+        .await?;
+    let replacement: ThreadGoalSetResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(replacement_id)).await??;
+    assert_eq!(replacement.goal.objective, "a different goal");
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
     let requests = server.requests().await;
-    assert_eq!(requests.len(), 8);
+    assert_eq!(requests.len(), 9);
+    // Explicit requests retain their program regardless of enrollment; automatic goal turns
+    // propagate it only for enrolled threads, including after an objective edit.
+    let programs = requests
+        .iter()
+        .map(|request| {
+            let body: serde_json::Value = serde_json::from_slice(request)?;
+            Ok(body["access_programs"]["cyber"].as_str().map(str::to_owned))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let continuation_program = enrolled.then_some("daybreak_blue");
+    assert_eq!(
+        programs.iter().map(Option::as_deref).collect::<Vec<_>>(),
+        [
+            Some("daybreak_blue"),
+            Some("daybreak_blue"),
+            Some("daybreak_blue"),
+            None,
+            continuation_program,
+            continuation_program,
+            continuation_program,
+            continuation_program,
+            None,
+        ]
+    );
     let reopened_original_request = serde_json::from_slice::<serde_json::Value>(&requests[2])?;
     assert_eq!(
         reopened_original_request["client_metadata"]["turn_id"].as_str(),
@@ -3929,7 +4349,9 @@ async fn thread_goal_keeps_original_root_until_external_objective_edit() -> Resu
             .contains(objective)
     );
     let mut wire_item = objective.as_object().expect("goal context item").clone();
-    wire_item.remove("id"); // Generated for each run.
+    // The snapshot covers the tool output. These fields carry per-run identifiers and timing.
+    wire_item.remove("id");
+    wire_item.remove("internal_chat_message_metadata_passthrough");
     wire_item.sort_keys();
     insta::assert_snapshot!(
         "model_written_goal_as_untrusted_tool_output",
@@ -5023,7 +5445,7 @@ async fn thread_resume_checkpoints_settings_without_advancing_recency() -> Resul
     let (items, _, _) = RolloutRecorder::load_rollout_items(&rollout.rollout_file_path).await?;
     assert!(items.iter().any(|item| matches!(
         item,
-        RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event))
+        RolloutItem::EventMsg { event: EventMsg::ThreadSettingsApplied(event), .. }
             if event.thread_id == Some(expected_thread_id)
     )));
 
@@ -5048,7 +5470,10 @@ async fn thread_resume_checkpoints_settings_without_advancing_recency() -> Resul
         .await?;
     let ThreadResumeResponse { cwd, .. } =
         timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
-    assert_eq!(cwd, AbsolutePathBuf::from_absolute_path(codex_home.path())?);
+    assert_eq!(
+        cwd,
+        AbsolutePathBuf::from_absolute_path(codex_home.path())?.into()
+    );
 
     let turn_id = mcp
         .send_turn_start_request(TurnStartParams {
@@ -6183,9 +6608,10 @@ async fn thread_resume_with_overrides_preserves_recency_and_checkpoints_model() 
     let expected_thread_id = ThreadId::from_string(&resumed_thread.id)?;
     let (items, _, _) = RolloutRecorder::load_rollout_items(&rollout_file_path).await?;
     let persisted_model = items.iter().rev().find_map(|item| match item {
-        RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event))
-            if event.thread_id == Some(expected_thread_id) =>
-        {
+        RolloutItem::EventMsg {
+            event: EventMsg::ThreadSettingsApplied(event),
+            ..
+        } if event.thread_id == Some(expected_thread_id) => {
             Some(event.thread_settings.model.as_str())
         }
         _ => None,
@@ -6234,7 +6660,10 @@ async fn thread_resume_does_not_checkpoint_unchanged_settings() -> Result<()> {
     let settings_before_resume = items
         .into_iter()
         .filter_map(|item| match item {
-            RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event)) => Some(event),
+            RolloutItem::EventMsg {
+                event: EventMsg::ThreadSettingsApplied(event),
+                ..
+            } => Some(event),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -6253,7 +6682,10 @@ async fn thread_resume_does_not_checkpoint_unchanged_settings() -> Result<()> {
     let settings_after_resume = items
         .into_iter()
         .filter_map(|item| match item {
-            RolloutItem::EventMsg(EventMsg::ThreadSettingsApplied(event)) => Some(event),
+            RolloutItem::EventMsg {
+                event: EventMsg::ThreadSettingsApplied(event),
+                ..
+            } => Some(event),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -6356,6 +6788,8 @@ async fn thread_resume_surfaces_cloud_config_bundle_load_errors() -> Result<()> 
     let refresh_token_url = format!("{}/oauth/token", server.uri());
     let mut mcp = TestAppServer::builder()
         .with_codex_home(codex_home.path())
+        // Startup falls back to defaults after the 401 and ignores config.toml.
+        .with_args(&["-c", &format!("chatgpt_base_url={chatgpt_base_url:?}")])
         .with_env_overrides(&[
             ("LEMEX_API_KEY", None),
             (

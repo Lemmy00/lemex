@@ -160,6 +160,7 @@ pub(super) fn completed_item(
             TurnItem::AgentMessage(AgentMessageItem {
                 moderation: event.moderation.as_ref().map(|decision| {
                     codex_protocol::items::AgentMessageModeration {
+                        prompt_wellbeing_results: decision.prompt_wellbeing_results.clone(),
                         moderated: decision.moderated,
                         display: decision.display.clone(),
                     }
@@ -203,6 +204,7 @@ pub(super) fn completed_item(
                 TurnItem::McpToolCall(McpToolCallItem {
                     id: event.call_id.clone(),
                     server: event.invocation.server.clone(),
+                    environment_id: event.invocation.environment_id.clone(),
                     tool: event.invocation.tool.clone(),
                     arguments: event
                         .invocation
@@ -250,6 +252,7 @@ pub(super) fn completed_item(
                 input_images: event.input_images.clone(),
                 imagegen_request_id: None,
                 generation_id: event.generation_id.clone(),
+                image_metadata: event.image_metadata.clone(),
             })),
             None,
         )),

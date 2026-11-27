@@ -6,6 +6,13 @@ use codex_app_server_protocol::PluginAvailability;
 use codex_utils_absolute_path::test_support::PathExt;
 use pretty_assertions::assert_eq;
 
+#[track_caller]
+pub(crate) fn assert_pending_steers_unadmitted(input: &ThreadInputState) {
+    for steer in &input.pending_steers {
+        assert_eq!(steer.admitted_turn_id, None);
+    }
+}
+
 pub(super) async fn test_config() -> (tempfile::TempDir, Config) {
     // Start from the built-in defaults so tests do not inherit host/system config.
     let codex_home = tempfile::Builder::new()
@@ -103,6 +110,9 @@ pub(crate) fn normalize_agent_center_snapshot(text: impl AsRef<str>) -> String {
                             .replace(&windows_path, unix_path)
                             .replace(&windows_path.replace('\\', "/"), unix_path);
                     }
+                    if normalized.trim() == r"C:\" || normalized.trim() == "C:/" {
+                        normalized = normalized.replace(normalized.trim(), "/");
+                    }
                     // Only ASCII path bytes change, so this is also the removed cell width.
                     let padding = pane.len().saturating_sub(normalized.len());
                     normalized.push_str(&" ".repeat(padding));
@@ -194,10 +204,13 @@ pub(super) fn test_session_telemetry(config: &Config, model: &str) -> SessionTel
     )
 }
 
-pub(super) fn test_model_catalog(_config: &Config) -> Arc<ModelCatalog> {
+pub(super) fn test_model_catalog(config: &Config) -> Arc<ModelCatalog> {
     Arc::new(
-        ModelCatalog::new(crate::test_support::TEST_MODEL_PRESETS.clone())
-            .with_collaboration_modes(
+        ModelCatalog::new(
+            crate::test_support::TEST_MODEL_PRESETS.clone(),
+            Some(config.model_provider_id.clone()),
+        )
+        .with_collaboration_modes(
             codex_models_manager::collaboration_mode_presets::builtin_collaboration_mode_presets(),
         ),
     )
@@ -318,6 +331,13 @@ pub(crate) fn set_chatgpt_auth(chat: &mut ChatWidget) {
     chat.model_catalog = test_model_catalog(&chat.config);
 }
 
+pub(crate) fn set_test_model_catalog(chat: &mut ChatWidget, models: Vec<ModelPreset>) {
+    chat.model_catalog = Arc::new(ModelCatalog::new(
+        models,
+        Some(chat.config.model_provider_id.clone()),
+    ));
+}
+
 fn test_model_info(slug: &str, priority: i32, supports_fast_mode: bool) -> ModelInfo {
     let mut service_tiers = Vec::new();
     if supports_fast_mode {
@@ -380,7 +400,7 @@ pub(crate) fn set_fast_mode_test_catalog_for_models(
     .map(Into::into)
     .collect();
 
-    Arc::make_mut(&mut chat.model_catalog).models = models;
+    Arc::make_mut(&mut chat.model_catalog).set_models(models);
 }
 
 pub(crate) async fn make_chatwidget_manual_with_sender() -> (
@@ -505,7 +525,7 @@ fn token_usage_breakdown(usage: TokenUsage) -> codex_app_server_protocol::TokenU
         total_tokens: usage.total_tokens,
         input_tokens: usage.input_tokens,
         cached_input_tokens: usage.cached_input_tokens,
-        cache_write_input_tokens: 0,
+        cache_write_input_tokens: usage.cache_write_input_tokens,
         output_tokens: usage.output_tokens,
         reasoning_output_tokens: usage.reasoning_output_tokens,
     }
@@ -624,7 +644,7 @@ pub(super) fn handle_model_verification(
     );
 }
 
-pub(super) fn handle_agent_message_delta(chat: &mut ChatWidget, delta: impl Into<String>) {
+pub(crate) fn handle_agent_message_delta(chat: &mut ChatWidget, delta: impl Into<String>) {
     chat.handle_server_notification(
         ServerNotification::AgentMessageDelta(
             codex_app_server_protocol::AgentMessageDeltaNotification {
@@ -877,6 +897,7 @@ pub(super) fn handle_image_generation_end(
                 input_images: Vec::new(),
                 imagegen_request_id: None,
                 generation_id: None,
+                image_metadata: Default::default(),
             }),
             /*started_at_ms*/ None,
             /*completed_at_ms*/ 0,
@@ -1073,7 +1094,7 @@ pub(super) fn terminal_interaction(
     );
 }
 
-pub(super) fn complete_assistant_message(
+pub(crate) fn complete_assistant_message(
     chat: &mut ChatWidget,
     item_id: &str,
     text: &str,

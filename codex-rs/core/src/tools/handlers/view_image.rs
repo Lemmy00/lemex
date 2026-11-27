@@ -1,3 +1,4 @@
+use codex_code_mode::CodeModeToolResult;
 use codex_exec_server::GetMetadataOptions;
 use codex_exec_server::ReadFileOptions;
 use codex_protocol::items::ImageViewItem;
@@ -10,10 +11,14 @@ use codex_protocol::models::ImageDetail;
 use codex_protocol::models::ImageReference;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::openai_models::InputModality;
+use codex_utils_image::MAX_SANITIZED_IMAGE_BYTES;
+use codex_utils_image::PromptImageDecoder;
 use codex_utils_image::data_url_from_bytes;
 use serde::Deserialize;
 
 use crate::function_tool::FunctionCallError;
+use crate::image_preparation::ImagePreparationMode;
+use crate::image_preparation::resize_image;
 use crate::original_image_detail::can_request_original_image_detail;
 use crate::tools::context::ToolEnvironments;
 use crate::tools::context::ToolInvocation;
@@ -83,10 +88,7 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
         true
     }
 
-    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
-    where
-        ToolInvocation: 'a,
-    {
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
         Box::pin(self.handle_call(invocation))
     }
 }
@@ -165,6 +167,16 @@ impl ViewImageHandler {
                 "image path `{model_visible_path}` is not a file"
             )));
         }
+        let mode = ImagePreparationMode::for_model(
+            &turn.config.features,
+            &step_context.settings.model_info,
+        );
+        let sanitize = mode.decoder == PromptImageDecoder::Sanitizer;
+        let invalid_image =
+            || FunctionCallError::RespondToModel(VIEW_IMAGE_INVALID_MESSAGE.to_string());
+        if sanitize && metadata.size > MAX_SANITIZED_IMAGE_BYTES as u64 {
+            return Err(invalid_image());
+        }
         let file_bytes = fs
             .read_file(&path_uri, ReadFileOptions::default(), Some(&sandbox))
             .await
@@ -173,11 +185,12 @@ impl ViewImageHandler {
                     "unable to read image at `{model_visible_path}`: {error}"
                 ))
             })?;
-        // Reject non-images before their bytes can reach code mode without changing
-        // valid image bytes, metadata, or centralized image preparation.
-        image::load_from_memory(&file_bytes).map_err(|_| {
-            FunctionCallError::RespondToModel(VIEW_IMAGE_INVALID_MESSAGE.to_string())
-        })?;
+        // Validate before passing the image to Code Mode or history.
+        if !sanitize {
+            image::load_from_memory(&file_bytes).map_err(|_| invalid_image())?;
+        } else if file_bytes.len() > MAX_SANITIZED_IMAGE_BYTES {
+            return Err(invalid_image());
+        }
 
         let can_request_original_detail =
             can_request_original_image_detail(&step_context.settings.model_info);
@@ -189,11 +202,15 @@ impl ViewImageHandler {
             DEFAULT_IMAGE_DETAIL
         };
 
-        // The history insertion path owns image preparation and resizing.
+        // Return the original so history can resize it and report the change to the model.
         let image_url = data_url_from_bytes("application/octet-stream", &file_bytes);
+        if sanitize {
+            // Check the image now so view_image can report an error before returning it.
+            resize_image(&image_url, &mut Some(image_detail), mode).map_err(|_| invalid_image())?;
+        }
 
         let item = TurnItem::ImageView(ImageViewItem {
-            id: call_id,
+            id: call_id.into(),
             path: path_uri,
         });
         session.emit_turn_item_started(turn.as_ref(), &item).await;
@@ -250,15 +267,16 @@ impl ToolOutput for ViewImageOutput {
         }
     }
 
-    fn code_mode_result(&self, _payload: &ToolPayload) -> serde_json::Value {
-        if self.unified_image_budget {
+    fn code_mode_result(&self, _payload: &ToolPayload) -> CodeModeToolResult {
+        let value = if self.unified_image_budget {
             serde_json::json!({ "image_url": self.image_url })
         } else {
             serde_json::json!({
                 "image_url": self.image_url,
                 "detail": self.image_detail
             })
-        }
+        };
+        CodeModeToolResult::from(value)
     }
 }
 
@@ -342,9 +360,11 @@ mod tests {
             unified_image_budget: false,
         };
 
-        let result = output.code_mode_result(&ToolPayload::Function {
-            arguments: "{}".to_string(),
-        });
+        let result = output
+            .code_mode_result(&ToolPayload::Function {
+                arguments: "{}".to_string(),
+            })
+            .into_json();
 
         assert_eq!(
             result,
@@ -390,7 +410,7 @@ mod tests {
                 turn,
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
                 tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
-                call_id: "call-view-image".to_string(),
+                call_id: "call-view-image".into(),
                 tool_name: codex_tools::ToolName::plain("view_image"),
                 source: ToolCallSource::Direct,
                 native_call: None,
@@ -422,7 +442,7 @@ mod tests {
                 turn,
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
                 tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
-                call_id: "call-view-image".to_string(),
+                call_id: "call-view-image".into(),
                 tool_name: codex_tools::ToolName::plain("view_image"),
                 source: ToolCallSource::Direct,
                 native_call: None,
@@ -467,7 +487,7 @@ mod tests {
                 turn,
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
                 tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
-                call_id: "call-view-image".to_string(),
+                call_id: "call-view-image".into(),
                 tool_name: codex_tools::ToolName::plain("view_image"),
                 source: ToolCallSource::Direct,
                 native_call: None,
@@ -507,7 +527,7 @@ mod tests {
                 turn,
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
                 tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
-                call_id: "call-view-image".to_string(),
+                call_id: "call-view-image".into(),
                 tool_name: codex_tools::ToolName::plain("view_image"),
                 source: ToolCallSource::CodeMode {
                     cell_id: "cell-1".to_string(),

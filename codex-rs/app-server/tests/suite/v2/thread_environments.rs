@@ -37,14 +37,20 @@ async fn thread_environments_follow_the_loaded_thread_selection() -> Result<()> 
         .with_codex_home(home.path())
         .build_initialized()
         .await?;
-    let selection = first.auto_env_params()?;
+    let mut selection = first.auto_env_params()?;
+    let cwd = &first.auto_env()?.selection().cwd;
+    let roots = vec![cwd.join("src")?.into(), cwd.join("docs")?.into()];
+    selection.runtime_workspace_roots = Some(roots.clone());
     let expected = Some(vec![ThreadEnvironment {
-        environment_id: selection.environment_id,
+        environment_id: selection.environment_id.clone(),
         cwd: selection.cwd.clone(),
-        runtime_workspace_roots: vec![selection.cwd],
+        runtime_workspace_roots: roots,
     }]);
     let request = first
-        .send_thread_start_request_with_auto_env(ThreadStartParams::default())
+        .send_thread_start_request(ThreadStartParams {
+            environments: Some(vec![selection]),
+            ..Default::default()
+        })
         .await?;
     let started: ThreadStartResponse =
         timeout(DEFAULT_READ_TIMEOUT, first.read_response(request)).await??;
@@ -110,13 +116,8 @@ async fn thread_environments_follow_the_loaded_thread_selection() -> Result<()> 
         timeout(DEFAULT_READ_TIMEOUT, second.read_response(request)).await??;
     let expected = Some(vec![ThreadEnvironment {
         environment_id: second.auto_env_params()?.environment_id,
-        cwd: resumed.cwd.clone().into(),
-        runtime_workspace_roots: resumed
-            .runtime_workspace_roots
-            .iter()
-            .cloned()
-            .map(Into::into)
-            .collect(),
+        cwd: resumed.cwd,
+        runtime_workspace_roots: resumed.runtime_workspace_roots,
     }]);
     assert_eq!(resumed.thread.environments, expected);
     assert_read_and_list_environments(&mut second, &thread_id, &expected).await?;

@@ -549,7 +549,7 @@ async fn stdio_eof_releases_thread_writer_with_pending_remote_control_enable() -
         .with_codex_home(codex_home.path())
         .without_auto_env()
         .with_env_overrides(&[(
-            "CODEX_SQLITE_HOME",
+            "LEMEX_SQLITE_HOME",
             Some(secondary_sqlite_home_path.as_ref()),
         )])
         .build_initialized()

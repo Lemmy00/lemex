@@ -110,6 +110,32 @@ async fn select_enter_closes_and_remapped_action_marks_in_the_inline_overlay() -
 }
 
 #[test]
+fn copy_notice_completes_without_a_selection_and_ignores_stale_results() {
+    use crate::clipboard_copy::CopyStatus;
+    let mut overlay = transcript_overlay(Vec::new());
+    let area = Rect::new(0, 0, 48, 8);
+    let status = Rect::new(0, 4, 48, 1);
+    let mut buffer = Buffer::empty(area);
+    overlay.show_copy_notice(Ok(CopyStatus::Pending(7)));
+    overlay.finish_pending_copy(&(6, Err("stale".into())));
+    overlay.render(area, &mut buffer);
+    let pending = buffer_to_text(&buffer, status);
+    overlay.finish_pending_copy(&(7, Err("clipboard unavailable".into())));
+    overlay.render(area, &mut buffer);
+    let failure = buffer_to_text(&buffer, status);
+    overlay.show_copy_notice(Ok(CopyStatus::Pending(8)));
+    overlay.finish_pending_copy(&(8, Ok(CopyStatus::Confirmed)));
+    overlay.render(area, &mut buffer);
+    let success = buffer_to_text(&buffer, status);
+    insta::assert_snapshot!(format!("{pending}{failure}{success}"), @"
+    Copying selection…
+    Copy failed: clipboard unavailable
+    Copied selection to clipboard
+    ");
+    assert!(!overlay.is_done());
+}
+
+#[test]
 fn scrolling_prepend_and_resize_preserve_reading_content() {
     let cells = (0..30)
         .map(|index| {
@@ -989,4 +1015,43 @@ async fn navigation_supersedes_home_before_and_after_the_first_draw() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn thread_links_return_navigation_to_the_overlay_owner() -> Result<()> {
+    use crossterm::event::MouseButton;
+    use crossterm::event::MouseEvent;
+    use crossterm::event::MouseEventKind;
+
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    let id = codex_protocol::ThreadId::new();
+    let lines = crate::markdown_render::render_markdown_lines_with_width_and_cwd(
+        &format!("[other thread](codex://threads/{id})"),
+        /*width*/ None,
+        /*cwd*/ None,
+    );
+    let mut overlay = transcript_overlay(vec![Arc::new(
+        history_cell::AgentMessageCell::new_hyperlink_lines(lines, /*is_first_line*/ true),
+    )]);
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 90, /*height*/ 12,
+    );
+    overlay.render(area, &mut Buffer::empty(area));
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
+        overlay.handle_event(
+            &mut tui,
+            TuiEvent::Mouse(MouseEvent {
+                kind,
+                column: 4,
+                row: 1,
+                modifiers: KeyModifiers::NONE,
+            }),
+        )?;
+        overlay.render(area, &mut Buffer::empty(area));
+    }
+    assert_eq!(overlay.pending_thread_link.take(), Some(id));
+    Ok(())
 }

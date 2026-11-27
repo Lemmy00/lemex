@@ -77,6 +77,7 @@ async fn thread_delete_rejects_paginated_writer_owned_by_another_process() -> Re
     let request_id = other
         .send_thread_delete_request(ThreadDeleteParams {
             thread_id: thread_id.clone(),
+            saved_side_chat_ids: None,
         })
         .await?;
     let error: JSONRPCError = timeout(
@@ -93,7 +94,10 @@ async fn thread_delete_rejects_paginated_writer_owned_by_another_process() -> Re
     let _: ThreadDeleteResponse = other
         .request(|request_id| ClientRequest::ThreadDelete {
             request_id,
-            params: ThreadDeleteParams { thread_id },
+            params: ThreadDeleteParams {
+                thread_id,
+                saved_side_chat_ids: None,
+            },
         })
         .await?;
     Ok(())
@@ -151,6 +155,7 @@ async fn thread_delete_deletes_spawned_descendants() -> Result<()> {
             request_id,
             params: ThreadDeleteParams {
                 thread_id: parent_id.clone(),
+                saved_side_chat_ids: None,
             },
         })
         .await?;
@@ -251,6 +256,7 @@ async fn thread_delete_preflights_external_fork_references_for_spawned_subtrees(
     let delete_id = mcp
         .send_thread_delete_request(ThreadDeleteParams {
             thread_id: parent_id.clone(),
+            saved_side_chat_ids: None,
         })
         .await?;
     let delete_err: JSONRPCError = timeout(
@@ -318,6 +324,7 @@ async fn thread_delete_handles_live_threads_before_rollout_exists() -> Result<()
             request_id,
             params: ThreadDeleteParams {
                 thread_id: persisted_thread.id,
+                saved_side_chat_ids: None,
             },
         })
         .await?;
@@ -332,6 +339,7 @@ async fn thread_delete_handles_live_threads_before_rollout_exists() -> Result<()
     let delete_id = mcp
         .send_thread_delete_request(ThreadDeleteParams {
             thread_id: thread.id.clone(),
+            saved_side_chat_ids: None,
         })
         .await?;
     let delete_err: JSONRPCError = timeout(
@@ -383,15 +391,20 @@ async fn thread_delete_removes_persisted_boards_even_with_agent_feature_disabled
     MockResponsesConfig::new(&server.uri())
         .enable_feature(Feature::AgentMessageBoard)
         .enable_feature(Feature::MultiAgentV2)
-        .with_extra_config(&format!(
-            "[features.guardianv3]\nenabled = {guardian_v3_enabled}"
-        ))
+        .with_extra_config("[features.guardianv3]\nenabled = false")
         .write(home.path())?;
     let mut app = TestAppServer::builder()
         .with_codex_home(home.path())
         .build_initialized()
         .await?;
-    let thread = app.start_thread(ThreadStartParams::default()).await?.thread;
+    let thread = app
+        .start_thread(ThreadStartParams {
+            history_mode: Some(codex_app_server_protocol::ThreadHistoryMode::Paginated),
+            config: Some([("features.guardianv3.enabled".into(), json!(true))].into()),
+            ..Default::default()
+        })
+        .await?
+        .thread;
     let completed = app
         .start_turn_and_wait_for_completion(TurnStartParams {
             thread_id: thread.id.clone(),
@@ -413,6 +426,13 @@ async fn thread_delete_removes_persisted_boards_even_with_agent_feature_disabled
         .await?;
     assert_eq!(board_counts(&pool).await?, (1, 1, 2));
     let guardian_options = guardian_board_options();
+    // A thread override cannot create a Guardian board on a server with GV3 disabled.
+    assert!(
+        !sqlite
+            .home()
+            .join("message_board_guardian_1.sqlite")
+            .exists()
+    );
     let retained_id = create_delete_test_rollout(home.path(), /*minute*/ 1, "Keep me")?;
     for owner in [&thread.id, &retained_id] {
         configure_local_board(
@@ -449,6 +469,7 @@ async fn thread_delete_removes_persisted_boards_even_with_agent_feature_disabled
             request_id,
             params: ThreadDeleteParams {
                 thread_id: child_id,
+                saved_side_chat_ids: None,
             },
         })
         .await?;
@@ -480,6 +501,7 @@ async fn thread_delete_removes_persisted_boards_even_with_agent_feature_disabled
             request_id,
             params: ThreadDeleteParams {
                 thread_id: thread.id.clone(),
+                saved_side_chat_ids: None,
             },
         })
         .await?;
@@ -561,6 +583,7 @@ async fn thread_delete_recovers_only_corrupt_board_with_agent_feature_disabled(
     let request_id = app
         .send_thread_delete_request(ThreadDeleteParams {
             thread_id: thread_id.clone(),
+            saved_side_chat_ids: None,
         })
         .await?;
     let error = timeout(
@@ -589,6 +612,7 @@ async fn thread_delete_recovers_only_corrupt_board_with_agent_feature_disabled(
             request_id,
             params: ThreadDeleteParams {
                 thread_id: thread_id.clone(),
+                saved_side_chat_ids: None,
             },
         })
         .await?;

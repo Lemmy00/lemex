@@ -101,8 +101,6 @@ use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::MultiAgentVersion;
-use codex_protocol::protocol::NetworkAccess;
-use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol_test_support::ContentItemTestExt;
 use codex_utils_path_uri::LegacyAppPathString;
@@ -518,7 +516,8 @@ web_search = true
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
-            ..Default::default()
+            experimental_request_user_input: None,
+            update_plan: None,
         })
     );
 }
@@ -537,7 +536,8 @@ web_search = false
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
-            ..Default::default()
+            experimental_request_user_input: None,
+            update_plan: None,
         })
     );
 }
@@ -554,8 +554,9 @@ fn tools_experimental_request_user_input_defaults_to_enabled() {
     assert_eq!(
         cfg.tools,
         Some(ToolsToml {
+            web_search: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: true }),
-            ..Default::default()
+            update_plan: None,
         })
     );
 }
@@ -573,8 +574,9 @@ enabled = false
     assert_eq!(
         cfg.tools,
         Some(ToolsToml {
+            web_search: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: false }),
-            ..Default::default()
+            update_plan: None,
         })
     );
 }
@@ -590,7 +592,6 @@ async fn load_config_resolves_experimental_request_user_input_enabled() -> std::
                     enabled: false,
                 }),
                 update_plan: None,
-                ..Default::default()
             }),
             ..ConfigToml::default()
         },
@@ -692,6 +693,9 @@ async fn load_config_resolves_code_mode_config() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     let config_toml: ConfigToml = toml::from_str(
         r#"
+[code_mode]
+heartbeat_interval_s = 30
+
 [features.code_mode]
 enabled = true
 default_exec_yield_time_ms = 10000
@@ -725,8 +729,31 @@ disable_in_process_fallback = true
         vec!["mcp__history".to_string(), "mcp__notes".to_string()]
     );
     assert!(config.code_mode.disable_in_process_fallback);
+    assert_eq!(config.code_mode.heartbeat_interval_s, 30);
     assert!(config.features.enabled(Feature::CodeMode));
     assert!(config.features.enabled(Feature::CodeModeHost));
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_resolves_response_process_mode() -> std::io::Result<()> {
+    let streaming = r#"[responses]
+process_mode = "streaming"
+"#;
+    let buffered = r#"[responses]
+process_mode = "after_complete_response"
+"#;
+    for (toml, expected) in [
+        ("", ResponseProcessMode::Streaming),
+        (streaming, ResponseProcessMode::Streaming),
+        (buffered, ResponseProcessMode::AfterCompleteResponse),
+    ] {
+        assert_eq!(
+            load_config_from_toml(toml).await?.response_process_mode,
+            expected
+        );
+    }
+
     Ok(())
 }
 
@@ -794,6 +821,7 @@ auto_compact_fallback_buffer_tokens = 8000
 "#,
             Some(TokenBudgetConfig {
                 use_history_notes_extension: true,
+                context_window_as_tool_output: false,
                 reminder_threshold_tokens: Some(16_000),
                 reminder_message_template: "Custom reminder: {n_remaining} tokens.".to_string(),
                 guidance_message: Some("Preserve important state before compaction.".to_string()),
@@ -948,7 +976,7 @@ async fn load_config_resolves_rollout_budget() -> std::io::Result<()> {
         r#"
 [features.rollout_budget]
 enabled = true
-limit_tokens = 100000
+limit_budget = 100000.5
 reminder_at_remaining_tokens = [50000, 25000, 10000]
 sampling_token_weight = 1.0
 prefill_token_weight = 0.1
@@ -968,20 +996,66 @@ prefill_token_weight = 0.1
         config.rollout_budget,
         Some(RolloutBudgetConfig {
             enforce_limit: true,
-            limit_tokens: 100_000,
+            limit_budget: 100_000.5,
+            reminder_at_context_start: true,
             reminder_at_remaining_tokens: vec![50_000, 25_000, 10_000],
             sampling_token_weight: 1.0,
             prefill_token_weight: 0.1,
         })
     );
+    // A persisted integer limit and threshold may differ by one beyond f64's exact range.
+    let legacy: ConfigToml = toml::from_str(
+        "[features.rollout_budget]\nenabled = true\nlimit_tokens = 9007199254740993\nreminder_at_remaining_tokens = [9007199254740992]\n",
+    )
+    .expect("legacy integer budget should deserialize");
+    let persisted = serde_json::to_value(&legacy).expect("serialize persisted config");
+    let persisted_budget = &persisted["features"]["rollout_budget"];
+    assert_eq!(
+        persisted_budget["limit_tokens"].as_i64(),
+        Some(9_007_199_254_740_993)
+    );
+    assert!(persisted_budget.get("limit_budget").is_none());
+    let config = Config::load_from_base_config_with_overrides(
+        legacy,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+    let resolved = config.rollout_budget.expect("legacy budget should resolve");
+    assert_eq!(
+        resolved.reminder_at_remaining_tokens,
+        vec![9_007_199_254_740_992]
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn load_config_rejects_enabled_rollout_budget_without_limit() -> std::io::Result<()> {
-    for config_toml in [
-        "[features]\nrollout_budget = true\n",
-        "[features.rollout_budget]\nenabled = true\n",
+async fn load_config_rejects_invalid_rollout_budget_limits() -> std::io::Result<()> {
+    for (config_toml, expected_error) in [
+        (
+            "[features]\nrollout_budget = true\n",
+            "features.rollout_budget requires limit_tokens or limit_budget when enabled",
+        ),
+        (
+            "[features.rollout_budget]\nenabled = true\n",
+            "features.rollout_budget requires limit_tokens or limit_budget when enabled",
+        ),
+        (
+            "[features.rollout_budget]\nenabled = true\nlimit_tokens = 100\nlimit_budget = 100.5\n",
+            "features.rollout_budget.limit_tokens and limit_budget cannot both be set",
+        ),
+        (
+            "[features.rollout_budget]\nenabled = false\nlimit_tokens = 100\nlimit_budget = 100.5\n",
+            "features.rollout_budget.limit_tokens and limit_budget cannot both be set",
+        ),
+        (
+            "[features.rollout_budget]\nenabled = true\nlimit_tokens = 0\n",
+            "features.rollout_budget allowance must be finite and positive",
+        ),
+        (
+            "[features.rollout_budget]\nenabled = true\nlimit_budget = inf\n",
+            "features.rollout_budget allowance must be finite and positive",
+        ),
     ] {
         let codex_home = tempdir()?;
         let config_toml: ConfigToml =
@@ -992,13 +1066,10 @@ async fn load_config_rejects_enabled_rollout_budget_without_limit() -> std::io::
             codex_home.abs(),
         )
         .await
-        .expect_err("enabled rollout budget without limit_tokens should be rejected");
+        .expect_err("invalid rollout budget should be rejected");
 
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-        assert_eq!(
-            err.to_string(),
-            "features.rollout_budget.limit_tokens is required when rollout_budget is enabled"
-        );
+        assert_eq!(err.to_string(), expected_error);
     }
     Ok(())
 }
@@ -1030,14 +1101,14 @@ sleep_tool = true
             },
         ),
     ] {
-        let config = load_current_time_reminder_config(config_toml).await?;
+        let config = load_config_from_toml(config_toml).await?;
         assert!(config.features.enabled(Feature::CurrentTimeReminder));
         assert_eq!(config.current_time_reminder, Some(expected));
     }
     Ok(())
 }
 
-async fn load_current_time_reminder_config(config_toml: &str) -> std::io::Result<Config> {
+async fn load_config_from_toml(config_toml: &str) -> std::io::Result<Config> {
     let codex_home = tempdir()?;
     let config_toml = toml::from_str(config_toml).expect("TOML should deserialize");
     Config::load_from_base_config_with_overrides(
@@ -1429,7 +1500,7 @@ fn config_toml_deserializes_model_availability_nux() {
             question_esc_back: true,
             raw_output_mode: false,
             fullscreen_transcript: true,
-            collapse_turn_details: false,
+            collapse_turn_details: true,
             sidebar_width_percent: None,
             mouse_scroll_speed: None,
             copy_on_select: Default::default(),
@@ -1437,6 +1508,7 @@ fn config_toml_deserializes_model_availability_nux() {
             right_click_paste: Default::default(),
             alternate_screen: AltScreenMode::default(),
             status_line: None,
+            status_line_provider: None,
             status_line_use_colors: true,
             terminal_title: None,
             theme: None,
@@ -1623,6 +1695,7 @@ description = "Day-to-day workspace access."
 enabled = true
 proxy_url = "http://127.0.0.1:43128"
 enable_socks5 = false
+transparent_tcp = false
 allow_upstream_proxy = false
 mode = "full"
 
@@ -1648,6 +1721,7 @@ strip_request_headers = ["authorization"]
             entries: BTreeMap::from([(
                 "dev".to_string(),
                 PermissionProfileToml {
+                    credentials: None,
                     description: Some("Day-to-day workspace access.".to_string()),
                     extends: None,
                     workspace_roots: Some(WorkspaceRootsToml {
@@ -1677,6 +1751,7 @@ strip_request_headers = ["authorization"]
                         ]),
                     }),
                     network: Some(NetworkToml {
+                        transparent_tcp: Some(false),
                         enabled: Some(true),
                         proxy_url: Some("http://127.0.0.1:43128".to_string()),
                         enable_socks5: Some(false),
@@ -1880,6 +1955,7 @@ async fn permissions_profiles_proxy_policy_does_not_start_managed_network_proxy_
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -1930,6 +2006,7 @@ async fn permissions_profiles_proxy_policy_starts_managed_network_proxy() -> std
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -2086,6 +2163,7 @@ async fn network_proxy_feature_matrix_preserves_sandbox_network_semantics() -> s
                     entries: BTreeMap::from([(
                         "dev".to_string(),
                         PermissionProfileToml {
+                            credentials: None,
                             description: None,
                             extends: None,
                             workspace_roots: None,
@@ -2586,6 +2664,7 @@ async fn network_proxy_feature_uses_profile_network_proxy_settings() -> std::io:
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -2650,6 +2729,7 @@ enabled = false
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -2701,6 +2781,7 @@ async fn permissions_profiles_network_disabled_by_default_does_not_start_proxy()
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -2738,7 +2819,7 @@ async fn permissions_profiles_network_disabled_by_default_does_not_start_proxy()
 }
 
 #[tokio::test]
-async fn default_permissions_profile_populates_runtime_sandbox_policy() -> std::io::Result<()> {
+async fn default_permissions_profile_populates_runtime_permissions() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     std::fs::create_dir_all(cwd.path().join("docs"))?;
@@ -2750,6 +2831,7 @@ async fn default_permissions_profile_populates_runtime_sandbox_policy() -> std::
             entries: BTreeMap::from([(
                 "dev".to_string(),
                 PermissionProfileToml {
+                    credentials: None,
                     description: None,
                     extends: None,
                     workspace_roots: None,
@@ -2813,15 +2895,6 @@ async fn default_permissions_profile_populates_runtime_sandbox_policy() -> std::
             },
         ]),
     );
-    assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
-            network_access: false,
-            exclude_tmpdir_env_var: true,
-            exclude_slash_tmp: true,
-        }
-    );
     assert!(
         !config
             .permissions
@@ -2857,6 +2930,7 @@ async fn default_permissions_extended_profile_preserves_parent_metadata() -> std
                     (
                         "base".to_string(),
                         PermissionProfileToml {
+                            credentials: None,
                             description: None,
                             extends: None,
                             workspace_roots: None,
@@ -2873,6 +2947,7 @@ async fn default_permissions_extended_profile_preserves_parent_metadata() -> std
                     (
                         "dev".to_string(),
                         PermissionProfileToml {
+                            credentials: None,
                             description: None,
                             extends: Some("base".to_string()),
                             workspace_roots: None,
@@ -2924,10 +2999,50 @@ async fn permission_profile_override_populates_runtime_permissions() -> std::io:
         permission_profile
     );
     assert_eq!(config.permissions.active_permission_profile(), None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn persisted_read_only_respects_read_allowlist_and_drops_default_proxy() -> anyhow::Result<()>
+{
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+    let config_toml = toml::from_str(
+        r#"
+default_permissions = "dev"
+
+[permissions.dev.filesystem]
+":workspace_roots" = "write"
+
+[permissions.dev.network]
+enabled = true
+"#,
+    )?;
+    let config = Config::load_from_base_config_with_overrides(
+        config_toml,
+        ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            persisted_permission_profile: Some(PermissionProfile::read_only()),
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+    let (file_system, network) = config
+        .permissions
+        .effective_permission_profile()
+        .to_runtime_permissions();
+    let cwd = cwd.path();
     assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::DangerFullAccess
+        (
+            file_system.can_read_local_path_with_cwd(cwd, cwd),
+            file_system.can_write_local_path_with_cwd(cwd, cwd),
+            file_system.can_read_local_path_with_cwd(codex_home.path(), cwd),
+            network,
+        ),
+        (true, false, false, NetworkSandboxPolicy::Restricted)
     );
+    assert!(config.permissions.network.is_none());
     Ok(())
 }
 
@@ -3028,28 +3143,30 @@ extends = ":workspace"
             extends: Some(BUILT_IN_PERMISSION_PROFILE_WORKSPACE.to_string()),
         })
     );
-    assert_eq!(
-        config.legacy_sandbox_policy(),
-        SandboxPolicy::new_workspace_write_policy()
+    assert!(
+        config
+            .permissions
+            .file_system_sandbox_policy()
+            .can_write_local_path_with_cwd(cwd.path(), cwd.path())
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn missing_persisted_permission_profile_id_uses_configured_default() -> std::io::Result<()> {
+async fn missing_persisted_permission_profile_id_requires_explicit_selection() -> std::io::Result<()>
+{
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     let project_key = cwd.path().to_string_lossy().to_string();
 
-    for (configured_default, configured_sandbox, expected_active_profile) in [
+    for (configured_default, configured_sandbox) in [
         (
-            Some(BUILT_IN_PERMISSION_PROFILE_READ_ONLY.to_string()),
+            Some(BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS.to_string()),
             None,
-            Some(ActivePermissionProfile::read_only()),
         ),
-        (None, Some(SandboxMode::ReadOnly), None),
+        (None, Some(SandboxMode::WorkspaceWrite)),
     ] {
-        let config = Config::load_from_base_config_with_overrides(
+        let error = Config::load_from_base_config_with_overrides(
             ConfigToml {
                 default_permissions: configured_default,
                 sandbox_mode: configured_sandbox,
@@ -3068,34 +3185,34 @@ async fn missing_persisted_permission_profile_id_uses_configured_default() -> st
             },
             codex_home.abs(),
         )
-        .await?;
+        .await
+        .expect_err("a missing saved profile must require an explicit selection");
 
-        assert_eq!(
-            config.permissions.active_permission_profile(),
-            expected_active_profile
-        );
-        assert_eq!(
-            config.permissions.effective_permission_profile(),
-            PermissionProfile::read_only()
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            error
+                .to_string()
+                .contains("saved permission profile `removed-profile`")
         );
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn invalid_persisted_permission_profile_uses_configured_default() -> std::io::Result<()> {
+async fn invalid_persisted_permission_profile_requires_explicit_selection() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     for invalid_profile in [
         "extends = \"removed-parent\"",
         "extends = \":read-only\"\n\n[permissions.dev.filesystem]\nglob_scan_max_depth = 0",
+        "extends = \"base\"\n\n[permissions.base]\nextends = \"dev\"",
     ] {
         let config_toml = toml::from_str(&format!(
             "default_permissions = \":danger-full-access\"\n\n[permissions.dev]\n{invalid_profile}"
         ))
         .expect("permission profile config should deserialize");
 
-        let config = Config::load_from_base_config_with_overrides(
+        let error = Config::load_from_base_config_with_overrides(
             config_toml,
             ConfigOverrides {
                 cwd: Some(cwd.path().to_path_buf()),
@@ -3104,60 +3221,12 @@ async fn invalid_persisted_permission_profile_uses_configured_default() -> std::
             },
             codex_home.abs(),
         )
-        .await?;
+        .await
+        .expect_err("an invalid saved profile must require an explicit selection");
 
-        assert_eq!(
-            config.permissions.active_permission_profile(),
-            Some(ActivePermissionProfile::new(
-                BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS,
-            ))
-        );
-        assert_eq!(
-            config.permissions.effective_permission_profile(),
-            PermissionProfile::Disabled
-        );
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("saved permission profile `dev`"));
     }
-    Ok(())
-}
-
-#[tokio::test]
-async fn persisted_profile_cycle_uses_configured_default() -> std::io::Result<()> {
-    let codex_home = TempDir::new()?;
-    let cwd = TempDir::new()?;
-    let config_toml = toml::from_str(
-        r#"
-default_permissions = ":danger-full-access"
-
-[permissions.dev]
-extends = "base"
-
-[permissions.base]
-extends = "dev"
-"#,
-    )
-    .expect("permission profile config should deserialize");
-
-    let config = Config::load_from_base_config_with_overrides(
-        config_toml,
-        ConfigOverrides {
-            cwd: Some(cwd.path().to_path_buf()),
-            persisted_permission_profile_id: Some("dev".to_string()),
-            ..Default::default()
-        },
-        codex_home.abs(),
-    )
-    .await?;
-
-    assert_eq!(
-        config.permissions.active_permission_profile(),
-        Some(ActivePermissionProfile::new(
-            BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS,
-        ))
-    );
-    assert_eq!(
-        config.permissions.effective_permission_profile(),
-        PermissionProfile::Disabled
-    );
     Ok(())
 }
 
@@ -3235,12 +3304,6 @@ async fn permission_profile_override_preserves_managed_unrestricted_filesystem()
         config.permissions.effective_permission_profile(),
         permission_profile
     );
-    assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::ExternalSandbox {
-            network_access: NetworkAccess::Restricted,
-        }
-    );
     Ok(())
 }
 
@@ -3258,16 +3321,16 @@ async fn managed_unrestricted_permission_profile_still_enables_network_requireme
         ConfigToml::default(),
         ConfigOverrides {
             cwd: Some(cwd.path().to_path_buf()),
-            permission_profile: Some(permission_profile),
+            permission_profile: Some(permission_profile.clone()),
             ..Default::default()
         },
         codex_home.abs(),
     )
     .await?;
+
     assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::DangerFullAccess,
-        "the legacy projection is intentionally lossy for managed unrestricted profiles"
+        config.permissions.effective_permission_profile(),
+        permission_profile
     );
 
     let layers = config
@@ -3296,8 +3359,7 @@ async fn managed_unrestricted_permission_profile_still_enables_network_requireme
 }
 
 #[tokio::test]
-async fn permission_profile_override_keeps_memories_root_out_of_legacy_projection()
--> std::io::Result<()> {
+async fn permission_profile_override_keeps_memories_root_read_only() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
     let permission_profile = PermissionProfile::from_runtime_permissions(
@@ -3338,15 +3400,6 @@ async fn permission_profile_override_keeps_memories_root_out_of_legacy_projectio
             .file_system_sandbox_policy()
             .can_write_local_path_with_cwd(memories_root.as_path(), cwd.path())
     );
-    assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
-            network_access: false,
-            exclude_tmpdir_env_var: true,
-            exclude_slash_tmp: true,
-        }
-    );
     Ok(())
 }
 
@@ -3364,6 +3417,7 @@ async fn permission_profile_override_preserves_configured_network_policy_without
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -3426,6 +3480,7 @@ async fn workspace_root_glob_none_compiles_to_filesystem_pattern_entry() -> std:
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -3508,6 +3563,7 @@ async fn permissions_profiles_require_default_permissions() -> std::io::Result<(
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -3637,6 +3693,7 @@ async fn workspace_profile_applies_rules_to_runtime_and_profile_workspace_roots(
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: Some(WorkspaceRootsToml {
@@ -3772,6 +3829,7 @@ async fn default_permissions_profile_can_extend_builtin_workspace() -> std::io::
                 entries: BTreeMap::from([(
                     "workspace-with-network".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: Some(BUILT_IN_PERMISSION_PROFILE_WORKSPACE.to_string()),
                         workspace_roots: None,
@@ -3873,6 +3931,7 @@ async fn default_permissions_profile_can_extend_builtin_read_only() -> std::io::
                 entries: BTreeMap::from([(
                     "read-only-with-network".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: Some(BUILT_IN_PERMISSION_PROFILE_READ_ONLY.to_string()),
                         workspace_roots: None,
@@ -4092,20 +4151,24 @@ async fn implicit_builtin_workspace_profile_preserves_sandbox_workspace_write_se
         "implicit :workspace cannot be faithfully re-selected when it includes \
          legacy sandbox_workspace_write settings"
     );
-    match config.legacy_sandbox_policy() {
-        SandboxPolicy::WorkspaceWrite {
-            writable_roots,
-            network_access,
-            exclude_tmpdir_env_var,
-            exclude_slash_tmp,
-        } => {
-            assert!(writable_roots.contains(&extra_root));
-            assert!(network_access);
-            assert!(exclude_tmpdir_env_var);
-            assert!(!exclude_slash_tmp);
-        }
-        sandbox_policy => panic!("expected workspace-write projection, got {sandbox_policy:?}"),
-    }
+    assert_eq!(
+        policy
+            .entries
+            .into_iter()
+            .filter(|entry| matches!(
+                &entry.path,
+                FileSystemPath::Special {
+                    value: FileSystemSpecialPath::Tmpdir | FileSystemSpecialPath::SlashTmp
+                }
+            ))
+            .collect::<Vec<_>>(),
+        vec![FileSystemSandboxEntry::new(
+            FileSystemPath::Special {
+                value: FileSystemSpecialPath::SlashTmp
+            },
+            FileSystemAccessMode::Write,
+        )]
+    );
     Ok(())
 }
 
@@ -4332,6 +4395,7 @@ async fn permissions_profiles_allow_direct_write_roots_outside_workspace_root()
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: Some("Workspace access.".to_string()),
                         extends: None,
                         workspace_roots: None,
@@ -4370,15 +4434,6 @@ async fn permissions_profiles_allow_direct_write_roots_outside_workspace_root()
             .file_system_sandbox_policy()
             .can_write_local_path_with_cwd(external_write_path.as_path(), cwd.path())
     );
-    assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![external_write_path],
-            network_access: false,
-            exclude_tmpdir_env_var: true,
-            exclude_slash_tmp: true,
-        }
-    );
     Ok(())
 }
 
@@ -4396,6 +4451,7 @@ async fn permissions_profiles_reject_nested_entries_for_non_workspace_roots() ->
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -4459,6 +4515,7 @@ async fn load_workspace_permission_profile(
 #[tokio::test]
 async fn permissions_profiles_allow_unknown_special_paths() -> std::io::Result<()> {
     let config = load_workspace_permission_profile(PermissionProfileToml {
+        credentials: None,
         description: None,
         extends: None,
         workspace_roots: None,
@@ -4486,12 +4543,6 @@ async fn permissions_profiles_allow_unknown_special_paths() -> std::io::Result<(
             missing_path_behavior: None,
         }]),
     );
-    assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::ReadOnly {
-            network_access: false,
-        }
-    );
     assert!(
         config.startup_warnings.iter().any(|warning| warning.contains(
             "Configured filesystem path `:future_special_path` is not recognized by this version of Lemex and will be ignored."
@@ -4506,6 +4557,7 @@ async fn permissions_profiles_allow_unknown_special_paths() -> std::io::Result<(
 async fn permissions_profiles_allow_unknown_special_paths_with_nested_entries()
 -> std::io::Result<()> {
     let config = load_workspace_permission_profile(PermissionProfileToml {
+        credentials: None,
         description: None,
         extends: None,
         workspace_roots: None,
@@ -4546,6 +4598,7 @@ async fn permissions_profiles_allow_unknown_special_paths_with_nested_entries()
 #[tokio::test]
 async fn permissions_profiles_allow_missing_filesystem_with_warning() -> std::io::Result<()> {
     let config = load_workspace_permission_profile(PermissionProfileToml {
+        credentials: None,
         description: None,
         extends: None,
         workspace_roots: None,
@@ -4557,12 +4610,6 @@ async fn permissions_profiles_allow_missing_filesystem_with_warning() -> std::io
     assert_eq!(
         config.permissions.file_system_sandbox_policy(),
         FileSystemSandboxPolicy::restricted(Vec::new())
-    );
-    assert_eq!(
-        &config.legacy_sandbox_policy(),
-        &SandboxPolicy::ReadOnly {
-            network_access: false,
-        }
     );
     assert!(
         config.startup_warnings.iter().any(|warning| warning.contains(
@@ -4577,6 +4624,7 @@ async fn permissions_profiles_allow_missing_filesystem_with_warning() -> std::io
 #[tokio::test]
 async fn permissions_profiles_allow_empty_filesystem_with_warning() -> std::io::Result<()> {
     let config = load_workspace_permission_profile(PermissionProfileToml {
+        credentials: None,
         description: None,
         extends: None,
         workspace_roots: None,
@@ -4615,6 +4663,7 @@ async fn permissions_profiles_reject_workspace_root_parent_traversal() -> std::i
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -4664,6 +4713,7 @@ async fn permissions_profiles_allow_network_enablement() -> std::io::Result<()> 
                 entries: BTreeMap::from([(
                     "dev".to_string(),
                     PermissionProfileToml {
+                        credentials: None,
                         description: None,
                         extends: None,
                         workspace_roots: None,
@@ -4695,7 +4745,6 @@ async fn permissions_profiles_allow_network_enablement() -> std::io::Result<()> 
         config.permissions.network_sandbox_policy().is_enabled(),
         "expected network sandbox policy to be enabled",
     );
-    assert!(config.legacy_sandbox_policy().has_full_network_access());
     Ok(())
 }
 
@@ -4807,7 +4856,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             question_esc_back: true,
             raw_output_mode: false,
             fullscreen_transcript: true,
-            collapse_turn_details: false,
+            collapse_turn_details: true,
             sidebar_width_percent: None,
             mouse_scroll_speed: None,
             copy_on_select: Default::default(),
@@ -4815,6 +4864,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             right_click_paste: Default::default(),
             alternate_screen: AltScreenMode::Auto,
             status_line: None,
+            status_line_provider: None,
             status_line_use_colors: true,
             terminal_title: None,
             theme: None,
@@ -5265,7 +5315,10 @@ exclude_slash_tmp = true
         )
         .await?;
 
-        let sandbox_policy = config.legacy_sandbox_policy();
+        let sandbox_policy = config
+            .permissions
+            .effective_permission_profile()
+            .to_legacy_sandbox_policy(cwd.path())?;
         let file_system_policy = config.permissions.file_system_sandbox_policy();
         let network_policy = config.permissions.network_sandbox_policy();
 
@@ -6153,14 +6206,101 @@ async fn rebuild_with_session_layers_refreshes_plugin_derived_mcp_config() -> an
     assert_eq!(
         mcp_config
             .mcp_server_catalog
-            .plugin_attributions_by_server_name(),
+            .plugin_attributions_by_server(),
         HashMap::from([(
-            "sample".to_string(),
+            codex_mcp::McpServerKey::in_environment(
+                codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID,
+                "sample",
+            ),
             McpPluginAttribution::new("sample@test".to_string(), "sample".to_string())
                 .with_host_root(PathUri::from_host_native_path(&plugin_root)?),
         )])
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_launch_cwds_follow_the_runtime_feature() -> anyhow::Result<()> {
+    let codex_home = TempDir::new()?;
+    let plugin_root = codex_home.path().join("plugins/cache/test/sample/local");
+    std::fs::create_dir_all(plugin_root.join(".codex-plugin"))?;
+    std::fs::write(
+        plugin_root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"sample"}"#,
+    )?;
+    std::fs::write(
+        plugin_root.join(".mcp.json"),
+        r#"{"mcpServers":{"sample":{"command":"sample","enabled":false},"other":{"command":"other"}}}"#,
+    )?;
+    let user_config = toml::toml! {
+        [features]
+        plugins = true
+        mcp_connection_sharing = true
+
+        [plugins."sample@test"]
+        enabled = true
+
+        [mcp_servers.node_repl]
+        command = "test-repl"
+
+        [mcp_servers.artifact_session]
+        command = "test-repl"
+
+        [mcp_servers.other_repl]
+        command = "custom-repl"
+    };
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        toml::to_string(&user_config)?,
+    )?;
+
+    let mut config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .build()
+        .await?;
+    config.mcp_launch_cwds = Arc::new(McpLaunchCwds {
+        plugins: HashMap::from([(
+            "sample@test".to_string(),
+            HashMap::from([("sample".to_string(), config.codex_home.clone())]),
+        )]),
+        configured: ["node_repl", "artifact_session", "other_repl"]
+            .into_iter()
+            .map(|name| {
+                (
+                    name.to_string(),
+                    ("test-repl".to_string(), config.codex_home.clone()),
+                )
+            })
+            .collect(),
+    });
+    let plugins_manager =
+        plugins_manager_for_config(&config, auth_manager_from_optional_auth(/*auth*/ None));
+    assert!(config.features.enabled(Feature::McpSharedReplCwd));
+    for enabled in [true, false, true] {
+        let mut incoming = config.clone();
+        incoming
+            .features
+            .set_enabled(Feature::McpSharedReplCwd, enabled)?;
+        config = config.resolve_runtime_refresh(&incoming, RuntimeConfigRefresh::User)?;
+        let mcp_config = config.to_mcp_config(&plugins_manager).await;
+        let configured_servers = mcp_config.mcp_server_catalog.configured_servers();
+        for (name, command) in [
+            ("sample", "sample"),
+            ("node_repl", "test-repl"),
+            ("artifact_session", "test-repl"),
+        ] {
+            let mut expected = stdio_mcp(command);
+            expected.enabled = name != "sample";
+            let McpServerTransportConfig::Stdio { cwd, .. } = &mut expected.transport else {
+                unreachable!();
+            };
+            *cwd = enabled.then(|| LegacyAppPathString::from_abs_path(&config.codex_home));
+            assert_eq!(configured_servers[name], expected);
+        }
+        assert_eq!(configured_servers["other"], stdio_mcp("other"));
+        assert_eq!(configured_servers["other_repl"], stdio_mcp("custom-repl"));
+    }
     Ok(())
 }
 
@@ -6217,7 +6357,7 @@ enabled = true
     assert!(
         mcp_config
             .mcp_server_catalog
-            .plugin_attributions_by_server_name()
+            .plugin_attributions_by_server()
             .is_empty()
     );
 
@@ -6320,7 +6460,10 @@ url = "https://sample.example/mcp"
     assert_eq!(
         mcp_config
             .mcp_server_catalog
-            .server("unlisted")
+            .server(&codex_mcp::McpServerKey::in_environment(
+                codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID,
+                "unlisted",
+            ))
             .map(|server| (server.source().clone(), server.config().clone())),
         Some((
             codex_mcp::McpServerSource::SelectedPlugin(McpPluginAttribution::new(
@@ -6410,7 +6553,16 @@ async fn add_dir_override_extends_workspace_writable_roots() -> std::io::Result<
 
     let overrides = ConfigOverrides {
         cwd: Some(frontend),
-        sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+        // Preserve Windows coverage of the default read-only fallback.
+        sandbox_mode: cfg!(target_os = "windows").then_some(SandboxMode::WorkspaceWrite),
+        permission_profile: (!cfg!(target_os = "windows")).then_some(
+            PermissionProfile::workspace_write_with(
+                &[],
+                NetworkSandboxPolicy::Restricted,
+                /*exclude_tmpdir_env_var*/ true,
+                /*exclude_slash_tmp*/ true,
+            ),
+        ),
         additional_writable_roots: vec![PathBuf::from("../backend"), backend.clone()],
         ..Default::default()
     };
@@ -6424,25 +6576,27 @@ async fn add_dir_override_extends_workspace_writable_roots() -> std::io::Result<
 
     let expected_backend = backend.abs();
     if cfg!(target_os = "windows") {
-        match &config.legacy_sandbox_policy() {
-            SandboxPolicy::ReadOnly { .. } => {}
-            other => panic!("expected read-only policy on Windows, got {other:?}"),
-        }
+        assert_eq!(
+            config.permissions.permission_profile(),
+            &PermissionProfile::read_only()
+        );
     } else {
-        match &config.legacy_sandbox_policy() {
-            SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
-                assert_eq!(
-                    writable_roots
-                        .iter()
-                        .filter(|root| **root == expected_backend)
-                        .count(),
-                    1,
-                    "expected single writable root entry for {}",
-                    expected_backend.display()
-                );
-            }
-            other => panic!("expected workspace-write policy, got {other:?}"),
-        }
+        assert!(
+            config
+                .permissions
+                .file_system_sandbox_policy()
+                .can_write_local_path_with_cwd(expected_backend.as_path(), config.cwd.as_path())
+        );
+        let writable_roots = config.permissions.user_visible_workspace_roots();
+        assert_eq!(
+            writable_roots
+                .iter()
+                .filter(|root| **root == expected_backend)
+                .count(),
+            1,
+            "expected single writable root entry for {}",
+            expected_backend.display()
+        );
     }
 
     Ok(())
@@ -6564,10 +6718,10 @@ async fn workspace_write_includes_configured_writable_root_once_without_memories
     .await?;
 
     if cfg!(target_os = "windows") {
-        match &config.legacy_sandbox_policy() {
-            SandboxPolicy::ReadOnly { .. } => {}
-            other => panic!("expected read-only policy on Windows, got {other:?}"),
-        }
+        assert_eq!(
+            config.permissions.permission_profile(),
+            &PermissionProfile::read_only()
+        );
     } else {
         assert!(
             !memories_root.exists(),
@@ -6575,21 +6729,23 @@ async fn workspace_write_includes_configured_writable_root_once_without_memories
             memories_root.display()
         );
         let expected_memories_root = memories_root.abs();
-        match &config.legacy_sandbox_policy() {
-            SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
-                assert!(!writable_roots.contains(&expected_memories_root));
-                assert_eq!(
-                    writable_roots
-                        .iter()
-                        .filter(|root| **root == writable_root)
-                        .count(),
-                    1,
-                    "expected single writable root entry for {}",
-                    writable_root.display()
-                );
-            }
-            other => panic!("expected workspace-write policy, got {other:?}"),
-        }
+        assert!(
+            config
+                .permissions
+                .file_system_sandbox_policy()
+                .can_write_local_path_with_cwd(writable_root.as_path(), config.cwd.as_path())
+        );
+        let writable_roots = config.permissions.user_visible_workspace_roots();
+        assert!(!writable_roots.contains(&expected_memories_root));
+        assert_eq!(
+            writable_roots
+                .iter()
+                .filter(|root| **root == writable_root)
+                .count(),
+            1,
+            "expected single writable root entry for {}",
+            writable_root.display()
+        );
     }
 
     Ok(())
@@ -6639,17 +6795,14 @@ async fn memory_tool_makes_memories_root_readable_without_creating_or_widening_w
     );
 
     if cfg!(target_os = "windows") {
-        match &config.legacy_sandbox_policy() {
-            SandboxPolicy::ReadOnly { .. } => {}
-            other => panic!("expected read-only policy on Windows, got {other:?}"),
-        }
+        assert_eq!(
+            config.permissions.permission_profile(),
+            &PermissionProfile::read_only()
+        );
     } else {
-        match &config.legacy_sandbox_policy() {
-            SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
-                assert!(!writable_roots.contains(&memories_root_abs));
-            }
-            other => panic!("expected workspace-write policy, got {other:?}"),
-        }
+        assert!(file_system_policy.can_write_local_path_with_cwd(cwd.path(), cwd.path()));
+        let writable_roots = config.permissions.user_visible_workspace_roots();
+        assert!(!writable_roots.contains(&memories_root_abs));
     }
 
     Ok(())
@@ -6943,11 +7096,18 @@ async fn external_feedback_remains_disabled_with_legacy_opt_in() -> std::io::Res
 }
 
 #[test]
-fn web_search_mode_defaults_to_none_if_unset() {
+fn web_search_mode_defaults_to_cached_if_unset() {
     let cfg = ConfigToml::default();
     let features = Features::with_defaults();
 
-    assert_eq!(resolve_web_search_mode(&cfg, &features), None);
+    assert_eq!(
+        resolve_web_search_mode(
+            &cfg,
+            &features,
+            &Constrained::allow_any(WebSearchMode::Cached),
+        ),
+        WebSearchMode::Cached,
+    );
 }
 
 #[test]
@@ -6960,8 +7120,12 @@ fn web_search_mode_prefers_config_over_legacy_flags() {
     features.enable(Feature::WebSearchCached);
 
     assert_eq!(
-        resolve_web_search_mode(&cfg, &features),
-        Some(WebSearchMode::Live)
+        resolve_web_search_mode(
+            &cfg,
+            &features,
+            &Constrained::allow_any(WebSearchMode::Cached),
+        ),
+        WebSearchMode::Live
     );
 }
 
@@ -6975,8 +7139,12 @@ fn web_search_mode_disabled_overrides_legacy_request() {
     features.enable(Feature::WebSearchRequest);
 
     assert_eq!(
-        resolve_web_search_mode(&cfg, &features),
-        Some(WebSearchMode::Disabled)
+        resolve_web_search_mode(
+            &cfg,
+            &features,
+            &Constrained::allow_any(WebSearchMode::Cached),
+        ),
+        WebSearchMode::Disabled
     );
 }
 
@@ -6985,6 +7153,7 @@ fn web_search_mode_for_turn_preserves_indexed_for_disabled_permissions() {
     let web_search_mode = Constrained::allow_any(WebSearchMode::Indexed);
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -6998,6 +7167,7 @@ fn web_search_mode_for_turn_uses_preference_for_read_only() {
     let permission_profile = PermissionProfile::read_only();
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &permission_profile,
         ProviderCapabilities::default(),
     );
@@ -7010,6 +7180,7 @@ fn web_search_mode_for_turn_prefers_live_for_disabled_permissions() {
     let web_search_mode = Constrained::allow_any(WebSearchMode::Cached);
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -7023,6 +7194,7 @@ fn web_search_mode_for_turn_falls_back_when_provider_disallows_external_web_acce
         let web_search_mode = Constrained::allow_any(preferred);
         let mode = resolve_web_search_mode_for_turn(
             &web_search_mode,
+            /*web_search_mode_was_explicit*/ true,
             &PermissionProfile::Disabled,
             ProviderCapabilities {
                 external_web_access: false,
@@ -7057,6 +7229,7 @@ fn web_search_mode_for_turn_disables_when_external_access_and_cached_are_disallo
         })?;
         let mode = resolve_web_search_mode_for_turn(
             &web_search_mode,
+            /*web_search_mode_was_explicit*/ true,
             &PermissionProfile::Disabled,
             ProviderCapabilities {
                 external_web_access: false,
@@ -7074,6 +7247,7 @@ fn web_search_mode_for_turn_respects_disabled_for_disabled_permissions() {
     let web_search_mode = Constrained::allow_any(WebSearchMode::Disabled);
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -7098,6 +7272,7 @@ fn web_search_mode_for_turn_falls_back_when_live_is_disallowed() -> anyhow::Resu
     })?;
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -7127,6 +7302,7 @@ fn web_search_mode_for_turn_does_not_implicitly_select_indexed() -> anyhow::Resu
     })?;
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -7724,7 +7900,7 @@ async fn to_mcp_config_flows_independent_mcp_2026_features() -> std::io::Result<
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert_eq!(
         (
-            mcp_config.protocol_mode,
+            mcp_config.client.protocol_mode,
             mcp_config.host_owned_apps_protocol_mode,
         ),
         (
@@ -7737,7 +7913,7 @@ async fn to_mcp_config_flows_independent_mcp_2026_features() -> std::io::Result<
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert_eq!(
         (
-            mcp_config.protocol_mode,
+            mcp_config.client.protocol_mode,
             mcp_config.host_owned_apps_protocol_mode,
         ),
         (
@@ -7751,7 +7927,7 @@ async fn to_mcp_config_flows_independent_mcp_2026_features() -> std::io::Result<
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert_eq!(
         (
-            mcp_config.protocol_mode,
+            mcp_config.client.protocol_mode,
             mcp_config.host_owned_apps_protocol_mode,
         ),
         (
@@ -7777,7 +7953,7 @@ async fn to_mcp_config_preserves_auth_elicitation_feature_from_config() -> std::
 
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert_eq!(
-        mcp_config.client_elicitation_capability,
+        mcp_config.client.client_elicitation_capability,
         ElicitationCapability::new()
             .with_form(FormElicitationCapability::new())
             .with_url(UrlElicitationCapability::new())
@@ -7786,7 +7962,7 @@ async fn to_mcp_config_preserves_auth_elicitation_feature_from_config() -> std::
     let _ = config.features.disable(Feature::AuthElicitation);
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert_eq!(
-        mcp_config.client_elicitation_capability,
+        mcp_config.client.client_elicitation_capability,
         ElicitationCapability::default()
     );
 
@@ -8917,6 +9093,39 @@ async fn load_config_uses_requirements_guardian_policy_config() -> std::io::Resu
     Ok(())
 }
 
+#[test_case::test_case("", "longer than four bytes", "also longer than four bytes", None; "uncapped")]
+#[test_case::test_case("max_instruction_tokens = 1", "éé", "abcd", None; "limit_per_prompt")]
+#[test_case::test_case("max_instruction_tokens = 1", "ééx", "abcd", Some("housekeeper.routing_instructions"); "routing_over_limit")]
+#[test_case::test_case("max_instruction_tokens = 1", "éé", "abcde", Some("reviewer.retrieval_instructions"); "retrieval_over_limit")]
+fn guardian_v3_validates_each_custom_prompt(
+    cap: &str,
+    routing: &str,
+    retrieval: &str,
+    oversized_field: Option<&str>,
+) {
+    let cfg: ConfigToml = toml::from_str(&format!(
+        r#"
+        [features.guardianv3]
+        {cap}
+        [features.guardianv3.housekeeper]
+        routing_instructions = "{routing}"
+        [features.guardianv3.reviewer]
+        retrieval_instructions = "{retrieval}"
+    "#
+    ))
+    .unwrap();
+    let result = resolve_guardian_v3_config(cfg.features.unwrap().guardianv3);
+    match oversized_field {
+        Some(field) => assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "features.guardianv3.{field} is 2 estimated tokens, exceeding max_instruction_tokens = 1"
+            )
+        ),
+        None => assert!(result.unwrap().is_some()),
+    }
+}
+
 #[test]
 fn config_toml_deserializes_auto_review_policy() {
     let cfg = toml::from_str::<ConfigToml>(
@@ -8984,8 +9193,10 @@ async fn load_config_uses_auto_review_guardian_policy_config(
     Ok(())
 }
 
+#[test_case::test_case("sync")]
+#[test_case::test_case("async")]
 #[tokio::test]
-async fn sync_elastic_budget_is_opt_in_and_validated() {
+async fn elastic_budget_is_opt_in_and_validated(target: &str) {
     let excessive_minimum = codex_guardian_context::DEFAULT_MAX_INPUT_TOKENS + 1;
     let minimum_mismatch = format!(
         r#"[features.guardianv2.sync_elastic_sections.root_conversation_messages]
@@ -9004,6 +9215,7 @@ max_total_section_tokens = 0
 min_total_section_tokens = 1
 max_section_entry_tokens = 0
 "#,
+        "",
         maximum_below_minimum,
         minimum_mismatch.as_str(),
         r#"[features.guardianv2.sync_elastic_sections.root_messages]
@@ -9014,10 +9226,11 @@ min_total_section_tokens = 1
 max_section_entry_tokens = 1
 "#,
     ] {
+        let sections = sections.replace("sync_", &format!("{target}_"));
         for enabled in [false, true] {
             let result = Config::load_from_base_config_with_overrides(
                 toml::from_str(&format!(
-                    "[features.guardianv2]\nenabled = false\nsync_elastic_budgeting = {enabled}\n{sections}"
+                    "[features.guardianv2]\nenabled = false\n{target}_elastic_budgeting = {enabled}\n{sections}"
                 ))
                 .unwrap(),
                 ConfigOverrides {
@@ -9030,6 +9243,66 @@ max_section_entry_tokens = 1
             assert_eq!(result.is_err(), enabled);
         }
     }
+}
+
+#[tokio::test]
+async fn transcript_audio_elastic_budget_loads_for_both_reviewers() {
+    use codex_guardian_context::ElasticSection;
+    use codex_guardian_context::ElasticSectionLimits;
+
+    const AUDIO_RESERVATION_TOKENS: usize = 2_000;
+    const AUDIO_ENTRY_TOKENS: usize = 500;
+    const AUDIO_MAXIMUM_TOKENS: usize = 4_000;
+    let mut policy = core_test_support::guardian::elastic_budget_config();
+    let messages = policy.sections[&ElasticSection::TranscriptMessages];
+    policy.sections.insert(
+        ElasticSection::TranscriptMessages,
+        ElasticSectionLimits::new(
+            messages.min_total_section_tokens() - AUDIO_RESERVATION_TOKENS,
+            messages.max_section_entry_tokens(),
+        )
+        .unwrap(),
+    );
+    policy.sections.insert(
+        ElasticSection::TranscriptAudio,
+        ElasticSectionLimits::new(AUDIO_RESERVATION_TOKENS, AUDIO_ENTRY_TOKENS)
+            .unwrap()
+            .with_max_total_section_tokens(AUDIO_MAXIMUM_TOKENS)
+            .unwrap(),
+    );
+    let sections = toml::Value::try_from(&policy.sections).unwrap();
+    let home = TempDir::new().unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str(&format!(
+            "[features.guardianv2]\nsync_elastic_budgeting = true\nasync_elastic_budgeting = true\nsync_elastic_sections = {sections}\nasync_elastic_sections = {sections}"
+        ))
+        .unwrap(),
+        ConfigOverrides {
+            cwd: Some(home.path().to_path_buf()),
+            ..Default::default()
+        },
+        home.abs(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (
+            config.guardian_sync_elastic_budget,
+            config.guardian_async_elastic_budget
+        ),
+        (Some(policy.clone()), Some(policy)),
+    );
+}
+
+#[tokio::test]
+async fn async_elastic_opt_in_preserves_fixed_capture() {
+    let mut config = super::test_config().await;
+    config.guardian_async_elastic_budget =
+        Some(core_test_support::guardian::elastic_budget_config());
+    assert_eq!(
+        config.guardian_context_budgeting(),
+        codex_guardian_context::ContextBudgeting::Fixed,
+    );
 }
 
 #[tokio::test]
@@ -10567,6 +10840,10 @@ async fn load_config_applies_otel_trace_metadata() -> std::io::Result<()> {
     let mut fixture = create_test_fixture()?;
     fixture.cfg = toml::from_str(
         r#"
+[otel]
+headers_helper = "company-auth telemetry-headers"
+headers_helper_refresh_interval_ms = 900000
+
 [otel.span_attributes]
 "example.trace_attr" = "enabled"
 
@@ -10587,6 +10864,18 @@ beta = "two"
     )
     .await?;
 
+    assert_eq!(
+        config.otel.headers_helper.as_deref(),
+        Some("company-auth telemetry-headers")
+    );
+    assert_eq!(
+        config
+            .otel
+            .headers_helper_refresh_interval_ms
+            .unwrap()
+            .get(),
+        900000
+    );
     assert_eq!(
         config.otel.span_attributes,
         HashMap::from([("example.trace_attr".to_string(), "enabled".to_string())])
@@ -10844,6 +11133,7 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
     let fixture = create_test_fixture()?;
 
     let requirements_toml = codex_config::ConfigRequirementsToml {
+        gateway: None,
         config_server: None,
         model_provider: None,
         model_providers: None,
@@ -11539,24 +11829,14 @@ async fn test_untrusted_project_gets_unless_trusted_approval_policy() -> anyhow:
         "Expected UnlessTrusted approval policy for untrusted project"
     );
 
-    // Verify that untrusted projects still get WorkspaceWrite sandbox (or ReadOnly on Windows)
-    if cfg!(target_os = "windows") {
-        assert!(
-            matches!(
-                &config.legacy_sandbox_policy(),
-                SandboxPolicy::ReadOnly { .. }
-            ),
-            "Expected ReadOnly on Windows"
-        );
-    } else {
-        assert!(
-            matches!(
-                &config.legacy_sandbox_policy(),
-                SandboxPolicy::WorkspaceWrite { .. }
-            ),
-            "Expected WorkspaceWrite sandbox for untrusted project"
-        );
-    }
+    assert_eq!(
+        config.permissions.permission_profile(),
+        &if cfg!(target_os = "windows") {
+            PermissionProfile::read_only()
+        } else {
+            PermissionProfile::workspace_write()
+        }
+    );
 
     Ok(())
 }
@@ -11608,8 +11888,8 @@ async fn requirements_disallowing_default_sandbox_falls_back_to_required_default
         .build()
         .await?;
     assert_eq!(
-        config.legacy_sandbox_policy(),
-        SandboxPolicy::new_read_only_policy()
+        config.permissions.effective_permission_profile(),
+        PermissionProfile::read_only()
     );
     Ok(())
 }
@@ -11634,8 +11914,8 @@ async fn explicit_sandbox_mode_falls_back_when_disallowed_by_requirements() -> s
         .build()
         .await?;
     assert_eq!(
-        config.legacy_sandbox_policy(),
-        SandboxPolicy::new_read_only_policy()
+        config.permissions.effective_permission_profile(),
+        PermissionProfile::read_only()
     );
     Ok(())
 }
@@ -11912,8 +12192,6 @@ async fn permission_profile_override_falls_back_when_disallowed_by_requirements(
         .build()
         .await?;
 
-    let expected_sandbox_policy = SandboxPolicy::new_read_only_policy();
-    assert_eq!(config.legacy_sandbox_policy(), expected_sandbox_policy);
     assert_eq!(
         config.permissions.effective_permission_profile(),
         PermissionProfile::read_only()
@@ -12048,10 +12326,6 @@ async fn permission_profile_override_preserves_split_write_roots() -> std::io::R
             .file_system_sandbox_policy()
             .can_write_local_path_with_cwd(outside_root.as_path(), config.cwd.as_path())
     );
-    assert!(matches!(
-        &config.legacy_sandbox_policy(),
-        SandboxPolicy::WorkspaceWrite { .. }
-    ));
     assert_eq!(
         config.permissions.network_sandbox_policy(),
         NetworkSandboxPolicy::Restricted
@@ -12084,6 +12358,7 @@ async fn requirements_web_search_mode_overrides_danger_full_access_default() -> 
     assert_eq!(
         resolve_web_search_mode_for_turn(
             &config.web_search_mode,
+            config.web_search_mode_was_explicit,
             &config.permissions.effective_permission_profile(),
             ProviderCapabilities::default(),
         ),
@@ -12354,6 +12629,7 @@ async fn explicit_feature_config_is_normalized_by_requirements() -> std::io::Res
 [features]
 view_image = false
 shell_tool = true
+guardianv3.shadow_enabled = true
 "#,
     )?;
 
@@ -12366,6 +12642,7 @@ shell_tool = true
 [features]
 view_image = true
 shell_tool = false
+"guardianv3.shadow_enabled" = false
 "#,
             ),
         )
@@ -12374,6 +12651,7 @@ shell_tool = false
 
     assert!(config.features.enabled(Feature::ViewImage));
     assert!(!config.features.enabled(Feature::ShellTool));
+    assert!(!config.features.enabled(Feature::GuardianV3Shadow));
     assert!(
         !config
             .startup_warnings
@@ -12705,6 +12983,7 @@ tool_namespace = "agents"
 hide_spawn_agent_metadata = true
 expose_spawn_agent_model_overrides = false
 wait_agent_enabled = false
+interrupt_at_item_boundary = true
 disable_native_tools = true
 disable_direct_message = true
 message_board_in_memory = true
@@ -12764,6 +13043,7 @@ max_concurrent_threads_per_session = 9
     assert!(!config.multi_agent_v2.preserve_fork_prefix);
     assert!(!config.multi_agent_v2.expose_spawn_agent_model_overrides);
     assert!(!config.multi_agent_v2.wait_agent_enabled);
+    assert!(config.multi_agent_v2.interrupt_at_item_boundary);
     assert!(config.multi_agent_v2.disable_native_tools);
     assert!(config.multi_agent_v2.disable_direct_message);
     assert!(config.multi_agent_v2.message_board_in_memory);
@@ -12892,9 +13172,10 @@ expose_spawn_agent_model_overrides = true
 }
 
 #[test]
-fn multi_agent_v2_disabled_native_tools_omit_default_roles() {
+fn multi_agent_v2_disabled_native_tools_keep_only_concurrency() {
     let mut config = resolve_multi_agent_v2_config(&ConfigToml::default());
     config.disable_native_tools = true;
+    config.max_concurrent_threads_per_session = 17;
     let mut messages = ResolvedModelMessages::bundled().multi_agent();
     for catalog_override in [false, true] {
         if catalog_override {
@@ -12904,7 +13185,13 @@ fn multi_agent_v2_disabled_native_tools_omit_default_roles() {
         let usage_hints = resolve_usage_hints(
             &config, messages, /*omit_update_plan_instructions*/ false,
         );
-        assert_eq!((usage_hints.root, usage_hints.subagent), (None, None));
+        let expected = Some(
+            crate::context::MultiAgentRoleInstructions::concurrency_only(
+                /*max_concurrency*/ 17,
+            ),
+        );
+        assert_eq!(usage_hints.root, expected);
+        assert_eq!(usage_hints.subagent, expected);
     }
 }
 
@@ -13794,30 +14081,21 @@ experimental_realtime_ws_model = "realtime-test-model"
 }
 
 #[tokio::test]
-async fn realtime_config_partial_table_uses_realtime_defaults() -> std::io::Result<()> {
-    let cfg: ConfigToml = toml::from_str(
-        r#"
-[realtime]
-voice = "marin"
-"#,
-    )
-    .expect("TOML deserialization should succeed");
-
+async fn realtime_config_with_legacy_voice_uses_realtime_defaults() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
-    let config = Config::load_from_base_config_with_overrides(
-        cfg,
-        ConfigOverrides::default(),
-        codex_home.abs(),
-    )
-    .await?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        "[realtime]\nvoice = \"marin\"",
+    )?;
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
+        .strict_config(/*strict_config*/ true)
+        .build()
+        .await?;
 
-    assert_eq!(
-        config.realtime,
-        RealtimeConfig {
-            voice: Some(RealtimeVoice::Marin),
-            ..RealtimeConfig::default()
-        }
-    );
+    assert_eq!(config.realtime, RealtimeConfig::default());
     Ok(())
 }
 
@@ -13829,7 +14107,6 @@ async fn realtime_loads_from_config_toml() -> std::io::Result<()> {
 version = "v2"
 type = "transcription"
 transport = "webrtc"
-voice = "cedar"
 "#,
     )
     .expect("TOML deserialization should succeed");
@@ -13840,7 +14117,7 @@ voice = "cedar"
             version: Some(RealtimeWsVersion::V2),
             session_type: Some(RealtimeWsMode::Transcription),
             transport: Some(RealtimeTransport::WebRtc),
-            voice: Some(RealtimeVoice::Cedar),
+            ..RealtimeToml::default()
         })
     );
 
@@ -13858,7 +14135,6 @@ voice = "cedar"
             version: RealtimeWsVersion::V2,
             session_type: RealtimeWsMode::Transcription,
             transport: RealtimeTransport::WebRtc,
-            voice: Some(RealtimeVoice::Cedar),
         }
     );
     Ok(())

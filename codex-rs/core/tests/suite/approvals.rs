@@ -713,7 +713,7 @@ async fn submit_turn_preserving_active_permission_profile(
             .with_thread_settings(ThreadSettingsOverrides {
                 environments: Some(local_requests(test.config.cwd.clone())),
                 approval_policy: Some(approval_policy),
-                approvals_reviewer: Some(ApprovalsReviewer::User),
+                approvals_reviewer: Some(test.config.approvals_reviewer),
                 collaboration_mode: Some(CollaborationMode {
                     mode: ModeKind::Default,
                     settings: Settings {
@@ -1980,9 +1980,23 @@ async fn run_scenario(scenario: &ScenarioSpec) -> Result<()> {
                 id: thread_store_id,
             };
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+            config.workspace_roots_explicit = false;
+            let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+                &sandbox_policy,
+                config.cwd.as_path(),
+            );
             config
-                .set_legacy_sandbox_policy(sandbox_policy.clone())
-                .expect("set sandbox policy");
+                .permissions
+                .can_set_permission_profile(&permission_profile)
+                .expect("set permission profile");
+            config
+                .permissions
+                .set_workspace_roots(vec![config.cwd.clone()]);
+            config
+                .permissions
+                .set_permission_profile(permission_profile)
+                .expect("set permission profile");
+            config.workspace_roots = config.permissions.workspace_roots().to_vec();
             for feature in features {
                 config
                     .features
@@ -2156,9 +2170,23 @@ async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() 
         .with_model("gpt-5.5")
         .with_config(move |config| {
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+            config.workspace_roots_explicit = false;
+            let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+                &sandbox_policy_for_config,
+                config.cwd.as_path(),
+            );
             config
-                .set_legacy_sandbox_policy(sandbox_policy_for_config)
-                .expect("set sandbox policy");
+                .permissions
+                .can_set_permission_profile(&permission_profile)
+                .expect("set permission profile");
+            config
+                .permissions
+                .set_workspace_roots(vec![config.cwd.clone()]);
+            config
+                .permissions
+                .set_permission_profile(permission_profile)
+                .expect("set permission profile");
+            config.workspace_roots = config.permissions.workspace_roots().to_vec();
             config.approvals_reviewer = ApprovalsReviewer::User;
         });
     let test = builder.build(&server).await?;
@@ -2282,11 +2310,11 @@ async fn approving_execpolicy_amendment_emits_one_saved_prefix_notice(
             model_info.use_responses_lite = true;
             model_info.model_messages = Some(ModelMessages {
                 permissions: Some(PermissionMessages {
-                    approved_command_prefix_saved: catalog_heading.map(str::to_owned),
+                    approved_command_prefix_saved: catalog_heading.map(Into::into),
                     ..Default::default()
                 }),
                 approvals: full_approval_override.then(|| ApprovalMessages {
-                    on_request: Some("Full catalog approval message".to_string()),
+                    on_request: Some("Full catalog approval message".into()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -2299,9 +2327,23 @@ async fn approving_execpolicy_amendment_emits_one_saved_prefix_notice(
                 .features
                 .disable(Feature::DeferredExecutor)
                 .expect("test config should allow feature update");
+            config.workspace_roots_explicit = false;
+            let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+                &sandbox_policy_for_config,
+                config.cwd.as_path(),
+            );
             config
-                .set_legacy_sandbox_policy(sandbox_policy_for_config)
-                .expect("set sandbox policy");
+                .permissions
+                .can_set_permission_profile(&permission_profile)
+                .expect("set permission profile");
+            config
+                .permissions
+                .set_workspace_roots(vec![config.cwd.clone()]);
+            config
+                .permissions
+                .set_permission_profile(permission_profile)
+                .expect("set permission profile");
+            config.workspace_roots = config.permissions.workspace_roots().to_vec();
         });
     let test = builder.build(&server).await?;
 
@@ -2410,9 +2452,23 @@ async fn approving_execpolicy_amendment_persists_policy_and_skips_future_prompts
     let sandbox_policy_for_config = sandbox_policy.clone();
     let mut builder = test_codex().with_config(move |config| {
         config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+        config.workspace_roots_explicit = false;
+        let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+            &sandbox_policy_for_config,
+            config.cwd.as_path(),
+        );
         config
-            .set_legacy_sandbox_policy(sandbox_policy_for_config)
-            .expect("set sandbox policy");
+            .permissions
+            .can_set_permission_profile(&permission_profile)
+            .expect("set permission profile");
+        config
+            .permissions
+            .set_workspace_roots(vec![config.cwd.clone()]);
+        config
+            .permissions
+            .set_permission_profile(permission_profile)
+            .expect("set permission profile");
+        config.workspace_roots = config.permissions.workspace_roots().to_vec();
     });
     let test = builder.build(&server).await?;
     let allow_prefix_path = test.cwd.path().join("allow-prefix.txt");
@@ -2583,9 +2639,23 @@ async fn spawned_subagent_execpolicy_amendment_propagates_to_parent_session() ->
     let sandbox_policy_for_config = sandbox_policy.clone();
     let mut builder = test_codex().with_config(move |config| {
         config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+        config.workspace_roots_explicit = false;
+        let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+            &sandbox_policy_for_config,
+            config.cwd.as_path(),
+        );
         config
-            .set_legacy_sandbox_policy(sandbox_policy_for_config)
-            .expect("set sandbox policy");
+            .permissions
+            .can_set_permission_profile(&permission_profile)
+            .expect("set permission profile");
+        config
+            .permissions
+            .set_workspace_roots(vec![config.cwd.clone()]);
+        config
+            .permissions
+            .set_permission_profile(permission_profile)
+            .expect("set permission profile");
+        config.workspace_roots = config.permissions.workspace_roots().to_vec();
         config
             .features
             .enable(Feature::Collab)
@@ -3799,15 +3869,21 @@ touch {outside_path:?}
 }
 
 #[cfg(unix)]
-#[test_case(Some(ReviewDecision::Approved); "approved")]
-#[test_case(Some(ReviewDecision::denied("rejected by user")); "denied")]
-#[test_case(None; "allow_rule_skips_approval_without_widening")]
+#[test_case(ApprovalsReviewer::User, Some(ReviewDecision::Approved); "approved")]
+#[test_case(ApprovalsReviewer::User, Some(ReviewDecision::denied("rejected by user")); "denied")]
+#[test_case(ApprovalsReviewer::User, None; "allow_rule_skips_approval_without_widening")]
+#[test_case(ApprovalsReviewer::AutoReview, Some(ReviewDecision::Approved); "allow_rule_approved_by_auto_review")]
+#[test_case(ApprovalsReviewer::AutoReview, Some(ReviewDecision::denied("rejected by guardian")); "allow_rule_denied_by_auto_review")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn explicit_escalation_with_denied_reads(decision: Option<ReviewDecision>) -> Result<()> {
+async fn explicit_escalation_with_denied_reads(
+    reviewer: ApprovalsReviewer,
+    decision: Option<ReviewDecision>,
+) -> Result<()> {
     skip_if_no_network!(Ok(()));
     let server = start_mock_server().await;
     let home = Arc::new(TempDir::new()?);
-    if decision.is_none() {
+    let auto_review = reviewer == ApprovalsReviewer::AutoReview;
+    if decision.is_none() || auto_review {
         let rules = home.path().join("rules");
         fs::create_dir(&rules)?;
         fs::write(
@@ -3821,6 +3897,7 @@ async fn explicit_escalation_with_denied_reads(decision: Option<ReviewDecision>)
     let mut builder = test_codex()
         .with_home(home)
         .with_config(move |config| {
+            config.approvals_reviewer = reviewer;
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
             config.features.enable(Feature::UnifiedExec).unwrap();
             let mut file_system = PermissionProfile::workspace_write_with(
@@ -3865,27 +3942,45 @@ async fn explicit_escalation_with_denied_reads(decision: Option<ReviewDecision>)
         SandboxPermissions::RequireEscalated,
         /*justification*/ None,
     )?;
-    mount_sse_once(&server, sse(vec![event, ev_completed("run")])).await;
-    let response = mount_sse_once(&server, sse(vec![ev_completed("done")])).await;
+    let mut bodies = vec![sse(vec![event, ev_completed("run")])];
+    if auto_review {
+        let assessment = match &decision {
+            Some(ReviewDecision::Approved) => json!({"outcome": "allow"}),
+            Some(ReviewDecision::Denied { rejection }) => {
+                json!({"outcome": "deny", "rationale": rejection})
+            }
+            other => panic!("unexpected Guardian decision: {other:?}"),
+        };
+        bodies.push(sse(vec![
+            ev_assistant_message("guardian", &assessment.to_string()),
+            ev_completed("guardian"),
+        ]));
+    }
+    bodies.push(sse(vec![ev_completed("done")]));
+    let responses = mount_sse_sequence(&server, bodies).await;
     submit_turn_preserving_active_permission_profile(&test, "run the command", approval_policy)
         .await?;
     let approved = decision == Some(ReviewDecision::Approved);
-    let rejected = decision.is_some() && !approved;
-    if let Some(decision) = decision {
+    if !auto_review && let Some(decision) = &decision {
         let request = expect_exec_approval(&test, command).await;
         assert!(!outside_marker.exists() && !workspace_marker.exists());
         test.codex
             .submit(Op::ExecApproval {
                 id: request.effective_approval_id(),
                 turn_id: None,
-                decision,
+                decision: decision.clone(),
             })
             .await?;
     }
     wait_for_completion_without_approval(&test).await;
-    let result = parse_result(&response.single_request().function_call_output(call_id));
-    if rejected {
-        assert!(result.stdout.contains("rejected by user"), "{result:?}");
+    let requests = responses.requests();
+    let reviews = requests.iter().filter(|request| {
+        request.body_json()["client_metadata"]["x-openai-subagent"] == "guardian"
+    });
+    assert_eq!(reviews.count(), usize::from(auto_review));
+    let result = parse_result(&requests.last().unwrap().function_call_output(call_id));
+    if let Some(ReviewDecision::Denied { rejection }) = decision {
+        assert!(result.stdout.contains(&rejection), "{result:?}");
         assert!(!workspace_marker.exists());
     } else {
         assert_eq!(
@@ -3907,9 +4002,23 @@ async fn invalid_requested_prefix_rule_falls_back_for_compound_command() -> Resu
     let sandbox_policy_for_config = sandbox_policy.clone();
     let mut builder = test_codex().with_config(move |config| {
         config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+        config.workspace_roots_explicit = false;
+        let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+            &sandbox_policy_for_config,
+            config.cwd.as_path(),
+        );
         config
-            .set_legacy_sandbox_policy(sandbox_policy_for_config)
-            .expect("set sandbox policy");
+            .permissions
+            .can_set_permission_profile(&permission_profile)
+            .expect("set permission profile");
+        config
+            .permissions
+            .set_workspace_roots(vec![config.cwd.clone()]);
+        config
+            .permissions
+            .set_permission_profile(permission_profile)
+            .expect("set permission profile");
+        config.workspace_roots = config.permissions.workspace_roots().to_vec();
     });
     let test = builder.build(&server).await?;
 
@@ -3960,9 +4069,23 @@ async fn approving_fallback_rule_for_compound_command_works() -> Result<()> {
     let sandbox_policy_for_config = sandbox_policy.clone();
     let mut builder = test_codex().with_config(move |config| {
         config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+        config.workspace_roots_explicit = false;
+        let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+            &sandbox_policy_for_config,
+            config.cwd.as_path(),
+        );
         config
-            .set_legacy_sandbox_policy(sandbox_policy_for_config)
-            .expect("set sandbox policy");
+            .permissions
+            .can_set_permission_profile(&permission_profile)
+            .expect("set permission profile");
+        config
+            .permissions
+            .set_workspace_roots(vec![config.cwd.clone()]);
+        config
+            .permissions
+            .set_permission_profile(permission_profile)
+            .expect("set permission profile");
+        config.workspace_roots = config.permissions.workspace_roots().to_vec();
     });
     let test = builder.build(&server).await?;
 
@@ -4100,9 +4223,23 @@ allow_local_binding = true
         .with_cloud_config_bundle(managed_network_requirements_loader())
         .with_config(move |config| {
             config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+            config.workspace_roots_explicit = false;
+            let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+                &sandbox_policy_for_config,
+                config.cwd.as_path(),
+            );
             config
-                .set_legacy_sandbox_policy(sandbox_policy_for_config)
-                .expect("set sandbox policy");
+                .permissions
+                .can_set_permission_profile(&permission_profile)
+                .expect("set permission profile");
+            config
+                .permissions
+                .set_workspace_roots(vec![config.cwd.clone()]);
+            config
+                .permissions
+                .set_permission_profile(permission_profile)
+                .expect("set permission profile");
+            config.workspace_roots = config.permissions.workspace_roots().to_vec();
         });
     let test = builder.build(&server).await?;
     assert!(
@@ -4712,9 +4849,23 @@ async fn compound_command_with_one_safe_command_still_requires_approval() -> Res
     let sandbox_policy_for_config = sandbox_policy.clone();
     let mut builder = test_codex().with_config(move |config| {
         config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+        config.workspace_roots_explicit = false;
+        let permission_profile = PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+            &sandbox_policy_for_config,
+            config.cwd.as_path(),
+        );
         config
-            .set_legacy_sandbox_policy(sandbox_policy_for_config)
-            .expect("set sandbox policy");
+            .permissions
+            .can_set_permission_profile(&permission_profile)
+            .expect("set permission profile");
+        config
+            .permissions
+            .set_workspace_roots(vec![config.cwd.clone()]);
+        config
+            .permissions
+            .set_permission_profile(permission_profile)
+            .expect("set permission profile");
+        config.workspace_roots = config.permissions.workspace_roots().to_vec();
     });
     let test = builder.build(&server).await?;
 

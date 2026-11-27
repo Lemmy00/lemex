@@ -12,17 +12,17 @@ use tokio_util::task::AbortOnDropHandle;
 use tokio_util::task::task_tracker::TaskTrackerToken;
 
 use codex_diagnostics::GaugeGuard;
-use codex_protocol::dynamic_tools::DynamicToolResponse;
+use codex_protocol::dynamic_tools::DynamicToolCallResult;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
-use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rmcp_client::ElicitationResponse;
 use rmcp::model::RequestId;
 use tokio::sync::oneshot;
 
 use super::TurnTokenUsage;
 use crate::agent::types::AgentExecutionGuard;
-use crate::session::TurnInput;
+use crate::session::PendingUserInput;
+use crate::session::SamplingInterrupt;
 use crate::session::TurnInputQueue;
 use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
@@ -35,7 +35,12 @@ use codex_protocol::protocol::TokenUsage;
 
 /// Metadata about the currently running turn.
 pub(crate) struct ActiveTurn {
+    /// The slot's owner, retained after its task detaches to emit the terminal event.
+    pub(crate) turn_id: Option<String>,
+    /// Set only after execution admission succeeds; retained through finishing.
+    pub(crate) admitted: bool,
     pub(crate) task: Option<RunningTask>,
+    pub(crate) sampling_interrupt: Option<SamplingInterrupt>,
     /// Present when input admission is closed; cancelled when the final batch is recorded.
     /// Reservations that have not started still accept inputs.
     pub(crate) finishing: Option<CancellationToken>,
@@ -65,7 +70,10 @@ pub(crate) enum MailboxDeliveryPhase {
 impl Default for ActiveTurn {
     fn default() -> Self {
         Self {
+            turn_id: None,
+            admitted: false,
             task: None,
+            sampling_interrupt: None,
             finishing: None,
             turn_state: Arc::new(Mutex::new(TurnState::default())),
         }
@@ -84,13 +92,13 @@ pub(crate) struct RunningTask {
     pub(crate) kind: TaskKind,
     pub(crate) task: Arc<dyn AnySessionTask>,
     pub(crate) cancellation_token: CancellationToken,
+    /// MCP reviews can span sampling attempts and must stop even while the sampler drains.
+    pub(crate) mcp_elicitation_cancellation: CancellationToken,
     pub(crate) handle: AbortOnDropHandle<()>,
     pub(crate) turn_context: Arc<TurnContext>,
     pub(crate) _agent_execution_guard: Option<AgentExecutionGuard>,
     /// Follows the task into whichever finalizer claims its terminal event.
     pub(crate) outcome_handoff: Option<TaskTrackerToken>,
-    /// Unrecorded input retained during host admission or preparation that can wait on the roster.
-    pub(crate) pending_initial_input: Option<Vec<TurnInput>>,
     pub(crate) _diagnostics_guard: GaugeGuard,
     // Timer recorded when the task drops to capture the full turn duration.
     pub(crate) _timer: Option<codex_otel::Timer>,
@@ -101,9 +109,9 @@ pub(crate) struct RunningTask {
 pub(crate) struct TurnState {
     pending_approvals: Arc<PendingApprovals>,
     pending_request_permissions: HashMap<String, PendingRequestPermissions>,
-    pending_user_input: HashMap<String, oneshot::Sender<AcceptedUserInputResponse>>,
+    pending_user_input: HashMap<String, PendingUserInput>,
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
-    pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
+    pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolCallResult>>,
     pub(crate) pending_input: TurnInputQueue,
     mailbox_delivery_phase: MailboxDeliveryPhase,
     pub(crate) tool_calls: u64,
@@ -135,13 +143,6 @@ impl PendingApproval {
             decision
         }
     }
-}
-
-/// Host receipt metadata follows the response through the asynchronous tool waiter.
-pub(crate) struct AcceptedUserInputResponse {
-    pub(crate) response: RequestUserInputResponse,
-    /// Order reserved when the host accepts this response.
-    pub(crate) acceptance_order: u64,
 }
 
 pub(crate) struct PendingRequestPermissions {
@@ -262,15 +263,12 @@ impl TurnState {
     pub(crate) fn insert_pending_user_input(
         &mut self,
         key: String,
-        tx: oneshot::Sender<AcceptedUserInputResponse>,
-    ) -> Option<oneshot::Sender<AcceptedUserInputResponse>> {
-        self.pending_user_input.insert(key, tx)
+        pending: PendingUserInput,
+    ) -> Option<PendingUserInput> {
+        self.pending_user_input.insert(key, pending)
     }
 
-    pub(crate) fn remove_pending_user_input(
-        &mut self,
-        key: &str,
-    ) -> Option<oneshot::Sender<AcceptedUserInputResponse>> {
+    pub(crate) fn remove_pending_user_input(&mut self, key: &str) -> Option<PendingUserInput> {
         self.pending_user_input.remove(key)
     }
 
@@ -296,15 +294,15 @@ impl TurnState {
     pub(crate) fn insert_pending_dynamic_tool(
         &mut self,
         key: String,
-        tx: oneshot::Sender<DynamicToolResponse>,
-    ) -> Option<oneshot::Sender<DynamicToolResponse>> {
+        tx: oneshot::Sender<DynamicToolCallResult>,
+    ) -> Option<oneshot::Sender<DynamicToolCallResult>> {
         self.pending_dynamic_tools.insert(key, tx)
     }
 
     pub(crate) fn remove_pending_dynamic_tool(
         &mut self,
         key: &str,
-    ) -> Option<oneshot::Sender<DynamicToolResponse>> {
+    ) -> Option<oneshot::Sender<DynamicToolCallResult>> {
         self.pending_dynamic_tools.remove(key)
     }
 
